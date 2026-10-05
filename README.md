@@ -80,7 +80,7 @@ Discord, the website or the phone app.
   </tr>
 </table>
 
-<p align="center"><sub><b>All made up.</b> Every title, cover, name and message in the video, these recordings and the screenshots below comes from Plexbie’s demo mode (the app’s sample household, for the app). None of it is a real library, household or person.</sub></p>
+<p align="center"><sub><b>Free to use, every frame.</b> The recordings and screenshots come from Plexbie’s demo mode (the app’s sample household, for the app). Its films, shows and books are real ones that anyone may show: <a href="https://studio.blender.org/films/">Blender Foundation</a> open movies and <a href="https://www.peppercarrot.com">Pepper &amp; Carrot</a> by David Revoy (CC BY), and public-domain films, serials and books, with their own posters and covers. The people, household and messages are made up.</sub></p>
 
 ## The website, built in
 
@@ -119,8 +119,8 @@ Requests, their progress, the library and, for admins, the whole Manage page, wi
   <tr>
     <td align="center" width="25%"><img src="docs/screens/app-iphone-home.png" alt="The app's home screen on iPhone: what just arrived and your requests" width="180"><br><sub><b>Home</b>, iPhone</sub></td>
     <td align="center" width="25%"><img src="docs/screens/app-android-requests.png" alt="My requests on Android, each with its stage and download progress" width="180"><br><sub><b>My requests</b>, Android</sub></td>
-    <td align="center" width="25%"><img src="docs/screens/app-iphone-title.png" alt="A show's page on iPhone, with the request already downloading" width="180"><br><sub><b>A title</b>, iPhone</sub></td>
-    <td align="center" width="25%"><img src="docs/screens/app-android-manage.png" alt="Manage on Android: help requests with Search again and Resolve" width="180"><br><sub><b>Manage</b>, Android</sub></td>
+    <td align="center" width="25%"><img src="docs/screens/app-iphone-title.png" alt="A film's page on iPhone: Sintel, already on Plex, with more like it" width="180"><br><sub><b>A title</b>, iPhone</sub></td>
+    <td align="center" width="25%"><img src="docs/screens/app-android-manage.png" alt="Manage on Android: requests waiting for a decision, with Approve and Decline" width="180"><br><sub><b>Manage</b>, Android</sub></td>
   </tr>
 </table>
 

@@ -1,5 +1,5 @@
 // The README's four phone screenshots (docs/screens), from the dev server's demo
-// mode: invented titles and code-drawn covers only.
+// mode: the copyright-free sample catalog (free films', serials' and books' own posters).
 //
 //   npm run dev                                  (in another terminal)
 //   node scripts/readme-shots.mjs [outDir] [baseUrl]
@@ -9,10 +9,10 @@ import { chromium } from "playwright-core";
 const out = process.argv[2] ?? "../docs/screens";
 const base = process.argv[3] ?? "http://localhost:5179";
 const shots = [
-  ["manage", "/app/manage?as=member&demo&tab=requests"],
-  ["messages", "/app/manage?as=member&demo&tab=messages"],
+  ["manage", "/manage?as=member&demo&tab=requests"],
+  ["messages", "/manage?as=member&demo&tab=messages"],
   ["invite", "/invite?as=guest&demo"],
-  ["cleanup", "/app/manage?as=member&demo&tab=cleanup"],
+  ["cleanup", "/manage?as=member&demo&tab=cleanup"],
 ];
 
 mkdirSync(out, { recursive: true });
@@ -26,9 +26,9 @@ for (const [name, path] of shots) {
   await page.evaluate(() => document.fonts.ready);
   await page.addStyleTag({ content: ".sample-switch{display:none!important}" });
   await page.waitForTimeout(900);
-  // Tabs further along the strip: show the chosen tab's panel, not the overview cards.
-  if (!path.includes("tab=requests") && path.includes("tab=")) {
-    await page.locator("[role=tablist]").first().evaluate((el) => {
+  // Manage: show the chosen section, below the overview cards, with its section bar at the top.
+  if (path.includes("tab=")) {
+    await page.locator(".m-tabbar").first().evaluate((el) => {
       const header = document.querySelector("header")?.getBoundingClientRect().height ?? 64;
       window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - header - 12, behavior: "instant" });
     }).catch(() => {});

@@ -6,8 +6,9 @@
 // Each scene is clicked through in Chrome at phone size while the page is
 // streamed frame by frame (Chrome's screencast), so timing is real. Frames land
 // in <outDir>/<scene>/ with a frames.txt for ffmpeg's concat demuxer; turn them
-// into GIFs with the commands printed at the end. Demo mode (?demo) shows only
-// invented titles and code-drawn covers, never real artwork.
+// into GIFs with the commands printed at the end. The sample catalog is copyright-free:
+// Blender Foundation open movies, Pepper & Carrot (CC BY) and public-domain films,
+// serials and books, with their own posters (see the README's credit line).
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
@@ -90,7 +91,7 @@ const SCENES = {
       await wait(1200);
       const input = page.locator(".finder input");
       await tap(input);
-      await input.pressSequentially("night", { delay: 160 });
+      await input.pressSequentially("dweebs", { delay: 160 });
       await page.waitForSelector("a.poster .poster__art");
       await wait(1300);
       await tap(page.locator("a.poster").first());
