@@ -475,7 +475,7 @@ export const requestTicket = (key: string, note: string, tell: boolean, message 
   threadOf(helps[0]);
   if (tell) entry(help.id, "reply", "Sam Rivera", message.trim() || `An admin is looking into your request for ${r?.title.title ?? "it"}.`);
   if (r) { r.help = help; r.stuck = [`Help asked: ${help.reason}`, ...r.stuck]; }
-  return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told` : ""}. It's on Needs help.`, help }, 450);
+  return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told` : ""}. It's on Manage → Tickets.`, help }, 450);
 };
 export const requestSearch = (key: string, how: "again" | "episodes" | "name") => {
   const said = { again: "Searching again.", episodes: "Searching one episode at a time.", name: "Plexbie is searching NZBHydra by name. It reports back in the admin channel." }[how];

@@ -709,7 +709,7 @@ class Actions:
 
     async def admin_ticket(self, user: dict, key: str, body: dict) -> dict:
         """An admin opens a ticket on someone's request (Manage → All requests). It goes on
-        Needs help like any other; the person who asked hears about it only if body.tell."""
+        Manage → Tickets like any other; the person who asked hears about it only if body.tell."""
         from portal import help as helpdesk
         from portal.admin import Admin
         self.limit(user["user"]["id"], "admin")
@@ -718,7 +718,7 @@ class Actions:
         if not note:
             raise web.HTTPBadRequest(text='{"error":"Write what you found, so the ticket says what\'s wrong."}', content_type="application/json")
         if await helpdesk.open_for({str(key)}):
-            raise web.HTTPConflict(text='{"error":"There\'s already an open ticket on this request. Add to it from Needs help."}', content_type="application/json")
+            raise web.HTTPConflict(text='{"error":"There\'s already an open ticket on this request. Add to it on Manage → Tickets."}', content_type="application/json")
         records = await self.data._slots()
         admin = Admin(self.data, self.bot)
         who = Admin._who(await admin._names(), rec)
@@ -745,7 +745,7 @@ class Actions:
             h = await helpdesk.add(h["id"], "reply", self.actor(user), message) or h
             await self.tell_member(h, message, context=f"ticket opened on {title}")
         logger.info(f"{self.actor(user)} opened ticket {h['id']} on No. {row.get('slot')} ({title}), told: {tell}")
-        return {"ok": True, "message": f"Ticket opened{f', and {who} has been told' if tell else ''}. It's on Needs help.",
+        return {"ok": True, "message": f"Ticket opened{f', and {who} has been told' if tell else ''}. It's on Manage → Tickets.",
                 "help": {"id": h["id"], "reason": h["reason"]}}
 
     # ------------------------------------------------------------ tickets
