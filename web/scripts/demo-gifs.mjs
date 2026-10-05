@@ -85,15 +85,15 @@ async function record(browser, name, run) {
 
 const SCENES = {
   request: {
-    start: "/app/search?as=member&demo&kind=tv",
+    start: "/search?as=member&demo&kind=tv",
     async steps({ page, tap, wait }) {
       await wait(1200);
       const input = page.locator(".finder input");
       await tap(input);
       await input.pressSequentially("night", { delay: 160 });
-      await page.waitForSelector(".results .poster__art");
+      await page.waitForSelector("a.poster .poster__art");
       await wait(1300);
-      await tap(page.locator(".results a").first());
+      await tap(page.locator("a.poster").first());
       await page.waitForSelector(".season");
       await wait(900);
       await page.locator(".chooser").evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -110,17 +110,18 @@ const SCENES = {
     },
   },
   journey: {
-    start: "/app/schedule?as=member&demo",
+    start: "/schedule?as=member&demo",
     async steps({ wait }) { await wait(26500); },
   },
   manage: {
-    start: "/app/manage?as=member&demo&tab=requests",
+    start: "/manage?as=member&demo&tab=requests",
     async steps({ page, tap, wait }) {
       await wait(900);
-      await page.locator(".m-cards").evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "start" }));
+      // centred, so the sticky section bar never covers the card being swiped
+      const card = page.locator(".m-swipe__card").first();
+      await card.evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
       await wait(900);
       // swipe the first card right: approve
-      const card = page.locator(".m-swipe__card").first();
       const box = await card.boundingBox();
       const y = box.y + 50;
       await page.mouse.move(box.x + 60, y, { steps: 4 });
@@ -130,58 +131,11 @@ const SCENES = {
       await page.mouse.up();
       await wait(2200);
       // hold to decline the next one
-      await tap(page.locator(".m-hold").first(), 1150);
-      await wait(2400);
-    },
-  },
-  invite: {
-    start: "/app/manage?as=member&demo&tab=invites",
-    async steps({ page, tap, wait, go }) {
-      await wait(900);
-      const name = page.locator("#m-invite-name");
-      await tap(name);
-      await name.pressSequentially("Grandma", { delay: 130 });
-      await wait(400);
-      await tap(page.locator(".m-seg__item", { hasText: "3 days" }));
-      await wait(500);
-      await tap(page.locator(".m-invite-form__go"));
-      await page.waitForSelector(".m-fresh");
-      await wait(1800);
-      await go("/invite?demo");
-      await wait(1500);
-      await page.mouse.wheel(0, 900);
-      await wait(1800);
-    },
-  },
-  help: {
-    start: "/app/schedule?as=member&demo",
-    async steps({ page, tap, wait, go }) {
-      await wait(900);
-      await tap(page.locator(".help-open").nth(1));
-      await page.waitForSelector("#help-h");
+      const hold = page.locator(".m-hold").first();
+      await hold.evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
       await wait(700);
-      await tap(page.locator(".help-sheet button.choice", { hasText: "Stuck downloading" }));
-      await wait(400);
-      const note = page.locator("#help-note");
-      await tap(note);
-      await note.pressSequentially("Stuck at 0% since this morning", { delay: 55 });
-      await wait(400);
-      await tap(page.locator(".help-sheet .btn--primary"));
-      await page.waitForSelector(".help-asked");
-      await wait(1500);
-      await go("/app/manage?as=member&demo&tab=requests");
-      await page.waitForSelector(".m-help");
-      await page.locator(".m-help").first().evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
-      await wait(1200);
-      await tap(page.locator(".m-help button", { hasText: "Search again" }).first());
-      await wait(1600);
-      await tap(page.locator(".m-help button", { hasText: "Resolve" }).first());
-      await wait(500);
-      const reply = page.locator(".m-help__reply textarea").first();
-      await reply.pressSequentially("Kicked the search, it's moving now", { delay: 45 });
-      await wait(300);
-      await tap(page.locator("button", { hasText: "Mark resolved" }).first());
-      await wait(2200);
+      await tap(hold, 1150);
+      await wait(2400);
     },
   },
 };

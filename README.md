@@ -28,6 +28,10 @@
   <a href="#support-plexbies-development">Support its development</a>
 </p>
 
+https://github.com/user-attachments/assets/b5409525-02c4-48ea-bc10-70a2202e68a6
+
+<p align="center"><sub>A 73-second look, made with invented titles and people. For the full three-minute tour, tune to channel 05 on <a href="https://plexbie.com">plexbie.com</a>.</sub></p>
+
 ---
 
 ## Tonight’s line-up
@@ -70,12 +74,9 @@ Discord *or* from the website.
     <td align="center" width="33%"><img src="docs/demo/journey.gif" alt="A request moving from Requested to Approved, Downloading, Unpacking, Adding to Plex and On Plex" width="240"><br><b>Follow it</b><br><sub>Live SABnzbd progress, Unpacking, Adding to Plex, then <i>On Plex</i>.</sub></td>
     <td align="center" width="33%"><img src="docs/demo/manage.gif" alt="Swiping a request card to approve it and holding a button to decline another" width="240"><br><b>Decide it</b><br><sub>Swipe right to approve, hold to decline. Discord’s card updates too.</sub></td>
   </tr>
-  <tr>
-    <td align="center"><img src="docs/demo/invite.gif" alt="Making a single-use invite link and the welcome page it opens" width="240"><br><b>Invite family</b><br><sub>A single-use link and a friendly welcome page. No Discord needed.</sub></td>
-    <td align="center"><img src="docs/demo/help.gif" alt="Asking for help on a stuck request, then an admin searching again and resolving it" width="240"><br><b>Fix it</b><br><sub>“Something wrong?” reaches the admins, who can search again and reply.</sub></td>
-    <td align="center" valign="middle"><b>All made up</b><br><sub>Every title, cover, name and message in these recordings and the screenshots below comes from Plexbie’s demo mode. None of it is a real library, household or person.</sub></td>
-  </tr>
 </table>
+
+<p align="center"><sub><b>All made up.</b> Every title, cover, name and message in the video, these recordings and the screenshots below comes from Plexbie’s demo mode. None of it is a real library, household or person.</sub></p>
 
 ## The website, built in
 
