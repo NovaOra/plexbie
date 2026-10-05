@@ -59,6 +59,39 @@ export function ProjectPrivacy() {
           Cloudflare serves this site and its videos and protects it from abuse. It keeps basic request logs, and its
           privacy policy applies to that.
         </li>
+        <li>
+          <b>Nothing is sold or shared.</b> The counts aren’t sold, shared with anyone or used for advertising, and
+          nothing here is combined with information from anywhere else.
+        </li>
+        <li>This site isn’t aimed at children, and we don’t knowingly collect anything about them.</li>
+      </ul>
+      <h2>Why we count, and on what basis</h2>
+      <p>
+        Counting visits tells us which parts of the site and of Plexbie people find useful, and where they hear about
+        it. Where the law asks for a reason (such as the GDPR in Europe and the UK), it’s our legitimate interest in
+        understanding how the site is used, kept to the minimum above so it doesn’t outweigh your privacy.
+      </p>
+      <h2>Where it’s kept</h2>
+      <p>
+        The counts are stored with Cloudflare, which handles them for us and only as we ask. Cloudflare runs worldwide,
+        so they may be processed outside your country, under Cloudflare’s own data protection commitments.
+      </p>
+      <h2>Your choices and rights</h2>
+      <ul>
+        <li>
+          <b>To not be counted at all,</b> turn on Global Privacy Control or Do Not Track in your browser. We honour
+          both, everywhere on this site and the demo.
+        </li>
+        <li>
+          Depending on where you live, you may have the right to ask what we hold about you, to have it corrected or
+          deleted, and to object to it being used. Write to <Mail /> and we’ll answer within a month. Because no IP
+          address or name is kept and the daily visitor number changes every day, we usually can’t tell which counts
+          are yours; if you can help us find them (the day and pages you visited, for example), we will.
+        </li>
+        <li>
+          If you’re in the EU or the UK and think we’ve got this wrong, you can also complain to your data protection
+          authority.
+        </li>
       </ul>
       <h2>A household’s Plexbie is separate</h2>
       <p>
