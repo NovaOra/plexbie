@@ -1,0 +1,12 @@
+{
+    "name": "media_requests",
+    "version": "1.1.0",
+    "description": "Media request system with Seerr integration",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": [
+        "/request - Request a TV show, movie, audiobook or ebook",
+        "/requests - List requests still awaiting a decision"
+    ]
+}

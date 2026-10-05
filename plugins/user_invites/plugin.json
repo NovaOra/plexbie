@@ -1,0 +1,11 @@
+{
+    "name": "user_invites",
+    "version": "1.0.0",
+    "description": "Plex user invitation system with email collection",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": [
+        "/join-plex"
+    ]
+}

@@ -1,0 +1,13 @@
+# Development-only dependencies. Deliberately NOT installed into the runtime
+# image - the Dockerfile installs requirements.txt only, so production carries
+# no test tooling.
+#
+#   pip install -r requirements-dev.txt -c constraints.txt
+#   pytest tests/
+#
+# The suite also runs with no dev dependencies at all:
+#   python tests/run_all.py
+
+-r requirements.txt
+
+pytest==9.1.1

@@ -1,0 +1,750 @@
+# path: portal/actions.py
+"""Everything the website can change, routed through the bot's own code paths.
+
+Each action calls the same function the matching Discord command or button
+uses (post_media_request, decide_request, post_join_request, remove_plex_user,
+the cleanup cog's config), so the website and Discord can never disagree about
+what a request, a join or an exemption means.
+
+Safety, in order: a signed-in session (portal.auth); the right role; a custom
+header plus an Origin check against cross-site requests; per-person rate limits.
+"""
+import json
+import re
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timezone
+from typing import Any, Deque, Dict, Optional
+from urllib.parse import quote, urlparse
+
+from aiohttp import web
+
+from core.blocking import run_blocking
+from core.logging import get_logger
+from database.kv_store import kv_get_all
+from database.request_store import get_request
+from portal.data import Data
+from core.discord_lookup import admin_channel, home_guild
+
+logger = get_logger(__name__)
+
+#: (max actions, per seconds) by kind.
+LIMITS = {"request": (20, 3600), "join": (3, 86400), "admin": (120, 3600), "push_test": (6, 3600), "help": (5, 86400),
+          "push": (20, 3600), "lookup": (600, 3600)}
+
+
+def _flag(body: dict, key: str) -> bool:
+    """A true/false setting, which must be sent as one: bool("false") is True, so a
+    script sending text could turn media cleanup on, or allow @everyone pings."""
+    value = body.get(key, False)
+    if not isinstance(value, bool):
+        raise web.HTTPBadRequest(text=json.dumps({"error": f"{key} must be true or false."}),
+                                 content_type="application/json")
+    return value
+
+
+class _WebRequester:
+    """Stands in for a discord.User when someone without Discord asks for something."""
+
+    def __init__(self, name: str):
+        self.id = None
+        self.name = name
+        self.mention = f"{name} (signed in with Plex)"
+
+
+class Actions:
+    def __init__(self, bot, services, data: Data, public_url: str):
+        self.bot = bot
+        self.services = services
+        self.data = data
+        self.config = services.config
+        origin = urlparse(public_url or "")
+        self.origin = f"{origin.scheme}://{origin.netloc}" if origin.netloc else None
+        self._hits: Dict[str, Deque[float]] = defaultdict(deque)
+
+    # ------------------------------------------------------------- guards
+    def check_request(self, request: web.Request) -> None:
+        """Refuse cross-site writes: a header browsers won't send cross-origin, and the Origin."""
+        if request.headers.get("X-Plexbie") != "1":
+            raise web.HTTPForbidden(text='{"error":"Missing request header."}', content_type="application/json")
+        origin = request.headers.get("Origin")
+        allowed = {self.origin, f"{request.scheme}://{request.host}"}
+        if origin and origin not in allowed:
+            raise web.HTTPForbidden(text='{"error":"Wrong origin."}', content_type="application/json")
+
+    def limit(self, who: str, kind: str) -> None:
+        cap, window = LIMITS[kind]
+        hits = self._hits[f"{kind}:{who}"]
+        now = time.monotonic()
+        while hits and now - hits[0] > window:
+            hits.popleft()
+        if len(hits) >= cap:
+            raise web.HTTPTooManyRequests(text='{"error":"That\'s a lot at once. Try again later."}', content_type="application/json")
+        hits.append(now)
+
+    @staticmethod
+    def actor(user: dict) -> str:
+        return user["user"].get("name") or "an admin"
+
+    async def _discord_user(self, discord_id: Optional[str]):
+        if not discord_id:
+            return None
+        uid = int(discord_id)
+        return self.bot.get_user(uid) or await self.bot.fetch_user(uid)
+
+    # ----------------------------------------------------------- requests
+    async def _video_media(self, kind: str, tid: str) -> dict:
+        r = await self.data._seerr(f"{'movie' if kind == 'movie' else 'tv'}/{tid}", ttl=300)
+        media = {
+            "id": int(tid),
+            "media_type": "movie" if kind == "movie" else "tv",
+            "overview": r.get("overview") or "",
+            "poster_path": r.get("posterPath"),
+            "backdrop_path": r.get("backdropPath"),
+            "vote_average": r.get("voteAverage"),
+        }
+        if kind == "movie":
+            media.update(title=r.get("title"), release_date=r.get("releaseDate"))
+        else:
+            media.update(name=r.get("name"), first_air_date=r.get("firstAirDate"))
+        return media, r
+
+    async def _book(self, work_id: str, fmt: str) -> dict:
+        ol = self.services.openlibrary
+        work = await self.data.cache.get(f"openlibrary:work:{work_id}", 3600,
+                                         lambda: ol.get(f"works/{quote(work_id)}.json"))
+        author = "Unknown Author"
+        authors = work.get("authors") or []
+        if authors:
+            key = (authors[0].get("author") or {}).get("key")
+            if key:
+                try:
+                    found = await self.data.cache.get(f"openlibrary:author:{key}", 86400, lambda: ol.get(f"{key}.json"))
+                    author = (found or {}).get("name") or author
+                except Exception:
+                    pass
+        cover = (work.get("covers") or [None])[0]
+        desc = work.get("description")
+        return {
+            "title": work.get("title") or "Untitled",
+            "author": author,
+            "year": None,
+            "cover_url": f"https://covers.openlibrary.org/b/id/{cover}-M.jpg" if cover else None,
+            "isbn": None,
+            "open_library_key": f"/works/{work_id}",
+            "description": (desc.get("value") if isinstance(desc, dict) else desc or "")[:600],
+            "request_format": fmt,
+        }
+
+    @staticmethod
+    def pick_seasons(seasons: list, pick: Any) -> tuple:
+        """Which seasons to send to the admin card, from what's still missing.
+
+        Only "none" and "partial" seasons can be asked for; anything on Plex,
+        already requested or not aired yet is left out, so asking for "all" on a
+        show with season 1 already there asks for 2 onwards. Returns
+        (seasons, monitor) as post_media_request takes them, or raises 409.
+        """
+        open_ = [s["n"] for s in seasons if s["status"] in ("none", "partial")]
+        aired = [s["n"] for s in seasons if s["status"] != "upcoming"]
+        if not open_:
+            raise web.HTTPConflict(text='{"error":"Every season is already on Plex or requested."}', content_type="application/json")
+        if pick == "latest":
+            newest = max(aired) if aired else None
+            if newest not in open_:
+                raise web.HTTPConflict(text='{"error":"The latest season is already on Plex or requested."}', content_type="application/json")
+            return [newest], True
+        if isinstance(pick, list):
+            chosen = sorted({int(n) for n in pick if str(n).lstrip("-").isdigit()} & set(open_))
+            if not chosen:
+                raise web.HTTPConflict(text='{"error":"Those seasons are already on Plex or requested."}', content_type="application/json")
+            return chosen, False
+        return ("all" if sorted(open_) == sorted(aired) else open_), False
+
+    async def create_request(self, user: dict, body: dict) -> dict:
+        from plugins.media_requests.cog import AdminChannelUnavailable, post_book_request, post_media_request
+
+        kind, tid = body.get("kind"), str(body.get("id") or "")
+        who = user.get("discordId") or f"plex:{user.get('plexAccountId')}"
+        self.limit(who, "request")
+        requester = await self._discord_user(user.get("discordId")) or _WebRequester(user["user"]["name"])
+        extra = None if user.get("discordId") else {
+            "plex_account_id": user.get("plexAccountId"), "requester_name": user["user"]["name"], "via": "website"}
+
+        if kind != "tv":   # TV is checked season by season below, so more seasons can be asked for later
+            mine = await self.data.my_requests(int(user["discordId"]) if user.get("discordId") else None, user.get("plexAccountId"))
+            if any(m["title"]["id"] == tid and m["stage"] not in ("declined", "available") for m in mine):
+                raise web.HTTPConflict(text='{"error":"You already asked for this one."}', content_type="application/json")
+
+        try:
+            if kind in ("movie", "tv"):
+                if not tid.isdigit():
+                    raise web.HTTPBadRequest(text='{"error":"Unknown title."}', content_type="application/json")
+                media, detail = await self._video_media(kind, tid)
+                status = (detail.get("mediaInfo") or {}).get("status")
+                if status == 6:                 # on Seerr's blocklist
+                    raise web.HTTPConflict(text='{"error":"An admin has blocked this title, so it can\'t be requested."}',
+                                           content_type="application/json")
+                if kind == "movie" and status in (2, 3, 4, 5):
+                    raise web.HTTPConflict(text='{"error":"It\'s already on Plex or already requested."}', content_type="application/json")
+                seasons, monitor = None, False
+                if kind == "tv":
+                    seasons, monitor = self.pick_seasons(await self.data.tv_seasons(tid, detail), body.get("seasons", "all"))
+                message_id = await post_media_request(self.bot, self.services, requester, media, seasons=seasons, monitor=monitor, extra=extra)
+            elif kind in ("audiobook", "ebook"):
+                fmt = body.get("format") if body.get("format") in ("ebook", "audiobook", "both") else kind
+                book = await self._book(tid, fmt)
+                message_id = await post_book_request(self.bot, self.services, requester, book, extra=extra)
+            else:
+                raise web.HTTPBadRequest(text='{"error":"Unknown kind."}', content_type="application/json")
+        except AdminChannelUnavailable:
+            raise web.HTTPServiceUnavailable(text='{"error":"Requests are switched off right now. Tell an admin."}', content_type="application/json")
+
+        logger.info(f"Web request {kind}:{tid} by {self.actor(user)} -> message {message_id}")
+        mine = await self.data.my_requests(int(user["discordId"]) if user.get("discordId") else None, user.get("plexAccountId"))
+        ours = [m for m in mine if m["title"]["id"] == tid]
+        return max(ours, key=lambda m: m["slot"]) if ours else {"slot": 0, "stage": "requested"}
+
+    # --------------------------------------------------------------- join
+    async def join(self, user: dict, body: dict) -> dict:
+        from plugins.user_invites.cog import post_join_request, save_join_request
+        from utils.validators import validate_email
+
+        if user.get("member"):
+            raise web.HTTPConflict(text='{"error":"You\'re already on Plex."}', content_type="application/json")
+        who = user.get("discordId") or f"plex:{user.get('plexAccountId')}"
+        self.limit(who, "join")
+        if user["user"].get("via") == "plex":
+            # Invite-only without Discord: a Plex sign-in can't ask, only use an
+            # admin's invite link (portal.invites), so strangers can't queue up.
+            raise web.HTTPForbidden(text='{"error":"Joining with Plex is by invite only. Ask whoever runs the server for an invite link."}', content_type="application/json")
+        else:
+            if not user.get("inGuild"):
+                raise web.HTTPForbidden(text='{"error":"Join our Discord server first, or sign in with Plex instead."}', content_type="application/json")
+            email = str(body.get("email") or "").strip()
+            if not validate_email(email):
+                raise web.HTTPBadRequest(text='{"error":"That doesn\'t look like an email address."}', content_type="application/json")
+            requester = await self._discord_user(user["discordId"])
+            await save_join_request(int(user["discordId"]), email)
+            await post_join_request(self.bot, self.services, requester, email)
+        logger.info(f"Web join request by {self.actor(user)}")
+        return {"ok": True}
+
+    # ------------------------------------------------------------ invites
+    async def create_invite(self, user: dict, body: dict, invites, base_url: str) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        try:
+            token, invite = await invites.create(label=str(body.get("label") or ""), email=body.get("email"),
+                                                 days=int(body.get("days") or 7), actor=self.actor(user))
+        except (TypeError, ValueError) as e:
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(e) or "Check the details and try again."}), content_type="application/json")
+        # The only time the link exists in readable form: shown once, never stored.
+        return {"url": f"{(self.origin or base_url).rstrip('/')}/invite/{token}", "invite": invite}
+
+    # ------------------------------------------------ Plex invites on plex.tv
+    async def plex_invites(self, user: dict) -> list:
+        """Unaccepted Plex invites, with who each is for when Plexbie knows."""
+        from core import plex_invites
+        from core.plex_account import can_sign_in
+        if not can_sign_in(self.config):
+            return []
+        rows = await run_blocking(plex_invites.list_pending, self.config)
+        known = await self._joiners_by_email()
+        return [{**r, "who": known.get(r["email"].lower())} for r in rows]
+
+    async def _joiners_by_email(self) -> dict:
+        from sqlalchemy import select
+        from database.session import get_session
+        from plugins.user_mgmt.models import PlexUser
+        from plugins.user_invites.cog import INVITES_NAMESPACE, WEB_JOINS_NAMESPACE
+        out = {}
+        for namespace in (INVITES_NAMESPACE, WEB_JOINS_NAMESPACE):
+            for rec in (await kv_get_all(namespace)).values():
+                if isinstance(rec, dict) and rec.get("email"):
+                    out.setdefault(rec["email"].lower(), rec.get("username") or rec.get("plex_name"))
+        async with get_session() as session:
+            for row in (await session.execute(select(PlexUser).where(PlexUser.plex_email.isnot(None)))).scalars():
+                out.setdefault(row.plex_email.lower(), row.discord_username or row.plex_username)
+        return out
+
+    async def _tell_invite_moved(self, who: dict, old: str, new: str) -> None:
+        """The person hears their invite went to a corrected address: a Discord DM, or for
+        someone who joined without Discord a phone alert or email (to the new address)."""
+        text = (f"📬 Your Plex invite was sent again, to **{new}** this time (it had gone to {old}). "
+                "Check that inbox and its spam folder, or open Plex signed in with that email to accept it.")
+        from core.admin_mirror import dm_user_id
+        if await dm_user_id(self.bot, self.services, who.get("discord_id"), context=f"Plex invite moved to {new}", content=text):
+            return
+        try:
+            from core.notify import notify_member, plain
+            await notify_member(self.services, title="Your Plex invite was sent again", body=plain(text),
+                                plex_name=who.get("name"), email=new, context=f"Plex invite moved to {new}")
+        except Exception as e:
+            logger.info(f"Couldn't tell {who.get('name') or new} about the new invite: {e}")
+
+    async def plex_invite_cancel(self, user: dict, body: dict) -> dict:
+        from core import plex_invites
+        self.limit(user["user"]["id"], "admin")
+        email = str(body.get("email") or "").strip()
+        if not email:
+            return {"ok": False, "message": "Which invite?"}
+        try:
+            if not await run_blocking(plex_invites.cancel, self.config, email):
+                return {"ok": False, "message": "Plex has no unaccepted invite to that address any more."}
+        except Exception as e:
+            logger.warning(f"Cancelling the Plex invite to {email} failed: {e}")
+            return {"ok": False, "message": f"Plex didn't take that back: {str(e).split(';')[0][:120]}"}
+        logger.info(f"{self.actor(user)} cancelled the Plex invite to {email} on the website")
+        return {"ok": True, "message": f"Plex invite to {email} cancelled."}
+
+    async def plex_invite_change(self, user: dict, body: dict) -> dict:
+        """Send an invite to the right address instead of the wrong one, and fix the records."""
+        from core import plex_invites
+        from plugins.user_invites.cog import correct_invite_email
+        self.limit(user["user"]["id"], "admin")
+        old, new = str(body.get("email") or "").strip(), str(body.get("new") or "").strip()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", new):
+            return {"ok": False, "message": "That doesn't look like an email address."}
+        if new.lower() == old.lower():
+            return {"ok": False, "message": "That's the same address."}
+        if self.services.plex_server is None:
+            return {"ok": False, "message": "Plex isn't connected right now."}
+        try:
+            await run_blocking(plex_invites.resend, self.config, self.services.plex_server, old, new)
+        except Exception as e:
+            text = str(e)
+            if "already sharing" in text:
+                return {"ok": False, "message": f"Your server is already shared with {new}."}
+            return {"ok": False, "message": f"Plex didn't take that: {text[:160]}"}
+        who = await correct_invite_email(old, new)
+        logger.info(f"{self.actor(user)} moved the Plex invite from {old} to {new} on the website")
+        await self._tell_invite_moved(who, old, new)
+        return {"ok": True, "message": f"Invite sent to {new}" + (f" for {who['name']}" if who.get("name") else "") + "."}
+
+    async def delete_invite(self, user: dict, key: str, invites) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        if not re.fullmatch(r"[0-9a-f]{64}", key or ""):
+            raise web.HTTPNotFound(text='{"error":"No such invite."}', content_type="application/json")
+        return await invites.delete(key, self.actor(user))
+
+    async def renew_invite(self, user: dict, key: str, invites, base_url: str) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        if not re.fullmatch(r"[0-9a-f]{64}", key or ""):
+            raise web.HTTPNotFound(text='{"error":"No such invite."}', content_type="application/json")
+        try:
+            token, invite = await invites.renew(key, self.actor(user))
+        except ValueError as e:
+            raise web.HTTPNotFound(text=json.dumps({"error": str(e)}), content_type="application/json")
+        return {"url": f"{(self.origin or base_url).rstrip('/')}/invite/{token}", "invite": invite}
+
+    async def revoke_invite(self, user: dict, key: str, invites) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        if not re.fullmatch(r"[0-9a-f]{64}", key or ""):
+            raise web.HTTPNotFound(text='{"error":"No such invite."}', content_type="application/json")
+        return await invites.revoke(key, self.actor(user))
+
+    # -------------------------------------------------------------- admin
+    async def decide_request(self, user: dict, message_id: str, approve: bool) -> dict:
+        from plugins.media_requests.cog import decide_request
+        self.limit(user["user"]["id"], "admin")
+        if not message_id.isdigit() or await get_request(int(message_id)) is None:
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        result = await decide_request(self.bot, self.services, int(message_id), approve, self.actor(user))
+        return result
+
+    async def decide_join(self, user: dict, message_id: str, approve: bool) -> dict:
+        from plugins.user_invites.cog import decide_join_request
+        self.limit(user["user"]["id"], "admin")
+        if not message_id.isdigit():
+            raise web.HTTPNotFound(text='{"error":"No such join request."}', content_type="application/json")
+        return await decide_join_request(self.bot, self.services, int(message_id), approve, self.actor(user))
+
+    async def exempt(self, user: dict, body: dict) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        rk = str(body.get("ratingKey") or "")
+        keep = _flag(body, "keep")
+        cog = self.bot.get_cog("MediaCleanupCog")
+        if not cog or not rk.isdigit():
+            raise web.HTTPBadRequest(text='{"error":"Cleanup isn\'t available."}', content_type="application/json")
+        await cog.load_data()
+        items = cog.config.setdefault("exempt_items", {})
+        if keep:
+            clock = await self.data.countdown()
+            info = clock.get(rk) or {}
+            items[rk] = {
+                "title": info.get("title") or "Unknown",
+                "type": info.get("type"),
+                "year": None,
+                "added_at": None,
+                "exempted_at": datetime.now(timezone.utc).isoformat(),
+            }
+        else:
+            items.pop(rk, None)
+        await cog.save_config()
+        self.data.cache.drop("cleanup:countdown")
+        logger.info(f"{self.actor(user)} {'exempted' if keep else 'un-exempted'} {rk} from cleanup on the website")
+        return {"ok": True, "message": "Kept permanently." if keep else "No longer kept."}
+
+    def _cleanup_cog(self):
+        cog = self.bot.get_cog("MediaCleanupCog") if self.bot else None
+        if not cog:
+            raise web.HTTPServiceUnavailable(text='{"error":"Cleanup isn\'t running."}', content_type="application/json")
+        return cog
+
+    async def cleanup_settings(self, user: dict, body: dict) -> dict:
+        """Change what the Discord cleanup panel and /cleanup config change, with the same limits."""
+        self.limit(user["user"]["id"], "admin")
+        cog = self._cleanup_cog()
+        await cog.load_data()
+        cfg = cog.config
+        changes = []
+        if "enabled" in body:
+            cfg["enabled"] = _flag(body, "enabled")
+            changes.append(f"cleanup {'on' if cfg['enabled'] else 'off'}")
+        if "practice" in body:
+            cfg["dry_run"] = _flag(body, "practice")
+            changes.append("practice mode" if cfg["dry_run"] else "LIVE mode")
+        if "inactivityDays" in body:
+            days = int(body["inactivityDays"])
+            if not 30 <= days <= 3650:
+                raise web.HTTPBadRequest(text='{"error":"Keep it between 30 and 3650 days, for safety."}', content_type="application/json")
+            cfg["inactivity_days"] = days
+            changes.append(f"{days} days")
+        if "warnDaysBefore" in body:
+            warn = int(body["warnDaysBefore"])
+            if not 1 <= warn < cfg["inactivity_days"]:
+                raise web.HTTPBadRequest(text='{"error":"The warning has to come at least a day before removal."}', content_type="application/json")
+            cfg["notify_days_before"] = warn
+            changes.append(f"warn {warn} days before")
+        if "excludedLibraries" in body:
+            libs = body["excludedLibraries"]
+            if not isinstance(libs, list) or not all(isinstance(x, str) for x in libs):
+                raise web.HTTPBadRequest(text='{"error":"Unknown libraries."}', content_type="application/json")
+            cfg["exclude_libraries"] = sorted(set(libs))
+            changes.append(f"skipping {', '.join(cfg['exclude_libraries']) or 'nothing'}")
+        if "channelId" in body:
+            cid = body["channelId"]
+            cfg["notification_channel_id"] = int(cid) if cid and str(cid).isdigit() else None
+            changes.append("notification channel")
+        if not changes:
+            return {"ok": False, "message": "Nothing to change."}
+        await cog.save_config()
+        self.data.cache.drop("cleanup:countdown")
+        self.data.cache.drop("cleanup:config")
+        logger.info(f"{self.actor(user)} changed cleanup settings on the website: {changes}")
+        return {"ok": True, "message": "Saved: " + ", ".join(changes) + "."}
+
+    async def cleanup_scan(self, user: dict) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        cog = self._cleanup_cog()
+        result = await cog.scan_now()
+        if result is None:
+            return {"ok": False, "message": "Plex isn't reachable right now, so nothing was scanned."}
+        self.data.cache.drop("cleanup:countdown")
+        n, d, would = len(result["notify"]), len(result["deleted"]), result["dry_run"]
+        logger.info(f"{self.actor(user)} ran a cleanup scan on the website")
+        return {"ok": True, "message": (f"Scan done: {n} title{'s' if n != 1 else ''} in the warning window, "
+                                        f"{d} {'would have been' if would else 'were'} removed.")}
+
+    async def link_candidates(self, user: dict) -> dict:
+        """Server members not yet linked to a Plex account, for the "Link Discord" picker."""
+        from sqlalchemy import select
+        from database.session import get_session
+        from plugins.user_mgmt.models import PlexUser
+        guild = home_guild(self.bot, self.config)
+        if not guild:
+            return {"discord": []}
+        async with get_session() as session:
+            linked = {r[0] for r in (await session.execute(select(PlexUser.discord_id).where(PlexUser.discord_id.isnot(None)))).all()}
+        members = [{"id": str(m.id), "name": m.display_name, "username": m.name}
+                   for m in guild.members if not m.bot and m.id not in linked]
+        members.sort(key=lambda m: m["name"].casefold())
+        return {"discord": members}
+
+    async def link_person(self, user: dict, body: dict) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        cog = self.bot.get_cog("UserMgmtCog") if self.bot else None
+        name, did = str(body.get("plexName") or ""), str(body.get("discordId") or "")
+        if not cog or not name or not did.isdigit():
+            raise web.HTTPBadRequest(text='{"error":"Pick a Discord member to link."}', content_type="application/json")
+        ok, message = await cog.link_accounts(int(did), name)
+        self.data.cache.drop("auth:plex-access")
+        return {"ok": ok, "message": message}
+
+    async def match_person(self, user: dict, body: dict) -> dict:
+        """"This is Plex account X": fix a tracking row that can't be matched on its own."""
+        from portal.admin import Admin
+        from plugins.user_mgmt.cog import match_account
+        self.limit(user["user"]["id"], "admin")
+        name, title = str(body.get("plexName") or ""), str(body.get("account") or "")
+        accounts = await Admin(self.data, bot=self.bot).accounts() or []
+        same = [a for a in accounts if a["title"] == title and not a["owner"]]
+        if not name or not same:
+            return {"ok": False, "message": "Pick one of the Plex accounts your server is shared with."}
+        if len(same) > 1:
+            return {"ok": False, "message": f"More than one Plex account is called {title}, so Plexbie can't tell which."}
+        account = same[0]
+        try:
+            await match_account(name, account)
+        except (LookupError, ValueError) as e:
+            return {"ok": False, "message": str(e)}
+        self.data.cache.drop("auth:plex-access")
+        logger.info(f"{self.actor(user)} matched {name} to Plex account {title} on the website")
+        return {"ok": True, "message": f"{name} is {title} on Plex now. Watch time and reminders follow that account."}
+
+    async def rename_person(self, user: dict, body: dict) -> dict:
+        """Manage → People → Rename: the name shown everywhere, Tautulli included."""
+        from plugins.user_mgmt.cog import rename_person
+        self.limit(user["user"]["id"], "admin")
+        name, new = str(body.get("plexName") or ""), str(body.get("name") or "")
+        try:
+            tautulli_note = await rename_person(self.services, name, new)
+        except (LookupError, ValueError) as e:
+            return {"ok": False, "message": str(e)}
+        self.data.cache.drop("leaderboard")
+        logger.info(f"{self.actor(user)} renamed {name} to {new!r} on the website")
+        return {"ok": True, "message": f"Shown as {' '.join(new.split())} from now on. {tautulli_note}"}
+
+    async def keep_person(self, user: dict, body: dict) -> dict:
+        """The "Never remove" switch on a person."""
+        from plugins.user_mgmt.cog import set_never_remove
+        self.limit(user["user"]["id"], "admin")
+        name, keep = str(body.get("plexName") or ""), _flag(body, "keep")
+        try:
+            await set_never_remove(name, keep)
+        except LookupError as e:
+            return {"ok": False, "message": str(e)}
+        logger.info(f"{self.actor(user)} set never-remove {'on' if keep else 'off'} for {name} on the website")
+        return {"ok": True, "message": f"{name} will never be removed for not watching." if keep
+                else f"{name} is back on the inactivity check, with the usual warning first."}
+
+    async def unlink_person(self, user: dict, body: dict) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        cog = self.bot.get_cog("UserMgmtCog") if self.bot else None
+        name = str(body.get("plexName") or "")
+        if not cog or not name:
+            raise web.HTTPBadRequest(text='{"error":"User management isn\'t available."}', content_type="application/json")
+        ok, message = await cog.unlink_account(name)
+        return {"ok": ok, "message": message}
+
+    # ------------------------------------------------------ help requests
+    async def ask_help(self, user: dict, request_key: str, body: dict) -> dict:
+        """Someone says their request went wrong: tell the admins everything at once."""
+        from portal import help as helpdesk
+        if not str(request_key).isdigit():
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        rec = await get_request(int(request_key))
+        if not rec or not helpdesk.owns(rec, user):
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        reason = body.get("reason") if body.get("reason") in helpdesk.REASONS else "other"
+        note = str(body.get("note") or "").strip()
+        if reason == "other" and not note:
+            raise web.HTTPBadRequest(text='{"error":"Say a little about what\'s wrong."}', content_type="application/json")
+        if await helpdesk.open_for({str(request_key)}):
+            raise web.HTTPConflict(text='{"error":"You already asked for help with this one. An admin will be in touch."}', content_type="application/json")
+        self.limit(user.get("discordId") or f"plex:{user.get('plexAccountId')}", "help")
+
+        mine = await self.data.my_requests(int(user["discordId"]) if user.get("discordId") else None, user.get("plexAccountId"))
+        row = next((m for m in mine if str(m.get("id")) == str(request_key)), None) or {}
+        progress = row.get("progress") or {}
+        status_now = ", ".join(x for x in (row.get("stage", "").capitalize(), progress.get("detail"),
+                                            f"{progress['percent']}%" if progress.get("percent") is not None else None) if x)
+        media = rec.get("media") or {}
+        title = media.get("title") or media.get("name") or "Untitled"
+        seasons = rec.get("seasons")
+        h = await helpdesk.create(request_key=str(request_key), slot=row.get("slot") or 0, title=title,
+                                  kind=row.get("title", {}).get("kind") or media.get("media_type") or "",
+                                  seasons=seasons, user=user, reason=helpdesk.REASONS[reason], note=note,
+                                  status_now=status_now or "Unknown")
+        try:
+            await self._tell_admins_about_help(h)
+        except Exception as e:   # the request is saved and shows on Manage either way
+            logger.warning(f"Help request {h['id']} saved, but telling the admins failed: {type(e).__name__}: {e}")
+        return {"ok": True, "message": "Sent. An admin will take a look and get back to you.", "help": {"id": h["id"], "reason": h["reason"]}}
+
+    async def _tell_admins_about_help(self, h: dict) -> None:
+        import discord
+        from core import notify
+        seasons = h.get("seasons")
+        what = f"{h['title']}" + (f" (season {', '.join(str(n) for n in seasons)})" if isinstance(seasons, list) and seasons else "")
+        number = f"No. {int(h['slot']):04d}" if h.get("slot") else "A request"
+        channel = admin_channel(self.bot, self.config)
+        if channel:
+            embed = discord.Embed(title=f"🆘 Help asked on {number}: {what}", color=discord.Color.orange(),
+                                  description=f"**{h['reason']}**" + (f"\n> {h['note']}" if h.get("note") else ""))
+            embed.add_field(name="From", value=h["who"] + (f" (<@{h['discord_id']}>)" if h.get("discord_id") else " (Plex sign-in)"), inline=True)
+            embed.add_field(name="Plexbie sees", value=h.get("status_then") or "Unknown", inline=True)
+            view = None
+            if h.get("offer") == "name":
+                from portal.help_view import HelpByNameView, footer
+                embed.set_footer(text=footer(h["id"]))
+                view = HelpByNameView()
+            else:
+                embed.set_footer(text="Search again or mark it resolved on the website: Manage → Requests")
+            try:
+                await channel.send(embed=embed, **({"view": view} if view else {}))
+            except Exception as e:
+                logger.warning(f"Could not post a help request to the admin channel: {e}")
+        guild = home_guild(self.bot, self.config)
+        ids = {str(self.config.bot_owner_id)} if self.config.bot_owner_id else set()
+        if guild:
+            for m in guild.members:
+                roles = {r.id for r in m.roles}
+                if m.guild_permissions.administrator or (self.config.admin_role_id and self.config.admin_role_id in roles):
+                    ids.add(str(m.id))
+        from database.kv_store import kv_get
+        from portal.auth import OWNER_ID
+        owner_id = await kv_get(*OWNER_ID)                # the Plex owner's account, as plex.tv said
+        await notify.push_to_admins(discord_ids=ids, plex_account_ids={owner_id} if owner_id else set(),
+                                    title=f"Help asked on {number}", body=f"{h['who']}: {h['reason']}. {what}",
+                                    url="/app/manage?tab=requests", tag=f"help-{h['id']}")
+
+    async def help_search(self, user: dict, hid: str, by_episode: bool = False) -> dict:
+        """Search again for a help request's title; by_episode skips the season search."""
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        h = next((x for x in await helpdesk.all_help() if x["id"] == hid), None)
+        if not h:
+            raise web.HTTPNotFound(text='{"error":"No such help request."}', content_type="application/json")
+        actor = self.actor(user)
+
+        async def nothing(seasons):
+            await helpdesk.note_search(hid, "Plexbie", f"Nothing found for season {', '.join(map(str, seasons))}, "
+                                                       "as a whole or episode by episode")
+
+        async def movie(text, found):
+            await helpdesk.note_search(hid, "Plexbie", text)
+        try:
+            if by_episode:
+                message = await helpdesk.search_episodes(self.services, h["request"], on_nothing=nothing)
+            else:
+                message = await helpdesk.search_again(self.services, h["request"], on_nothing=nothing, on_movie=movie)
+        except LookupError as e:
+            return {"ok": False, "message": str(e)}
+        await helpdesk.note_search(hid, actor, message)
+        self.data.cache.drop("sonarr:queue")
+        self.data.cache.drop("radarr:queue")
+        return {"ok": True, "message": message}
+
+    async def help_by_name(self, user: dict, hid: str) -> dict:
+        """Search by name (NZBHydra) for a help request's title. It runs in the
+        background and reports on the help request and in the admin channel,
+        resolving the help request when it grabs something."""
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        if not any(x["id"] == hid for x in await helpdesk.all_help()):
+            raise web.HTTPNotFound(text='{"error":"No such help request."}', content_type="application/json")
+        channel = admin_channel(self.bot, self.config)
+
+        async def tell(text):
+            if channel:
+                await channel.send(text)
+        try:
+            message = await helpdesk.name_search_for_help(self.services, hid, self.actor(user), tell=tell)
+        except LookupError as e:
+            return {"ok": False, "message": str(e)}
+        self.data.cache.drop("sonarr:queue")
+        self.data.cache.drop("radarr:queue")
+        return {"ok": True, "message": message}
+
+    async def help_resolve(self, user: dict, hid: str, body: dict) -> dict:
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        reply = str(body.get("reply") or "").strip()
+        h = await helpdesk.resolve(hid, self.actor(user), reply)
+        if not h:
+            raise web.HTTPNotFound(text='{"error":"No such help request."}', content_type="application/json")
+        if h.get("already"):
+            return {"ok": False, "message": "Someone already resolved this one."}
+        text = (f"About your request for {h['title']}: {reply}" if reply
+                else f"An admin looked into your request for {h['title']} and it should be sorted now.")
+        if h.get("discord_id") and self.bot:
+            from core.admin_mirror import dm_user_id
+            await dm_user_id(self.bot, self.services, h["discord_id"], context=f"help resolved for {h['title']}", content=f"🛠️ {text}")
+        else:
+            from core.notify import notify_member
+            await notify_member(self.services, title=f"Update on {h['title']}", body=text, url="/app/schedule",
+                                plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"),
+                                context=f"help resolved for {h['title']}")
+        logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']}")
+        return {"ok": True, "message": f"Resolved, and {h['who']} has been told."}
+
+    # ---------------------------------------------------- discord tools
+    def _guild(self):
+        return home_guild(self.bot, self.config)
+
+    async def say(self, user: dict, body: dict) -> dict:
+        """What /say does: post as Plexbie. Mass pings stay off unless asked for."""
+        import discord
+        self.limit(user["user"]["id"], "admin")
+        guild = self._guild()
+        text = str(body.get("message") or "").strip()
+        cid = str(body.get("channelId") or "")
+        if not guild or not cid.isdigit():
+            raise web.HTTPBadRequest(text='{"error":"Pick a channel."}', content_type="application/json")
+        if not 1 <= len(text) <= 2000:
+            raise web.HTTPBadRequest(text='{"error":"Messages are 1 to 2000 characters."}', content_type="application/json")
+        channel = guild.get_channel(int(cid))
+        if channel is None or not hasattr(channel, "send"):
+            raise web.HTTPNotFound(text='{"error":"That channel isn\'t there any more."}', content_type="application/json")
+        pings = _flag(body, "allowMassPings")
+        try:
+            await channel.send(text, allowed_mentions=discord.AllowedMentions(everyone=pings, roles=pings, users=True))
+        except discord.Forbidden:
+            return {"ok": False, "message": f"Plexbie can't post in #{channel.name}."}
+        logger.info(f"{self.actor(user)} posted as Plexbie in #{channel.name} from the website")
+        return {"ok": True, "message": f"Posted in #{channel.name}."}
+
+    async def discord_overview(self, user: dict) -> dict:
+        """The Manage page's Discord tab: channels for /say, who brought whom, the live watch party."""
+        from sqlalchemy import select
+        from database.kv_store import kv_get_all
+        from database.session import get_session
+        from plugins.invite_tracker.models import InviteUse
+        from portal.invites import NAMESPACE as INVITES
+
+        guild = self._guild()
+        name_of = lambda uid, fallback: (guild.get_member(int(uid)).display_name  # noqa: E731
+                                         if guild and str(uid).isdigit() and guild.get_member(int(uid)) else fallback)
+        joins = []
+        if guild:
+            async with get_session() as session:
+                rows = (await session.execute(
+                    select(InviteUse).where(InviteUse.guild_id == str(guild.id)).order_by(InviteUse.joined_at.desc()).limit(150)
+                )).scalars().all()
+            for r in rows:
+                role = guild.get_role(int(r.role_id)) if (r.auto_role_assigned and r.role_id and str(r.role_id).isdigit()) else None
+                joins.append({"who": name_of(r.joiner_id, r.joiner_name or "Someone who left"),
+                              "by": name_of(r.inviter_id, r.inviter_name or "Unknown"), "via": "discord",
+                              "code": r.invite_code, "at": r.joined_at.isoformat() if r.joined_at else None,
+                              "role": role.name if role else None})
+        for rec in (await kv_get_all(INVITES)).values():
+            if isinstance(rec, dict) and rec.get("used_at"):
+                joins.append({"who": rec.get("used_by") or rec.get("label"), "by": rec.get("created_by") or "an admin",
+                              "via": "plexbie", "code": rec.get("label"), "at": rec.get("used_at"), "role": None})
+        joins.sort(key=lambda j: j["at"] or "", reverse=True)
+
+        party = None
+        cog = self.bot.get_cog("WatchPartyCog") if self.bot else None
+        active = getattr(cog, "active_party", None)
+        if active:
+            channel = self.bot.get_channel(active.voice_channel_id)
+            party = {
+                "channel": channel.name if channel else None,
+                "streamer": name_of(active.streamer_discord_id, active.streamer_plex_username or "Someone"),
+                "title": active.media_title,
+                "startedAt": active.started_at.isoformat() if active.started_at else None,
+                "people": [name_of(p.discord_id, p.plex_username) for p in active.participants.values()],
+            }
+        channels = [{"id": str(c.id), "name": c.name} for c in (guild.text_channels if guild else [])
+                    if guild.me is None or c.permissions_for(guild.me).send_messages]
+        return {"channels": channels, "joins": joins, "party": party}
+
+    async def remove_person(self, user: dict, body: dict) -> dict:
+        self.limit(user["user"]["id"], "admin")
+        name = str(body.get("plexName") or "")
+        cog = self.bot.get_cog("UserMgmtCog")
+        if not cog or not name:
+            raise web.HTTPBadRequest(text='{"error":"User management isn\'t available."}', content_type="application/json")
+        ok, message = await cog.remove_plex_user(name, self.actor(user))
+        return {"ok": ok, "message": message.replace("❌ ", "").replace("✅ ", "")}

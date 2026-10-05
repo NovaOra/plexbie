@@ -1,0 +1,230 @@
+// home.plexbie.com/stats: what plexbie.com's visitors do, from the events its Worker
+// stores in D1 (../worker.js, the site's src/project/track.ts). Server-rendered HTML,
+// a few hundred rows at most per query. Only for the maintainer: Cloudflare Access sits
+// in front, and every request's Access token is checked here as well.
+
+const TZ = "America/Chicago";
+const RANGES = { 1: "Today", 7: "7 days", 30: "30 days", 90: "90 days", 365: "A year" };
+
+// ---- Access ---------------------------------------------------------------------------
+let certs = null;
+let certsAt = 0;
+/** Access's signing keys, fetched again at most once a minute (a key rotation, or a token
+ *  naming a key we haven't seen), so a stream of bad tokens can't make it fetch each time. */
+async function keyFor(env, kid) {
+  let jwk = certs?.find((k) => k.kid === kid);
+  if (!jwk && Date.now() - certsAt > 60000) {
+    certsAt = Date.now();
+    certs = (await (await fetch(`${env.TEAM}/cdn-cgi/access/certs`)).json()).keys;
+    jwk = certs.find((k) => k.kid === kid);
+  }
+  return jwk;
+}
+const b64 = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
+
+async function allowed(request, env) {
+  const token = request.headers.get("Cf-Access-Jwt-Assertion");
+  if (!token || !env.AUD) return false;
+  const [h, p, sig] = token.split(".");
+  if (!h || !p || !sig) return false;
+  const head = JSON.parse(new TextDecoder().decode(b64(h)));
+  const claims = JSON.parse(new TextDecoder().decode(b64(p)));
+  const auds = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+  if (head.alg !== "RS256" || claims.iss !== env.TEAM || !auds.includes(env.AUD) || !(claims.exp * 1000 > Date.now())) return false;
+  const jwk = await keyFor(env, head.kid);
+  if (!jwk) return false;
+  const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+  return crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64(sig), new TextEncoder().encode(`${h}.${p}`));
+}
+
+// ---- data ----------------------------------------------------------------------------
+const all = async (env, sql, ...args) => (await env.STATS.prepare(sql).bind(...args).all()).results;
+const one = async (env, sql, ...args) => (await env.STATS.prepare(sql).bind(...args).first()) || {};
+
+async function load(env, days) {
+  const since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
+  const W = "day >= ?";
+  const [totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, times] =
+    await Promise.all([
+      one(env, `SELECT SUM(CASE WHEN event='pageview' THEN 1 ELSE 0 END) AS views,
+                       COUNT(DISTINCT CASE WHEN event='pageview' THEN day || visitor END) AS visitors,
+                       SUM(CASE WHEN event='outbound' AND label LIKE 'github.com%' THEN 1 ELSE 0 END) AS github,
+                       SUM(CASE WHEN event='outbound' AND (label LIKE 'ko-fi.com%' OR label LIKE 'buymeacoffee.com%') THEN 1 ELSE 0 END) AS support
+                FROM events WHERE ${W}`, since),
+      one(env, `SELECT AVG(value) AS seconds, COUNT(*) AS n FROM events WHERE ${W} AND event='engage'`, since),
+      all(env, `SELECT CAST(value AS INTEGER) AS q, COUNT(*) AS n FROM events WHERE ${W} AND event='video' GROUP BY q ORDER BY q`, since),
+      all(env, `SELECT day, SUM(event='pageview') AS views, COUNT(DISTINCT CASE WHEN event='pageview' THEN visitor END) AS visitors
+                FROM events WHERE ${W} GROUP BY day ORDER BY day`, since),
+      all(env, `SELECT COALESCE(referrer, 'Direct or unknown') AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='pageview' AND ts IN
+                (SELECT MIN(ts) FROM events WHERE ${W} AND event='pageview' GROUP BY day, visitor) GROUP BY k ORDER BY n DESC LIMIT 15`, since, since),
+      all(env, `SELECT COALESCE(country, '??') AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC LIMIT 15`, since),
+      all(env, `SELECT device AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since),
+      all(env, `SELECT browser AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since),
+      all(env, `SELECT os AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since),
+      all(env, `SELECT path AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC LIMIT 15`, since),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='click' AND label <> '' GROUP BY k ORDER BY n DESC LIMIT 20`, since),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='outbound' GROUP BY k ORDER BY n DESC LIMIT 20`, since),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='channel' GROUP BY k ORDER BY n DESC`, since),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='engage' GROUP BY k ORDER BY k`, since),
+      all(env, `SELECT ts, event, path, label, value, referrer, country, device, browser FROM events ORDER BY ts DESC LIMIT 40`),
+      all(env, `SELECT ts FROM events WHERE ${W} AND event='pageview' LIMIT 50000`, since),
+    ]);
+  const hours = Array(24).fill(0);
+  const hourOf = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", hourCycle: "h23" });
+  for (const r of times) hours[Number(hourOf.format(r.ts)) % 24]++;
+  return { since, totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, hours };
+}
+
+// ---- page ----------------------------------------------------------------------------
+const e = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const num = (n) => Number(n || 0).toLocaleString("en-US");
+const flag = (cc) => (/^[A-Z]{2}$/.test(cc) ? String.fromCodePoint(...[...cc].map((c) => 0x1f1a5 + c.charCodeAt(0))) + " " : "");
+const regionName = new Intl.DisplayNames(["en"], { type: "region" });
+const country = (cc) => (/^[A-Z]{2}$/.test(cc) ? `${flag(cc)}${regionName.of(cc)}` : "Unknown");
+
+function tile(label, value, note) {
+  return `<div class="tile"><div class="tile__label">${e(label)}</div><div class="tile__value">${e(value)}</div>${note ? `<div class="tile__note">${e(note)}</div>` : ""}</div>`;
+}
+
+/** A ranked list as bars: labels and numbers in ink, the bar carries the size. */
+function ranked(title, rows, fmt = (k) => k, empty = "Nothing yet.") {
+  const max = Math.max(1, ...rows.map((r) => r.n));
+  const body = rows.length ? rows.map((r) => `
+    <li title="${e(fmt(r.k))}: ${num(r.n)}"><span class="rk__k">${e(fmt(r.k))}</span><span class="rk__n">${num(r.n)}</span>
+      <span class="rk__bar" style="width:${Math.max(2, (r.n / max) * 100).toFixed(1)}%"></span></li>`).join("") : `<li class="muted">${e(empty)}</li>`;
+  return `<section class="card"><h2>${e(title)}</h2><ol class="rk">${body}</ol></section>`;
+}
+
+/** Visitors per day as columns, with a hover title per day and a table for screen readers. */
+function dailyChart(daily, since, days) {
+  const byDay = new Map(daily.map((d) => [d.day, d]));
+  const list = [];
+  for (let i = 0; i < days; i++) {
+    const day = new Date(Date.parse(since) + i * 86400000).toISOString().slice(0, 10);
+    list.push(byDay.get(day) || { day, views: 0, visitors: 0 });
+  }
+  const W = 960, H = 220, pad = 28, gap = 2;
+  const max = Math.max(1, ...list.map((d) => d.visitors));
+  const bw = Math.max(2, (W - pad) / list.length - gap);
+  const bars = list.map((d, i) => {
+    const h = (d.visitors / max) * (H - 30);
+    const x = pad + i * (bw + gap);
+    return `<rect x="${x.toFixed(1)}" y="${(H - 18 - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, d.visitors ? 2 : 0).toFixed(1)}" rx="${Math.min(4, bw / 2).toFixed(1)}">
+      <title>${e(d.day)}: ${d.visitors} visitors, ${d.views} page views</title></rect>
+      <rect class="hit" x="${x.toFixed(1)}" y="0" width="${(bw + gap).toFixed(1)}" height="${H}"><title>${e(d.day)}: ${d.visitors} visitors, ${d.views} page views</title></rect>`;
+  }).join("");
+  const ticks = [0, Math.round(max / 2), max].map((v) => `<text x="0" y="${(H - 18 - (v / max) * (H - 30) + 4).toFixed(1)}">${v}</text>
+      <line x1="${pad - 4}" x2="${W}" y1="${(H - 18 - (v / max) * (H - 30)).toFixed(1)}" y2="${(H - 18 - (v / max) * (H - 30)).toFixed(1)}"/>`).join("");
+  const labels = [list[0], list[Math.floor(list.length / 2)], list[list.length - 1]].map((d, i) =>
+    `<text class="x" x="${i === 0 ? pad : i === 1 ? W / 2 : W}" y="${H - 2}" text-anchor="${i === 0 ? "start" : i === 1 ? "middle" : "end"}">${e(d.day.slice(5))}</text>`).join("");
+  const table = list.map((d) => `<tr><td>${e(d.day)}</td><td>${d.visitors}</td><td>${d.views}</td></tr>`).join("");
+  return `<section class="card wide"><h2>Visitors per day</h2>
+    <svg viewBox="0 0 ${W} ${H}" class="daily" role="img" aria-label="Visitors per day">${ticks}${bars}${labels}</svg>
+    <details><summary>As a table</summary><table><thead><tr><th>Day</th><th>Visitors</th><th>Page views</th></tr></thead><tbody>${table}</tbody></table></details></section>`;
+}
+
+function hoursChart(hours) {
+  const max = Math.max(1, ...hours);
+  return `<section class="card"><h2>Time of day <small>(Chicago)</small></h2><div class="hours">${hours.map((n, h) =>
+    `<span title="${h}:00 to ${h}:59: ${n} page views" style="--h:${(n / max * 100).toFixed(1)}%"><i></i><b>${h % 6 === 0 ? h : ""}</b></span>`).join("")}</div></section>`;
+}
+
+function funnel(video) {
+  const at = Object.fromEntries(video.map((r) => [r.q, r.n]));
+  const start = at[0] || 0;
+  const rows = [[0, "Pressed play"], [25, "A quarter in"], [50, "Halfway"], [75, "Three quarters"], [100, "To the end"]];
+  return `<section class="card"><h2>The tour (channel 05)</h2><ol class="rk">${rows.map(([q, name]) => {
+    const n = at[q] || 0;
+    return `<li title="${name}: ${n}"><span class="rk__k">${name}</span><span class="rk__n">${num(n)}${q && start ? ` · ${Math.round((n / start) * 100)}%` : ""}</span>
+      <span class="rk__bar" style="width:${start ? Math.max(2, (n / start) * 100).toFixed(1) : 0}%"></span></li>`;
+  }).join("")}</ol></section>`;
+}
+
+function recentTable(rows) {
+  const t = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return `<section class="card wide"><h2>Latest</h2><div class="scroll"><table><thead><tr><th>When</th><th>What</th><th>Page</th><th>Detail</th><th>From</th><th>Where</th><th>On</th></tr></thead><tbody>${rows.map((r) => `
+    <tr><td>${e(t.format(r.ts))}</td><td>${e(r.event)}</td><td>${e(r.path)}</td><td>${e([r.label, r.value != null ? (r.event === "engage" ? `${r.value}s` : r.event === "video" ? `${r.value}%` : r.value) : ""].filter(Boolean).join(" · "))}</td>
+    <td>${e(r.referrer || "")}</td><td>${e(r.country ? country(r.country) : "")}</td><td>${e(`${r.device || ""} ${r.browser || ""}`.trim())}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing yet.</td></tr>`}</tbody></table></div></section>`;
+}
+
+function page(d, days) {
+  const t = d.totals;
+  const plays = (d.video.find((r) => r.q === 0) || {}).n || 0;
+  const done = (d.video.find((r) => r.q === 100) || {}).n || 0;
+  const secs = Math.round(d.engage.seconds || 0);
+  const scrollRows = d.scroll.map((r) => ({ k: r.k?.replace("scroll:", "") + "%", n: r.n }));
+  const nav = Object.entries(RANGES).map(([n, label]) => `<a href="?days=${n}"${Number(n) === days ? ' aria-current="page"' : ""}>${label}</a>`).join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow"><meta name="color-scheme" content="dark"><title>Plexbie stats</title>
+<link rel="icon" href="https://plexbie.com/brand/plexbie-96.png">
+<style>
+:root { --field:#10172b; --panel:#18213a; --rule:#2d385b; --ink:#f7f1f6; --muted:#aeb8d8; --screen:#ffd1e4; --tally:#ff5c93; }
+* { box-sizing: border-box; } body { margin:0; background:var(--field); color:var(--ink); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 16px; }
+header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
+h1 { margin:0; font-size:1.6rem; letter-spacing:-0.01em; display:flex; align-items:center; gap:10px; } h1 img { border-radius:7px; }
+nav { display:flex; flex-wrap:wrap; gap:6px; } nav a { color:var(--muted); text-decoration:none; padding:8px 12px; border-radius:999px; border:1px solid var(--rule); min-height:40px; display:inline-flex; align-items:center; }
+nav a[aria-current] { background:var(--screen); color:#141b30; border-color:var(--screen); font-weight:700; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:12px; }
+.tile, .card { background:var(--panel); border:1px solid var(--rule); border-radius:14px; padding:16px; min-width:0; }
+.tile__label { color:var(--muted); font-size:.82rem; } .tile__value { font-size:1.9rem; font-weight:800; letter-spacing:-0.02em; margin-top:2px; } .tile__note { color:var(--muted); font-size:.8rem; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; } .wide { grid-column:1 / -1; }
+h2 { margin:0 0 12px; font-size:1rem; } h2 small, .muted { color:var(--muted); font-weight:400; }
+.rk { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+.rk li { position:relative; display:flex; justify-content:space-between; gap:12px; padding:6px 10px; border-radius:6px; overflow:hidden; }
+.rk__k { position:relative; z-index:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .rk__n { position:relative; z-index:1; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.rk__bar { position:absolute; inset:0 auto 0 0; background:rgb(255 209 228 / .16); border-right:2px solid var(--screen); border-radius:6px 4px 4px 6px; }
+.daily { width:100%; height:auto; display:block; } .daily rect { fill:var(--screen); } .daily rect.hit { fill:transparent; } .daily rect.hit:hover { fill:rgb(255 255 255 / .05); }
+.daily text { fill:var(--muted); font-size:11px; } .daily line { stroke:var(--rule); stroke-width:1; }
+.hours { display:grid; grid-template-columns:repeat(24, 1fr); gap:2px; align-items:end; height:140px; }
+.hours span { position:relative; height:100%; display:flex; flex-direction:column; justify-content:flex-end; }
+.hours i { display:block; height:max(var(--h), 2px); background:var(--screen); border-radius:4px 4px 0 0; opacity:.9; } .hours b { color:var(--muted); font-size:10px; font-weight:400; height:14px; }
+details { margin-top:10px; color:var(--muted); } summary { cursor:pointer; min-height:32px; }
+table { width:100%; border-collapse:collapse; font-size:.86rem; font-variant-numeric:tabular-nums; } th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--rule); vertical-align:top; }
+th { color:var(--muted); font-weight:600; } .scroll { overflow-x:auto; }
+footer { color:var(--muted); font-size:.82rem; }
+</style></head><body><main>
+<header><h1><img src="https://plexbie.com/brand/plexbie-64.png" alt="" width="34" height="34"> Plexbie stats</h1><nav aria-label="Range">${nav}</nav></header>
+<div class="tiles">
+  ${tile("Visitors", num(t.visitors), "one per person per day")}
+  ${tile("Page views", num(t.views))}
+  ${tile("Time on a page", secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`, "average, while on screen")}
+  ${tile("Tour plays", num(plays), plays ? `${Math.round((done / plays) * 100)}% watched to the end` : "")}
+  ${tile("GitHub clicks", num(t.github))}
+  ${tile("Support clicks", num(t.support), "Ko-fi and Buy Me a Coffee")}
+</div>
+<div class="grid">
+  ${dailyChart(d.daily, d.since, Math.min(days, 365))}
+  ${ranked("Came from", d.sources)}
+  ${ranked("Countries", d.countries, country)}
+  ${ranked("Pages", d.pages)}
+  ${funnel(d.video)}
+  ${ranked("TV channels picked", d.channels)}
+  ${ranked("Links to other sites", d.outbound)}
+  ${ranked("Buttons and links on the page", d.clicks)}
+  ${ranked("How far down they read", scrollRows)}
+  ${hoursChart(d.hours)}
+  ${ranked("Devices", d.devices)}
+  ${ranked("Browsers", d.browsers)}
+  ${ranked("Systems", d.oses)}
+  ${recentTable(d.recent)}
+</div>
+<footer>plexbie.com's own counts: no cookies, no IP addresses kept, and browsers sending Do Not Track or Global Privacy Control aren't counted. Visitors are counted once per day each. Raw events are kept about 13 months.</footer>
+</main></body></html>`;
+}
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (!url.pathname.startsWith("/stats")) return new Response("Not found", { status: 404 });
+    if (!(await allowed(request, env).catch(() => false))) {
+      return new Response("Not allowed.", { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
+    const asked = url.searchParams.get("days");
+    const days = asked && Object.hasOwn(RANGES, asked) ? Number(asked) : 30;
+    const data = await load(env, days);
+    if (url.pathname === "/stats/data.json") return Response.json(data, { headers: { "Cache-Control": "no-store" } });
+    return new Response(page(data, days), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https://plexbie.com; frame-ancestors 'none'" } });
+  },
+};

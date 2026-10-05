@@ -1,0 +1,380 @@
+[
+ {
+  "kind": "tv",
+  "id": "95396",
+  "title": "Severance",
+  "year": "2022",
+  "poster": "/pPHpeI2X1qEd1CS1SeyrdhZ4qnT.jpg",
+  "backdrop": "/ixgFmf1X59PUZam2qbAfskx2gQr.jpg",
+  "overview": "Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives. When a mysterious colleague appears outside of work, it begins a journey to discover the truth about their jobs.",
+  "genres": [
+   "Drama",
+   "Mystery"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 9
+   },
+   {
+    "n": 2,
+    "episodes": 10
+   },
+   {
+    "n": 3,
+    "episodes": 0
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "693134",
+  "title": "Dune: Part Two",
+  "year": "2024",
+  "poster": "/6izwz7rsy95ARzTR3poZ8H6c5pp.jpg",
+  "backdrop": "/eZ239CUp1d6OryZEBPnO2n87gMG.jpg",
+  "overview": "Follow the mythic journey of Paul Atreides as he unites with Chani and the Fremen while on a path of revenge against the conspirators who destroyed his family.",
+  "genres": [
+   "Science Fiction",
+   "Adventure"
+  ],
+  "runtime": 167
+ },
+ {
+  "kind": "tv",
+  "id": "136315",
+  "title": "The Bear",
+  "year": "2022",
+  "poster": "/eKfVzzEazSIjJMrw9ADa2x8ksLz.jpg",
+  "backdrop": "/aJtG4txtmiRHwAAqENQHZvBs6kY.jpg",
+  "overview": "Carmy, a young fine-dining chef, comes home to Chicago to run his family sandwich shop. As he fights to transform the shop and himself, he works alongside a rough-around-the-edges crew that ultimately reveal themselves as his chosen family.",
+  "genres": [
+   "Drama",
+   "Comedy"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 8
+   },
+   {
+    "n": 2,
+    "episodes": 10
+   },
+   {
+    "n": 3,
+    "episodes": 10
+   },
+   {
+    "n": 4,
+    "episodes": 10
+   },
+   {
+    "n": 5,
+    "episodes": 8
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "666277",
+  "title": "Past Lives",
+  "year": "2023",
+  "poster": "/k3waqVXSnvCZWfJYNtdamTgTtTA.jpg",
+  "backdrop": "/7HR38hMBl23lf38MAN63y4pKsHz.jpg",
+  "overview": "After decades apart, childhood friends Nora and Hae Sung are reunited in New York for one fateful weekend as they confront notions of destiny, love, and the choices that make a life.",
+  "genres": [
+   "Drama",
+   "Romance"
+  ],
+  "runtime": 106
+ },
+ {
+  "kind": "tv",
+  "id": "126308",
+  "title": "Shōgun",
+  "year": "2024",
+  "poster": "/7O4iVfOMQmdCSxhOg1WnzG1AgYT.jpg",
+  "backdrop": "/bwSmgmd90hCWwqOKQYTEraeOZhJ.jpg",
+  "overview": "In Japan in the year 1600, at the dawn of a century-defining civil war, Lord Yoshii Toranaga is fighting for his life as his enemies on the Council of Regents unite against him, when a mysterious European ship is found marooned in a nearby fishing village.",
+  "genres": [
+   "Drama",
+   "War & Politics"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 10
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "545611",
+  "title": "Everything Everywhere All at Once",
+  "year": "2022",
+  "poster": "/u68AjlvlutfEIcpmbYpKcdi09ut.jpg",
+  "backdrop": "/fIwiFha3WPu5nHkBeMQ4GzEk0Hv.jpg",
+  "overview": "An aging Chinese immigrant is swept up in an insane adventure, where she alone can save what's important to her by connecting with the lives she could have led in other universes.",
+  "genres": [
+   "Action",
+   "Adventure"
+  ],
+  "runtime": 140
+ },
+ {
+  "kind": "tv",
+  "id": "95480",
+  "title": "Slow Horses",
+  "year": "2022",
+  "poster": "/AdYr4DjOgXvDUMwu6vEhZy1Rnxk.jpg",
+  "backdrop": "/gPQppUnLx9vqPDLz3WwZ2HJsNbt.jpg",
+  "overview": "Follow a dysfunctional team of MI5 agents—and their obnoxious boss, the notorious Jackson Lamb—as they navigate the espionage world's smoke and mirrors to defend England from sinister forces.",
+  "genres": [
+   "Crime",
+   "Drama"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 6
+   },
+   {
+    "n": 2,
+    "episodes": 6
+   },
+   {
+    "n": 3,
+    "episodes": 6
+   },
+   {
+    "n": 4,
+    "episodes": 6
+   },
+   {
+    "n": 5,
+    "episodes": 6
+   },
+   {
+    "n": 6,
+    "episodes": 6
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "569094",
+  "title": "Spider-Man: Across the Spider-Verse",
+  "year": "2023",
+  "poster": "/8Vt6mWEReuy4Of61Lnj5Xj704m8.jpg",
+  "backdrop": "/kVd3a9YeLGkoeR50jGEXM6EqseS.jpg",
+  "overview": "After reuniting with Gwen Stacy, Brooklyn’s full-time, friendly neighborhood Spider-Man is catapulted across the Multiverse, where he encounters the Spider Society, a team of Spider-People charged with protecting the Multiverse's very existence.",
+  "genres": [
+   "Animation",
+   "Action"
+  ],
+  "runtime": 140
+ },
+ {
+  "kind": "tv",
+  "id": "100088",
+  "title": "The Last of Us",
+  "year": "2023",
+  "poster": "/dmo6TYuuJgaYinXBPjrgG9mB5od.jpg",
+  "backdrop": "/lY2DhbA7Hy44fAKddr06UrXWWaQ.jpg",
+  "overview": "Twenty years after modern civilization has been destroyed, Joel, a hardened survivor, is hired to smuggle Ellie, a 14-year-old girl, out of an oppressive quarantine zone.",
+  "genres": [
+   "Drama"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 9
+   },
+   {
+    "n": 2,
+    "episodes": 7
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "872585",
+  "title": "Oppenheimer",
+  "year": "2023",
+  "poster": "/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg",
+  "backdrop": "/neeNHeXjMF5fXoCJRsOmkNGC7q.jpg",
+  "overview": "The story of J. Robert Oppenheimer's role in the development of the atomic bomb during World War II.",
+  "genres": [
+   "Drama",
+   "History"
+  ],
+  "runtime": 181
+ },
+ {
+  "kind": "tv",
+  "id": "83867",
+  "title": "Andor",
+  "year": "2022",
+  "poster": "/khZqmwHQicTYoS7Flreb9EddFZC.jpg",
+  "backdrop": "/quCeAmVQHfsdcYkicbxZWVauCVb.jpg",
+  "overview": "In an era filled with danger, deception and intrigue, Cassian Andor will discover the difference he can make in the struggle against the tyrannical Galactic Empire. He embarks on a path that is destined to turn him into a rebel hero.",
+  "genres": [
+   "Sci-Fi & Fantasy",
+   "Action & Adventure"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 12
+   },
+   {
+    "n": 2,
+    "episodes": 12
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "1184918",
+  "title": "The Wild Robot",
+  "year": "2024",
+  "poster": "/wTnV3PCVW5O92JMrFvvrRcV39RU.jpg",
+  "backdrop": "/1pmXyN3sKeYoUhu5VBZiDU4BX21.jpg",
+  "overview": "After a shipwreck, an intelligent robot called Roz is stranded on an uninhabited island. To survive the harsh environment, Roz bonds with the island's animals and cares for an orphaned baby goose.",
+  "genres": [
+   "Family",
+   "Animation"
+  ],
+  "runtime": 102
+ },
+ {
+  "kind": "tv",
+  "id": "225180",
+  "title": "Blue Eye Samurai",
+  "year": "2023",
+  "poster": "/fXm3JT4WLQVnwukdvghtAblc1wc.jpg",
+  "backdrop": "/oCMZpwLBcb3dnRuzEKWNWrw1tHz.jpg",
+  "overview": "Driven by a dream of revenge against those who made her an outcast in Edo-period Japan, a young warrior cuts a bloody path toward her destiny.",
+  "genres": [
+   "Action & Adventure",
+   "Animation"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 8
+   },
+   {
+    "n": 2,
+    "episodes": 0
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "329865",
+  "title": "Arrival",
+  "year": "2016",
+  "poster": "/pEzNVQfdzYDzVK0XqxERIw2x2se.jpg",
+  "backdrop": "/8MUZz7oPXQftFTslZpRP3CVMOoq.jpg",
+  "overview": "Taking place after alien crafts land around the world, an expert linguist is recruited by the military to determine whether they come in peace or are a threat.",
+  "genres": [
+   "Drama",
+   "Science Fiction"
+  ],
+  "runtime": 116
+ },
+ {
+  "kind": "tv",
+  "id": "125935",
+  "title": "Abbott Elementary",
+  "year": "2021",
+  "poster": "/nBe1e3JJEZ6veGrVXNF0fRoLu56.jpg",
+  "backdrop": "/asDINJT3b7tEa76uWI1rZ5TWdJF.jpg",
+  "overview": "In this workplace comedy, a group of dedicated, passionate teachers — and a slightly tone-deaf principal — are brought together in a Philadelphia public school where, despite the odds stacked against them, they are determined to help their students succeed in…",
+  "genres": [
+   "Comedy"
+  ],
+  "runtime": null,
+  "seasons": [
+   {
+    "n": 1,
+    "episodes": 13
+   },
+   {
+    "n": 2,
+    "episodes": 22
+   },
+   {
+    "n": 3,
+    "episodes": 13
+   },
+   {
+    "n": 4,
+    "episodes": 22
+   },
+   {
+    "n": 5,
+    "episodes": 22
+   },
+   {
+    "n": 6,
+    "episodes": 2
+   }
+  ]
+ },
+ {
+  "kind": "movie",
+  "id": "346648",
+  "title": "Paddington 2",
+  "year": "2017",
+  "poster": "/1OJ9vkD5xPt3skC6KguyXAgagRZ.jpg",
+  "backdrop": "/kRVUMsXFzhuXjr20JcCGc6TapxA.jpg",
+  "overview": "Paddington, now happily settled with the Browns, picks up a series of odd jobs to buy the perfect present for his Aunt Lucy, but it is stolen.",
+  "genres": [
+   "Adventure",
+   "Comedy"
+  ],
+  "runtime": 104
+ },
+ {
+  "kind": "audiobook",
+  "id": "OL-hailmary",
+  "title": "Project Hail Mary",
+  "year": "2021",
+  "author": "Andy Weir",
+  "poster": "ol:11200092"
+ },
+ {
+  "kind": "ebook",
+  "id": "OL-piranesi",
+  "title": "Piranesi",
+  "year": "2020",
+  "author": "Susanna Clarke",
+  "poster": "ol:10226290"
+ },
+ {
+  "kind": "ebook",
+  "id": "OL-tomorrow",
+  "title": "Tomorrow, and Tomorrow, and Tomorrow",
+  "year": "2022",
+  "author": "Gabrielle Zevin",
+  "poster": "ol:12859975"
+ },
+ {
+  "kind": "audiobook",
+  "id": "OL-hobbit",
+  "title": "The Hobbit",
+  "year": "1937",
+  "author": "J.R.R. Tolkien",
+  "poster": "ol:14627509"
+ }
+]

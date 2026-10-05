@@ -1,0 +1,37 @@
+# Plexbie
+
+> Plexbie is a free, self-hosted Discord bot and website that ties together the
+> services a home Plex server already runs: Plex, Seerr (formerly Overseerr and Jellyseerr),
+> Tautulli, Sonarr, Radarr and SABnzbd. It doesn't replace any of them. You keep
+> running them, and Plexbie connects them and gives your household one place to
+> request media, get invited, follow downloads and see who's watching, from
+> Discord or the web. It runs as one Docker container (Unraid template included).
+
+Plexbie is for people who already run a Plex server with the usual stack and want
+one front end for the people they share it with, instead of sending them to a
+different app for each job. It is open source under the AGPL-3.0.
+
+## What it connects (you run these; Plexbie ties them together)
+
+- **Plex**: invites to the server, linking Plex accounts to Discord members, removing people after a warned period of inactivity, announcing new arrivals (from Plex webhooks).
+- **Seerr**: requests for films and TV with an admin approve/decline flow, and live status from Seerr webhooks.
+- **Tautulli**: who is watching now, an all-time leaderboard, daily watch streaks, inactivity tracking.
+- **Sonarr / Radarr**: webhooks for progress, and searches when a request is stuck (a season is tried whole, then episode by episode).
+- **SABnzbd**: live download progress, including an Unpacking step.
+- **Audiobookshelf-style libraries**: audiobook and ebook requests are downloaded, renamed and filed.
+- **Discord**: slash commands for everything, approval cards for admins, DMs to members.
+
+## What people get
+
+- Requests from Discord or the website, with season-by-season status and a "something's wrong" help request that reaches the admins.
+- Invite links and Sign in with Plex, so people without Discord can join, request and get phone alerts.
+- Watch parties: watching together over Discord Go Live counts toward the leaderboard.
+- A Manage page for admins that does what the Discord admin commands do: approvals, invites, people, cleanup of unwatched media.
+- Health checks for Plex and Tautulli, with alerts to an admin channel.
+
+## Links
+
+- [Website](https://plexbie.com/)
+- [Source and setup (GitHub)](https://github.com/NovaOra/plexbie)
+- [Quick start](https://github.com/NovaOra/plexbie#quick-start)
+- [Privacy](https://plexbie.com/privacy)

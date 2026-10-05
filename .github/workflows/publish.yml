@@ -1,0 +1,74 @@
+# Publishes the Docker image (bot and website in one) to the GitHub Container
+# Registry once the tests have passed on main, and for every version tag.
+#   ghcr.io/novaora/plexbie:latest    newest main
+#   ghcr.io/novaora/plexbie:1.2.3     a v1.2.3 tag
+#   ghcr.io/novaora/plexbie:sha-...   any published commit
+# The Unraid template (unraid/plexbie.xml) installs :latest.
+# Actions are pinned to commits (Dependabot keeps them current), since this job
+# can push the image everyone installs.
+name: publish
+
+on:
+  workflow_run:
+    workflows: [tests]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    # From a tests run: only when they passed, on a push to this repository's own
+    # main. A pull request from a fork runs the tests too, and its branch may also
+    # be called "main"; without these checks its code would be published as :latest.
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/plexbie
+          tags: |
+            type=raw,value=latest,enable=${{ github.event_name != 'push' }}
+            type=semver,pattern={{version}}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=Plexbie
+            org.opencontainers.image.description=A Discord bot and website for a household's Plex server
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

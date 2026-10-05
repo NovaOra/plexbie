@@ -1,0 +1,12 @@
+{
+    "name": "watch_party",
+    "version": "1.0.0",
+    "description": "Automatic watch party credit tracking for Discord Go Live streams",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": ["user_mgmt", "watch_tracking"],
+    "commands": [
+        "/watchparty-stats",
+        "/watchparty-active"
+    ]
+}

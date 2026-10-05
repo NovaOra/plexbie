@@ -1,0 +1,9 @@
+{
+    "name": "watch_tracking",
+    "version": "1.0.0",
+    "description": "Auto-updating Now Watching, leaderboard and streak displays in a stats channel",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": []
+}

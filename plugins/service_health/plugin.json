@@ -1,0 +1,9 @@
+{
+    "name": "service_health",
+    "version": "1.0.0",
+    "description": "Monitor Plex, Tautulli, and other services with auto-retry and admin alerts",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": []
+}

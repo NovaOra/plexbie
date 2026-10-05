@@ -1,0 +1,11 @@
+{
+    "name": "status",
+    "version": "1.0.0",
+    "description": "/say: a message from Plexbie in any channel (admins)",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": [
+        "/say"
+    ]
+}
