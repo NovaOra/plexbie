@@ -221,8 +221,9 @@ export function Layout({ children }: { children?: ReactNode }) {
         {SAMPLE ? (
           // The sample catalog: free films with their real posters, everything else invented.
           <p className="footer__credit">
-            Sample posters: <a href="https://studio.blender.org/films/" rel="noopener">Blender Foundation</a> open movies (CC BY 3.0 and 4.0)
-            and public-domain films. Every other title, person and household here is made up.
+            Sample posters and covers: <a href="https://studio.blender.org/films/" rel="noopener">Blender Foundation</a> open movies and
+            {" "}<a href="https://www.peppercarrot.com" rel="noopener">Pepper &amp; Carrot</a> by David Revoy (CC BY), and public-domain films,
+            serials and books. The people and the household are made up.
           </p>
         ) : member ? (
           <p className="footer__credit">
