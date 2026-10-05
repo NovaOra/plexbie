@@ -52,11 +52,13 @@ def reply_view(hid: str) -> discord.ui.View:
     return view
 
 
-def reply_embed(h: dict, text: str) -> discord.Embed:
+def reply_embed(h: dict, text: str, by: Optional[str] = None, *, reply: bool = True) -> discord.Embed:
+    """About your request: <title>, then "Message from <admin>" and what they wrote."""
     number = f"No. {int(h['slot']):04d} · " if h.get("slot") else ""
-    embed = discord.Embed(title=f"🛠️ About your request: {h.get('title') or 'your request'}", description=text[:4000],
+    embed = discord.Embed(title=f"🛠️ About your request: {h.get('title') or 'your request'}",
+                          description=(f"**Message from {discord.utils.escape_markdown(by)}**\n{text}" if by else text)[:4000],
                           color=discord.Color.from_rgb(255, 92, 147))
-    embed.set_footer(text=f"{number}Reply with the button, or on the website: My requests")
+    embed.set_footer(text=f"{number}Reply with the button, or on the website: My requests" if reply else f"{number}On the website: My requests")
     return embed
 
 

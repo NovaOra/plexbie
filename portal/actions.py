@@ -677,29 +677,27 @@ class Actions:
         if h.get("quiet"):
             logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']} (an admin's own ticket; nobody told)")
             return {"ok": True, "message": "Resolved."}
-        text = (f"About your request for {h['title']}: {reply}" if reply
-                else f"An admin looked into your request for {h['title']} and it should be sorted now.")
-        await self.tell_member(h, text, context=f"help resolved for {h['title']}", reply_button=False)
+        text = reply or f"An admin looked into your request for {h['title']} and it should be sorted now."
+        await self.tell_member(h, text, context=f"help resolved for {h['title']}", reply_button=False,
+                               by=self.actor(user) if reply else None)
         logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']}")
         return {"ok": True, "message": f"Resolved, and {h['who']} has been told."}
 
-    async def tell_member(self, h: dict, text: str, *, context: str, reply_button: bool = True) -> None:
+    async def tell_member(self, h: dict, text: str, *, context: str, reply_button: bool = True, by: Optional[str] = None) -> None:
         """A message to the member a ticket is about: a Discord DM (with a Reply button, so
-        they can answer on the ticket from Discord), else a phone/browser alert or email."""
+        they can answer on the ticket from Discord), else a phone/browser alert or email.
+        `by`: the admin who wrote it, shown as "Message from …" under the request's title."""
         if h.get("discord_id") and self.bot:
             from core.admin_mirror import dm_user_id
-            view, embed = None, None
-            if reply_button and h.get("id"):
-                from portal.ticket_view import reply_embed, reply_view
-                view, embed = reply_view(h["id"]), reply_embed(h, text)
-            if embed is not None:
-                await dm_user_id(self.bot, self.services, h["discord_id"], context=context, embed=embed, view=view)
-            else:
-                await dm_user_id(self.bot, self.services, h["discord_id"], context=context, content=f"🛠️ {text}")
+            from portal.ticket_view import reply_embed, reply_view
+            view = reply_view(h["id"]) if reply_button and h.get("id") else None
+            await dm_user_id(self.bot, self.services, h["discord_id"], context=context, embed=reply_embed(h, text, by, reply=bool(view)),
+                             view=view, sent_by=by)
         else:
             from core.notify import notify_member
-            await notify_member(self.services, title=f"Update on {h['title']}", body=text, url="/schedule",
-                                plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"), context=context)
+            await notify_member(self.services, title=f"About your request: {h['title']}", body=f"Message from {by}: {text}" if by else text,
+                                url="/schedule", plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"),
+                                context=context, sent_by=by)
 
     # ------------------------------------------------- all requests (admin)
     async def _request_for_admin(self, key: str) -> dict:
@@ -752,7 +750,7 @@ class Actions:
             message = str(body.get("message") or "").strip()[:600] or \
                 f"An admin is looking into your request for {title}. You'll hear back here when it's sorted."
             h = await helpdesk.add(h["id"], "reply", self.actor(user), message) or h
-            await self.tell_member(h, message, context=f"ticket opened on {title}")
+            await self.tell_member(h, message, context=f"ticket opened on {title}", by=self.actor(user) if body.get("message") else None)
         logger.info(f"{self.actor(user)} opened ticket {h['id']} on No. {row.get('slot')} ({title}), told: {tell}")
         return {"ok": True, "message": f"Ticket opened{f', and {who} has been told' if tell else ''}. It's on Manage → Tickets.",
                 "help": {"id": h["id"], "reason": h["reason"]}}
@@ -776,7 +774,7 @@ class Actions:
             raise web.HTTPBadRequest(text='{"error":"Write something first."}', content_type="application/json")
         if body.get("kind") == "reply":
             h = await helpdesk.add(hid, "reply", self.actor(user), text, quiet=False)
-            await self.tell_member(h, f"About your request for {h['title']}: {text}", context=f"ticket reply on {h['title']}")
+            await self.tell_member(h, text, context=f"ticket reply on {h['title']}", by=self.actor(user))
             return {"ok": True, "message": f"Sent to {h['who']}."}
         await helpdesk.add(hid, "note", self.actor(user), text)
         return {"ok": True, "message": "Note added. Only admins see it."}

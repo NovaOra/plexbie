@@ -844,7 +844,7 @@ def test_help_can_only_be_asked_on_your_own_request_once_and_reaches_the_admins(
                 id, name, display_name = uid, "Jordan", "Jordan"
 
                 async def send(self, content=None, embed=None):
-                    dms.append(content)
+                    dms.append(content or embed.description)
             return U()
 
     actions = _Actions(FakeServices(Config()))
@@ -884,7 +884,7 @@ def test_help_can_only_be_asked_on_your_own_request_once_and_reaches_the_admins(
     card = posted[0]
     assert "The Simpsons (season 2)" in card.title and "Stuck downloading" in card.description
     assert any("Season pack, 22 episodes" in f.value for f in card.fields)
-    assert resolved["ok"] and not again["ok"] and dms == ["🛠️ About your request for The Simpsons: Kicked the search"]
+    assert resolved["ok"] and not again["ok"] and dms == ["**Message from Pat**\nKicked the search"]
 
 
 # ------------------------------------------------- all requests (Manage)
@@ -1031,7 +1031,7 @@ def test_an_admin_ticket_goes_on_needs_help_and_tells_the_member_only_when_asked
     assert posted[0].title.startswith("🛠️ Ticket opened on No.")
     assert dms_before == [] and resolved_quietly == {"ok": True, "message": "Resolved."}
     assert dms == ["An admin is looking into your request for Searching Forever. You'll hear back here when it's sorted.",
-                   "🛠️ About your request for Searching Forever: On Plex now"]
+                   "**Message from Pat**\nOn Plex now"]
     assert resolved_loudly["ok"] and len(detail["tickets"]) == 2 and detail["activity"] == []
     assert [t["opened_by"] for t in detail["tickets"]] == [ticket["opened_by"]] * 2
 
@@ -1196,7 +1196,7 @@ def test_a_ticket_is_a_conversation_with_an_owner_notes_and_answers():
     assert [e["kind"] for e in after["thread"]] == ["member", "status", "note", "reply", "status", "member"]
     assert after["request"]["requester"] and after["request"]["stage"] == "searching"
     # the reply went to Jordan with a Reply button; the answer reached the admin channel with a link
-    assert {"text": "About your request for Searching Forever: Is it the 4K one you wanted?", "button": True} in dms
+    assert {"text": "**Message from Sam**\nIs it the 4K one you wanted?", "button": True} in dms
     assert any(isinstance(p, str) and "Jordan** answered" in p and "/manage?tab=tickets&ticket=" in p for p in posted)
     assert posted[0].url.startswith("https://plexbie.example/manage?tab=tickets&ticket=")
     assert solved["ok"] and final["status"] == "resolved" and final["thread"][-1]["text"] == "Solved"
@@ -1232,7 +1232,7 @@ def test_an_admin_ticket_can_send_its_own_message_and_old_tickets_get_a_timeline
     t = [h for h in made if h["request"] == "401"][0]
     assert out["ok"] and [e["kind"] for e in t["thread"]] == ["note", "reply"]
     assert t["thread"][0]["text"] == "Not on TheTVDB" and t["thread"][1]["text"] == "Grabbing it by hand tonight"
-    assert dms[0] == {"text": "Grabbing it by hand tonight", "button": True}
+    assert dms[0] == {"text": "**Message from Pat**\nGrabbing it by hand tonight", "button": True}
     built = helpdesk.thread_of(old)
     assert [(e["kind"], e["text"]) for e in built] == [("member", "Stuck downloading. since Monday"), ("action", "Searched again"),
                                                       ("reply", "Fixed"), ("status", "Solved")]
