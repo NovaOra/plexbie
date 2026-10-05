@@ -2,6 +2,10 @@
 // stores in D1 (../worker.js, the site's src/project/track.ts). Server-rendered HTML,
 // a few hundred rows at most per query. Only for the maintainer: Cloudflare Access sits
 // in front, and every request's Access token is checked here as well.
+//
+// It also keeps the project's GitHub numbers (stars, forks, followers, repo traffic,
+// release downloads), collected every three hours with the GITHUB_TOKEN secret, because
+// GitHub itself only shows the last 14 days of traffic.
 
 const TZ = "America/Chicago";
 const RANGES = { 1: "Today", 7: "7 days", 30: "30 days", 90: "90 days", 365: "A year" };
@@ -72,7 +76,124 @@ async function load(env, days) {
   const hours = Array(24).fill(0);
   const hourOf = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", hourCycle: "h23" });
   for (const r of times) hours[Number(hourOf.format(r.ts)) % 24]++;
-  return { since, totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, hours };
+  const github = await loadGithub(env, since);
+  return { since, totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, hours, github };
+}
+
+// ---- GitHub --------------------------------------------------------------------------
+// A fine-grained token (`npx wrangler secret put GITHUB_TOKEN --config cloudflare/stats/wrangler.jsonc`)
+// for the repos in REPOS, with "Administration: Read-only": GitHub keeps traffic behind it.
+
+const SCHEMA = [
+  "CREATE TABLE IF NOT EXISTS gh_repo (day TEXT, repo TEXT, stars INTEGER, forks INTEGER, watchers INTEGER, issues INTEGER, PRIMARY KEY (day, repo))",
+  "CREATE TABLE IF NOT EXISTS gh_traffic (day TEXT, repo TEXT, views INTEGER, view_uniques INTEGER, clones INTEGER, clone_uniques INTEGER, PRIMARY KEY (day, repo))",
+  "CREATE TABLE IF NOT EXISTS gh_popular (day TEXT, repo TEXT, kind TEXT, k TEXT, title TEXT, n INTEGER, uniques INTEGER, PRIMARY KEY (day, repo, kind, k))",
+  "CREATE TABLE IF NOT EXISTS gh_downloads (day TEXT, repo TEXT, tag TEXT, asset TEXT, n INTEGER, PRIMARY KEY (day, repo, tag, asset))",
+  "CREATE TABLE IF NOT EXISTS gh_people (repo TEXT, kind TEXT, login TEXT, at TEXT, PRIMARY KEY (repo, kind, login))",
+  "CREATE TABLE IF NOT EXISTS gh_account (day TEXT, login TEXT, followers INTEGER, public_repos INTEGER, PRIMARY KEY (day, login))",
+  "CREATE TABLE IF NOT EXISTS gh_runs (ts INTEGER PRIMARY KEY, ok INTEGER, note TEXT)",
+];
+let schemaReady = false;
+async function ensure(env) {
+  if (schemaReady) return;
+  await env.STATS.batch(SCHEMA.map((q) => env.STATS.prepare(q)));
+  schemaReady = true;
+}
+
+const repos = (env) => (env.REPOS || "").split(",").map((r) => r.trim()).filter((r) => /^[\w.-]+\/[\w.-]+$/.test(r));
+const short = (repo) => repo.split("/")[1];
+
+async function gh(env, path, accept = "application/vnd.github+json") {
+  const res = await fetch(`https://api.github.com${path}`, { headers: {
+    Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "plexbie-stats" } });
+  if (!res.ok) throw new Error(`${path.split("?")[0]} answered ${res.status}`);
+  return res.json();
+}
+
+/** Every page of a list (stargazers, forks, releases), up to 1,000 rows. */
+async function everyPage(env, path, accept) {
+  const rows = [];
+  for (let page = 1; page <= 10; page++) {
+    const got = await gh(env, `${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`, accept);
+    rows.push(...got);
+    if (got.length < 100) break;
+  }
+  return rows;
+}
+
+/** One collection: today's snapshot of each repo, and GitHub's last 14 days of traffic. */
+async function collectGithub(env) {
+  await ensure(env);
+  const db = env.STATS;
+  if (!env.GITHUB_TOKEN) {
+    await db.prepare("INSERT OR REPLACE INTO gh_runs (ts, ok, note) VALUES (?, 0, ?)").bind(Date.now(), "No GITHUB_TOKEN secret yet.").run();
+    return;
+  }
+  const day = new Date().toISOString().slice(0, 10);
+  const writes = [];
+  const problems = [];
+  for (const repo of repos(env)) {
+    try {
+      const base = `/repos/${repo}`;
+      const [info, views, clones, referrers, paths, releases, stars, forks] = await Promise.all([
+        gh(env, base), gh(env, `${base}/traffic/views?per=day`), gh(env, `${base}/traffic/clones?per=day`),
+        gh(env, `${base}/traffic/popular/referrers`), gh(env, `${base}/traffic/popular/paths`),
+        everyPage(env, `${base}/releases`), everyPage(env, `${base}/stargazers`, "application/vnd.github.star+json"),
+        everyPage(env, `${base}/forks?sort=newest`),
+      ]);
+      writes.push(db.prepare(`INSERT INTO gh_repo (day, repo, stars, forks, watchers, issues) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (day, repo) DO UPDATE SET stars = excluded.stars, forks = excluded.forks, watchers = excluded.watchers, issues = excluded.issues`)
+        .bind(day, repo, info.stargazers_count, info.forks_count, info.subscribers_count, info.open_issues_count));
+      for (const v of views.views || []) {
+        writes.push(db.prepare(`INSERT INTO gh_traffic (day, repo, views, view_uniques, clones, clone_uniques) VALUES (?, ?, ?, ?, 0, 0)
+          ON CONFLICT (day, repo) DO UPDATE SET views = excluded.views, view_uniques = excluded.view_uniques`).bind(v.timestamp.slice(0, 10), repo, v.count, v.uniques));
+      }
+      for (const c of clones.clones || []) {
+        writes.push(db.prepare(`INSERT INTO gh_traffic (day, repo, views, view_uniques, clones, clone_uniques) VALUES (?, ?, 0, 0, ?, ?)
+          ON CONFLICT (day, repo) DO UPDATE SET clones = excluded.clones, clone_uniques = excluded.clone_uniques`).bind(c.timestamp.slice(0, 10), repo, c.count, c.uniques));
+      }
+      writes.push(db.prepare("DELETE FROM gh_popular WHERE day = ? AND repo = ?").bind(day, repo));
+      for (const r of referrers) writes.push(db.prepare("INSERT OR REPLACE INTO gh_popular VALUES (?, ?, 'referrer', ?, NULL, ?, ?)").bind(day, repo, r.referrer, r.count, r.uniques));
+      for (const p of paths) writes.push(db.prepare("INSERT OR REPLACE INTO gh_popular VALUES (?, ?, 'path', ?, ?, ?, ?)").bind(day, repo, p.path, p.title, p.count, p.uniques));
+      for (const rel of releases) for (const a of rel.assets || []) {
+        writes.push(db.prepare("INSERT OR REPLACE INTO gh_downloads VALUES (?, ?, ?, ?, ?)").bind(day, repo, rel.tag_name, a.name, a.download_count));
+      }
+      for (const st of stars) if (st.user) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'star', ?, ?)").bind(repo, st.user.login, st.starred_at));
+      for (const f of forks) if (f.owner) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'fork', ?, ?)").bind(repo, f.owner.login, f.created_at));
+    } catch (err) {
+      problems.push(`${short(repo)}: ${err.message}`);
+    }
+  }
+  const owner = repos(env)[0]?.split("/")[0];
+  if (owner) {
+    try {
+      const u = await gh(env, `/users/${owner}`);
+      writes.push(db.prepare("INSERT OR REPLACE INTO gh_account VALUES (?, ?, ?, ?)").bind(day, owner, u.followers, u.public_repos));
+    } catch (err) {
+      problems.push(`${owner}: ${err.message}`);
+    }
+  }
+  for (let i = 0; i < writes.length; i += 200) await db.batch(writes.slice(i, i + 200));
+  await db.prepare("INSERT OR REPLACE INTO gh_runs (ts, ok, note) VALUES (?, ?, ?)").bind(Date.now(), problems.length ? 0 : 1, problems.join("; ") || null).run();
+}
+
+async function loadGithub(env, since) {
+  await ensure(env);
+  const latestOf = (table) => `day = (SELECT MAX(day) FROM ${table} x WHERE x.repo = t.repo)`;
+  const [now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen] = await Promise.all([
+    all(env, `SELECT repo, stars, forks, watchers, issues FROM gh_repo t WHERE ${latestOf("gh_repo")}`),
+    all(env, `SELECT repo, stars, forks FROM gh_repo t WHERE day = (SELECT MIN(day) FROM gh_repo x WHERE x.repo = t.repo AND day >= ?)`, since),
+    all(env, `SELECT day, SUM(views) AS views, SUM(view_uniques) AS uniques, SUM(clones) AS clones FROM gh_traffic WHERE day >= ? GROUP BY day ORDER BY day`, since),
+    one(env, `SELECT SUM(views) AS views, SUM(view_uniques) AS uniques, SUM(clones) AS clones, SUM(clone_uniques) AS cloners FROM gh_traffic WHERE day >= ?`, since),
+    all(env, `SELECT repo, kind, k, title, n FROM gh_popular t WHERE ${latestOf("gh_popular")} ORDER BY n DESC`),
+    all(env, `SELECT repo, tag, asset, n FROM gh_downloads t WHERE ${latestOf("gh_downloads")} ORDER BY n DESC`),
+    one(env, `SELECT SUM(n) AS n FROM gh_downloads t WHERE day = (SELECT MIN(day) FROM gh_downloads x WHERE x.repo = t.repo AND day >= ?)`, since),
+    all(env, "SELECT repo, kind, login, at FROM gh_people ORDER BY at DESC LIMIT 20"),
+    one(env, "SELECT ts, ok, note FROM gh_runs ORDER BY ts DESC LIMIT 1"),
+    one(env, "SELECT login, followers, public_repos FROM gh_account ORDER BY day DESC LIMIT 1"),
+    one(env, "SELECT followers FROM gh_account WHERE day >= ? ORDER BY day LIMIT 1", since),
+  ]);
+  return { now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen };
 }
 
 // ---- page ----------------------------------------------------------------------------
@@ -97,30 +218,37 @@ function ranked(title, rows, fmt = (k) => k, empty = "Nothing yet.") {
 
 /** Visitors per day as columns, with a hover title per day and a table for screen readers. */
 function dailyChart(daily, since, days) {
-  const byDay = new Map(daily.map((d) => [d.day, d]));
+  return columns("Visitors per day", daily, since, days, { key: "visitors", blank: { views: 0, visitors: 0 },
+    tip: (d) => `${d.visitors} visitors, ${d.views} page views`,
+    head: ["Visitors", "Page views"], cells: (d) => [d.visitors, d.views] });
+}
+
+/** One number per day as columns: `key` sets the height, `tip` and `cells` the detail. */
+function columns(title, rows, since, days, { key, blank, tip, head, cells }) {
+  const byDay = new Map(rows.map((d) => [d.day, d]));
   const list = [];
   for (let i = 0; i < days; i++) {
     const day = new Date(Date.parse(since) + i * 86400000).toISOString().slice(0, 10);
-    list.push(byDay.get(day) || { day, views: 0, visitors: 0 });
+    list.push(byDay.get(day) || { day, ...blank });
   }
   const W = 960, H = 220, pad = 28, gap = 2;
-  const max = Math.max(1, ...list.map((d) => d.visitors));
+  const max = Math.max(1, ...list.map((d) => d[key]));
   const bw = Math.max(2, (W - pad) / list.length - gap);
   const bars = list.map((d, i) => {
-    const h = (d.visitors / max) * (H - 30);
+    const h = (d[key] / max) * (H - 30);
     const x = pad + i * (bw + gap);
-    return `<rect x="${x.toFixed(1)}" y="${(H - 18 - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, d.visitors ? 2 : 0).toFixed(1)}" rx="${Math.min(4, bw / 2).toFixed(1)}">
-      <title>${e(d.day)}: ${d.visitors} visitors, ${d.views} page views</title></rect>
-      <rect class="hit" x="${x.toFixed(1)}" y="0" width="${(bw + gap).toFixed(1)}" height="${H}"><title>${e(d.day)}: ${d.visitors} visitors, ${d.views} page views</title></rect>`;
+    return `<rect x="${x.toFixed(1)}" y="${(H - 18 - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, d[key] ? 2 : 0).toFixed(1)}" rx="${Math.min(4, bw / 2).toFixed(1)}">
+      <title>${e(d.day)}: ${e(tip(d))}</title></rect>
+      <rect class="hit" x="${x.toFixed(1)}" y="0" width="${(bw + gap).toFixed(1)}" height="${H}"><title>${e(d.day)}: ${e(tip(d))}</title></rect>`;
   }).join("");
   const ticks = [0, Math.round(max / 2), max].map((v) => `<text x="0" y="${(H - 18 - (v / max) * (H - 30) + 4).toFixed(1)}">${v}</text>
       <line x1="${pad - 4}" x2="${W}" y1="${(H - 18 - (v / max) * (H - 30)).toFixed(1)}" y2="${(H - 18 - (v / max) * (H - 30)).toFixed(1)}"/>`).join("");
   const labels = [list[0], list[Math.floor(list.length / 2)], list[list.length - 1]].map((d, i) =>
     `<text class="x" x="${i === 0 ? pad : i === 1 ? W / 2 : W}" y="${H - 2}" text-anchor="${i === 0 ? "start" : i === 1 ? "middle" : "end"}">${e(d.day.slice(5))}</text>`).join("");
-  const table = list.map((d) => `<tr><td>${e(d.day)}</td><td>${d.visitors}</td><td>${d.views}</td></tr>`).join("");
-  return `<section class="card wide"><h2>Visitors per day</h2>
-    <svg viewBox="0 0 ${W} ${H}" class="daily" role="img" aria-label="Visitors per day">${ticks}${bars}${labels}</svg>
-    <details><summary>As a table</summary><table><thead><tr><th>Day</th><th>Visitors</th><th>Page views</th></tr></thead><tbody>${table}</tbody></table></details></section>`;
+  const table = list.map((d) => `<tr><td>${e(d.day)}</td>${cells(d).map((c) => `<td>${e(c)}</td>`).join("")}</tr>`).join("");
+  return `<section class="card wide"><h2>${e(title)}</h2>
+    <svg viewBox="0 0 ${W} ${H}" class="daily" role="img" aria-label="${e(title)}">${ticks}${bars}${labels}</svg>
+    <details><summary>As a table</summary><table><thead><tr><th>Day</th>${head.map((h) => `<th>${e(h)}</th>`).join("")}</tr></thead><tbody>${table}</tbody></table></details></section>`;
 }
 
 function hoursChart(hours) {
@@ -145,6 +273,58 @@ function recentTable(rows) {
   return `<section class="card wide"><h2>Latest</h2><div class="scroll"><table><thead><tr><th>When</th><th>What</th><th>Page</th><th>Detail</th><th>From</th><th>Where</th><th>On</th></tr></thead><tbody>${rows.map((r) => `
     <tr><td>${e(t.format(r.ts))}</td><td>${e(r.event)}</td><td>${e(r.path)}</td><td>${e([r.label, r.value != null ? (r.event === "engage" ? `${r.value}s` : r.event === "video" ? `${r.value}%` : r.value) : ""].filter(Boolean).join(" · "))}</td>
     <td>${e(r.referrer || "")}</td><td>${e(r.country ? country(r.country) : "")}</td><td>${e(`${r.device || ""} ${r.browser || ""}`.trim())}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing yet.</td></tr>`}</tbody></table></div></section>`;
+}
+
+function githubSection(g, since, days) {
+  const when = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const status = !g.run.ts ? "Not collected yet."
+    : `Last checked ${when.format(g.run.ts)}${g.run.ok ? "." : `, with a problem: ${g.run.note}`}`;
+  const head = `<div class="section"><h2 id="github">GitHub</h2><p class="muted">${e(status)}</p>
+    <form method="post" action="/stats/github/refresh"><button type="submit">Check now</button></form></div>`;
+  if (!g.now.length) {
+    return `${head}<section class="card"><p>No GitHub numbers yet. Add a fine-grained token for the repos with
+      <b>Administration: Read-only</b> as the <code>GITHUB_TOKEN</code> secret, then press <b>Check now</b>.</p></section>`;
+  }
+  const sum = (rows, k) => rows.reduce((n, r) => n + (r[k] || 0), 0);
+  const thenOf = (repo) => g.then.find((r) => r.repo === repo) || {};
+  const starsNew = g.now.reduce((n, r) => n + r.stars - (thenOf(r.repo).stars ?? r.stars), 0);
+  const forksNew = g.now.reduce((n, r) => n + r.forks - (thenOf(r.repo).forks ?? r.forks), 0);
+  const plus = (n) => (n > 0 ? `+${num(n)} in this range` : "");
+  // latest.json is release bookkeeping, not something people download.
+  const fileRows = g.downloads.filter((r) => !/\.json$/i.test(r.asset));
+  const appFiles = fileRows.filter((r) => /\.(apk|ipa)$/i.test(r.asset));
+  const downloads = sum(fileRows, "n");
+  const kind = (ext) => num(sum(appFiles.filter((r) => r.asset.toLowerCase().endsWith(ext)), "n"));
+  const t = g.totals;
+  const perRepo = g.now.map((r) => `${short(r.repo)} ${num(r.stars)}`).join(" · ");
+  const label = (r) => (g.now.length > 1 ? ` · ${short(r.repo)}` : "");
+  const refs = g.popular.filter((r) => r.kind === "referrer").slice(0, 15).map((r) => ({ k: `${r.k}${label(r)}`, n: r.n }));
+  const paths = g.popular.filter((r) => r.kind === "path").slice(0, 15).map((r) => ({ k: r.k.replace(/^\/[^/]+\//, ""), n: r.n }));
+  const files = fileRows.slice(0, 15).map((r) => ({ k: r.asset, n: r.n }));
+  const day = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", year: "numeric" });
+  const people = `<section class="card"><h2>Newest stars and forks</h2><div class="scroll"><table><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${
+    g.people.map((p) => `<tr><td>${e(day.format(Date.parse(p.at)))}</td><td><a href="https://github.com/${e(p.login)}">${e(p.login)}</a></td>
+      <td>${p.kind === "star" ? "Starred" : "Forked"} ${e(short(p.repo))}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">Nobody yet.</td></tr>`}</tbody></table></div></section>`;
+  return `${head}
+<div class="tiles">
+  ${tile("Stars", num(sum(g.now, "stars")), [plus(starsNew), perRepo].filter(Boolean).join(" · "))}
+  ${tile("Forks", num(sum(g.now, "forks")), plus(forksNew))}
+  ${tile("Watchers", num(sum(g.now, "watchers")))}
+  ${tile("Followers", num(g.account.followers), g.account.followers != null && g.accountThen.followers != null ? plus(g.account.followers - g.accountThen.followers) : "")}
+  ${tile("Repo views", num(t.views), `${num(t.uniques)} unique a day, added up`)}
+  ${tile("Clones", num(t.clones), "GitHub Actions' own checkouts count too")}
+  ${tile("Release downloads", num(downloads), [appFiles.length ? `APK ${kind(".apk")} · IPA ${kind(".ipa")}` : "", plus(downloads - (g.dlThen.n ?? downloads))].filter(Boolean).join(" · "))}
+  ${tile("Open issues and PRs", num(sum(g.now, "issues")))}
+</div>
+<div class="grid">
+  ${columns("Repo views per day", g.traffic, since, Math.min(days, 365), { key: "views", blank: { views: 0, uniques: 0, clones: 0 },
+    tip: (d) => `${d.views} views (${d.uniques} unique), ${d.clones} clones`, head: ["Views", "Unique", "Clones"], cells: (d) => [d.views, d.uniques, d.clones] })}
+  ${ranked("Came to GitHub from", refs, undefined, "Nothing yet.").replace("</h2>", " <small>(GitHub's last 14 days)</small></h2>")}
+  ${ranked("Most viewed on GitHub", paths).replace("</h2>", " <small>(GitHub's last 14 days)</small></h2>")}
+  ${ranked("Release downloads by file", files)}
+  ${people}
+</div>
+<p class="muted small">GitHub keeps 14 days of traffic, so views and clones here start the day collection began. GitHub counts your own visits too; it doesn't say whose they are.</p>`;
 }
 
 function page(d, days) {
@@ -182,9 +362,15 @@ h2 { margin:0 0 12px; font-size:1rem; } h2 small, .muted { color:var(--muted); f
 details { margin-top:10px; color:var(--muted); } summary { cursor:pointer; min-height:32px; }
 table { width:100%; border-collapse:collapse; font-size:.86rem; font-variant-numeric:tabular-nums; } th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--rule); vertical-align:top; }
 th { color:var(--muted); font-weight:600; } .scroll { overflow-x:auto; }
-footer { color:var(--muted); font-size:.82rem; }
+footer, .small { color:var(--muted); font-size:.82rem; }
+.section { display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; margin-top:12px; }
+.section h2 { font-size:1.25rem; margin:0; } .section p { margin:0; flex:1 1 220px; }
+.section form { margin:0; } a { color:var(--screen); }
+button { font:inherit; color:var(--ink); background:transparent; border:1px solid var(--rule); border-radius:999px; padding:6px 14px; min-height:36px; cursor:pointer; }
+button:hover { border-color:var(--screen); } code { color:var(--screen); }
 </style></head><body><main>
 <header><h1><img src="https://plexbie.com/brand/plexbie-64.png" alt="" width="34" height="34"> Plexbie stats</h1><nav aria-label="Range">${nav}</nav></header>
+<div class="section"><h2>plexbie.com</h2><p class="muted">This browser isn't counted on plexbie.com, and neither is home.</p><a href="#github">GitHub numbers ↓</a></div>
 <div class="tiles">
   ${tile("Visitors", num(t.visitors), "one per person per day")}
   ${tile("Page views", num(t.views))}
@@ -209,22 +395,37 @@ footer { color:var(--muted); font-size:.82rem; }
   ${ranked("Systems", d.oses)}
   ${recentTable(d.recent)}
 </div>
+${githubSection(d.github, d.since, days)}
 <footer>plexbie.com's own counts: no cookies, no IP addresses kept, and browsers sending Do Not Track or Global Privacy Control aren't counted. Visitors are counted once per day each. Raw events are kept about 13 months.</footer>
 </main></body></html>`;
 }
 
+// Whoever gets past Access is the maintainer: this tells plexbie.com's counter (../worker.js)
+// to leave the browser out, on any network. Set across plexbie.com, renewed on each visit.
+const ME_COOKIE = "plexbie_me=1; Domain=plexbie.com; Path=/; Max-Age=34560000; Secure; HttpOnly; SameSite=Lax";
+
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(collectGithub(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith("/stats")) return new Response("Not found", { status: 404 });
     if (!(await allowed(request, env).catch(() => false))) {
       return new Response("Not allowed.", { status: 403, headers: { "Cache-Control": "no-store" } });
     }
+    if (url.pathname === "/stats/github/refresh") {
+      if (request.method !== "POST") return new Response("Use the button.", { status: 405, headers: { Allow: "POST" } });
+      const last = await ensure(env).then(() => one(env, "SELECT ts FROM gh_runs ORDER BY ts DESC LIMIT 1"));
+      if (!(Date.now() - (last.ts || 0) < 60000)) await collectGithub(env);
+      return new Response(null, { status: 303, headers: { Location: "/stats#github", "Set-Cookie": ME_COOKIE } });
+    }
     const asked = url.searchParams.get("days");
     const days = asked && Object.hasOwn(RANGES, asked) ? Number(asked) : 30;
     const data = await load(env, days);
-    if (url.pathname === "/stats/data.json") return Response.json(data, { headers: { "Cache-Control": "no-store" } });
-    return new Response(page(data, days), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
-      "X-Robots-Tag": "noindex", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https://plexbie.com; frame-ancestors 'none'" } });
+    if (url.pathname === "/stats/data.json") return Response.json(data, { headers: { "Cache-Control": "no-store", "Set-Cookie": ME_COOKIE } });
+    return new Response(page(data, days), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Set-Cookie": ME_COOKIE,
+      "X-Robots-Tag": "noindex", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https://plexbie.com; form-action 'self'; frame-ancestors 'none'" } });
   },
 };

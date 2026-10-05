@@ -18,6 +18,11 @@ const REDIRECT = [/^\/app(\/|$)/, /^\/invite(\/|$)/, /^\/auth\//, /^\/setup(\/|$
 // on the visitor's device, and no IP address kept: the IP is used for a moment, with
 // the browser string, the day and a secret salt, to make that day's anonymous visitor
 // number, so one person counts once per day and can't be followed from day to day.
+//
+// The maintainer's own visits aren't counted: any browser that has opened the dashboard
+// (it leaves a plexbie_me cookie across plexbie.com; visitors never get one), and the
+// addresses in the EXCLUDE_IPS secret (comma-separated IPs, or IPv4 ranges like
+// 203.0.113.0/24), for devices at home that never open it.
 
 const EVENTS = new Set(["pageview", "engage", "click", "outbound", "channel", "video"]);
 const BOTS = /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|monitor|curl|wget|python|go-http|java\//i;
@@ -30,6 +35,30 @@ function agent(ua) {
     : /CrOS/.test(ua) ? "ChromeOS" : /Mac OS X|Macintosh/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "Other";
   const device = /iPad|Tablet/.test(ua) || (/Android/.test(ua) && !/Mobile/.test(ua)) ? "Tablet" : /Mobi|iPhone/.test(ua) ? "Phone" : "Desktop";
   return { browser, os, device };
+}
+
+const ME = /(?:^|;\s*)plexbie_me=1(?:;|$)/;
+
+/** An IPv4 address as a number, or null. */
+function v4(ip) {
+  const parts = ip.split(".");
+  if (parts.length !== 4 || !parts.every((x) => /^\d{1,3}$/.test(x) && Number(x) <= 255)) return null;
+  return parts.reduce((n, x) => n * 256 + Number(x), 0);
+}
+
+function matches(ip, rule) {
+  const [base, bits] = rule.split("/");
+  if (bits === undefined) return ip.toLowerCase() === base.toLowerCase();
+  const a = v4(ip), b = v4(base), size = Number(bits);
+  if (a === null || b === null || !Number.isInteger(size) || size < 0 || size > 32) return false;
+  const block = 2 ** (32 - size);
+  return Math.floor(a / block) === Math.floor(b / block);
+}
+
+function isMaintainer(request, env) {
+  if (ME.test(request.headers.get("Cookie") || "")) return true;
+  const ip = request.headers.get("CF-Connecting-IP") || "";
+  return !!ip && (env.EXCLUDE_IPS || "").split(",").map((r) => r.trim()).filter(Boolean).some((r) => matches(ip, r));
 }
 
 async function visitorOf(day, salt, ip, ua) {
@@ -62,9 +91,11 @@ async function record(request, text, env) {
   const origin = request.headers.get("Origin") || "";
   const ua = request.headers.get("User-Agent") || "";
   // Not counted: no salt (the visitor number could then be turned back into an address),
-  // other sites, bots and blank browsers, oversized bodies, and anyone asking not to be.
+  // other sites, bots and blank browsers, oversized bodies, anyone asking not to be, and
+  // the maintainer.
   if (!env.STATS || !env.STATS_SALT || !/^https:\/\/(www\.)?plexbie\.com$/.test(origin) || !ua || BOTS.test(ua)
-      || text.length > 2048 || request.headers.get("Sec-GPC") === "1" || request.headers.get("DNT") === "1") return;
+      || text.length > 2048 || request.headers.get("Sec-GPC") === "1" || request.headers.get("DNT") === "1"
+      || isMaintainer(request, env)) return;
   let e;
   try { e = JSON.parse(text); } catch { return; }
   if (!e || !EVENTS.has(e.e)) return;
