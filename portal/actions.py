@@ -557,6 +557,9 @@ class Actions:
                                   kind=row.get("title", {}).get("kind") or media.get("media_type") or "",
                                   seasons=seasons, user=user, reason=helpdesk.REASONS[reason], note=note,
                                   status_now=status_now or "Unknown")
+        from core.message_log import record_from_ticket
+        await record_from_ticket(h, text=f"{h['reason']}. {note}".strip() if note else h["reason"], title=f"Something wrong with {title}",
+                                 source=str(body.get("source") or "web"), context="Something wrong?")
         try:
             await self._tell_admins_about_help(h)
         except Exception as e:   # the request is saved and shows on Manage either way
@@ -820,6 +823,9 @@ class Actions:
             raise web.HTTPBadRequest(text='{"error":"Write your answer first."}', content_type="application/json")
         self.limit(user.get("discordId") or f"plex:{user.get('plexAccountId')}", "help")
         h = await helpdesk.add(ticket["id"], "member", ticket["who"], text, waiting=False)
+        from core.message_log import record_from_ticket
+        await record_from_ticket(h, text=text, title=f"Answer about {h['title']}", source=str(body.get("source") or "web"),
+                                 context="ticket answer")
         await self._tell_admins_about_answer(h, text)
         return {"ok": True, "message": "Sent. The admins have it."}
 

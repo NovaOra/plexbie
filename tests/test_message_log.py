@@ -63,3 +63,31 @@ def test_old_messages_are_trimmed():
 
     dropped, people = asyncio.run(scenario())
     assert dropped == 1 and people == []
+
+
+def test_what_people_send_plexbie_sits_in_the_same_conversation():
+    from core.admin_mirror import send_user_dm
+
+    class _Msg:
+        def __init__(self, author, content, guild=None, files=()):
+            self.author, self.content, self.guild = author, content, guild
+            self.attachments = [type("A", (), {"filename": f})() for f in files]
+
+    async def scenario():
+        await _init()
+        alex = _User(1, "Alex")
+        await send_user_dm(None, None, alex, context="ticket reply", content="Is 4K OK?")
+        await message_log.record_dm(_Msg(alex, "4K is great", files=["shot.png"]))
+        await message_log.record_dm(_Msg(alex, "in a server", guild=object()))          # not a DM: not kept
+        bot = _User(9, "Plexbie")
+        bot.bot = True
+        await message_log.record_dm(_Msg(bot, "from a bot"))                             # bots aren't kept
+        await message_log.record_from_ticket({"who": "grandpa_j", "plex_name": "grandpa_j"}, text="Still stuck",
+                                             title="Answer about Dune", source="web", context="ticket answer")
+        return await message_log.people(), await message_log.conversation("d1"), await message_log.conversation("pgrandpa_j")
+
+    people, alex, grandpa = asyncio.run(scenario())
+    by = {p["name"]: p for p in people}
+    assert (by["Alex"]["count"], by["Alex"]["received"]) == (1, 1) and by["Alex"]["last"]["direction"] == "in"
+    assert [m["direction"] for m in alex] == ["out", "in"] and alex[1]["text"] == "4K is great\nAttached: shot.png"
+    assert grandpa[0]["direction"] == "in" and grandpa[0]["channel"] == "web" and by["grandpa_j"]["received"] == 1

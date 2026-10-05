@@ -313,8 +313,9 @@ export const admin = (section: string): Promise<unknown> => {
   data.help = helps.map((h) => ({ ...h }));
   data.messages = Object.entries(conversations).map(([id, list]) => {
     const last = list[list.length - 1];
-    return { id, name: names[id], count: list.length, failed: list.filter((m) => !m.delivered).length,
-      via: [...new Set(list.map((m) => m.channel))], last: { at: last.at, text: last.title ?? last.text, channel: last.channel, delivered: last.delivered } };
+    return { id, name: names[id], count: list.filter((m) => m.direction === "out").length, received: list.filter((m) => m.direction === "in").length,
+      failed: list.filter((m) => !m.delivered).length, via: [...new Set(list.map((m) => m.channel))],
+      last: { at: last.at, text: last.title ?? last.text, channel: last.channel, delivered: last.delivered, direction: last.direction } };
   }).sort((a, b) => b.last.at.localeCompare(a.last.at));
   data.discord = {
     channels: [{ id: "10", name: "general" }, { id: "11", name: "plex-updates" }, { id: "12", name: "movie-night" }],
@@ -367,16 +368,22 @@ export const popular = () => wait({
 
 /** Invented conversations for the Messages tab. */
 const names: Record<string, string> = { d301: "Marcus T.", pgrandpa_j: "grandpa_j", d302: "Alex Kim" };
-const msg = (minutes: number, channel: "discord" | "web" | "email" | "none", text: string, title: string | null = null, delivered = true, error: string | null = null) =>
-  ({ id: `m${minutes}${channel}`, at: ago(minutes), channel, delivered, title, text, context: "", error });
+const msg = (minutes: number, channel: "discord" | "web" | "email" | "none", text: string, title: string | null = null, delivered = true, error: string | null = null,
+  direction: "out" | "in" = "out") => ({ id: `m${minutes}${channel}${direction}`, at: ago(minutes), direction, channel, delivered, title, text, context: "", error });
+/** Something the person sent Plexbie. */
+const said = (minutes: number, channel: "discord" | "web", text: string, title: string | null = null) => msg(minutes, channel, text, title, true, null, "in");
 const conversations: Record<string, ReturnType<typeof msg>[]> = {
   d302: [
     msg(60 * 24 * 3, "discord", "Your request has been approved! A Plex invitation has been sent to alex@example.com.", "Request Approved!"),
     msg(60 * 5, "discord", "Good news! Dune: Part Two is now available on Plex."),
     msg(42, "discord", "Good news! Severance is now ready to start on Plex. Season 2 episode 1 is available."),
+    said(40, "web", "Stuck downloading. It's been at 62% since this morning.", "Something wrong with Severance"),
+    msg(30, "discord", "Found a copy that works. Is the 4K version OK, or would you rather wait for 1080p?", "🛠️ About your request: Severance"),
+    said(22, "discord", "4K is great, thank you!", "Answer about Severance"),
   ],
   d301: [
     msg(60 * 24, "discord", "Hey there! We noticed you haven't watched anything on the Plex server in 25 days.\nWhat happens next?: If you remain inactive for 5 more days you'll be removed.", "Plex Inactivity Warning"),
+    said(60 * 23, "discord", "Sorry! Been travelling, I'll watch something this weekend 🙏"),
     msg(60 * 2, "discord", "Sorry, your request for Blue Eye Samurai was declined.", null, false, "Their Discord DMs are closed"),
   ],
   pgrandpa_j: [

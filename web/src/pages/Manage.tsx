@@ -1519,8 +1519,14 @@ const VIA: Record<MessageChannel, { label: string; icon: Icon }> = {
   none: { label: "Not delivered", icon: CircleAlert },
 };
 
-function ViaChip({ channel, delivered, error }: { channel: MessageChannel; delivered: boolean; error?: string | null }) {
-  const v = delivered ? VIA[channel] : { label: channel === "discord" ? "Discord DM didn't arrive" : "Not delivered", icon: CircleAlert };
+/** Where something a person sent Plexbie came from. */
+const FROM: Partial<Record<MessageChannel, { label: string; icon: Icon }>> = {
+  discord: { label: "Sent on Discord", icon: MessageCircle },
+  web: { label: "Sent on the website or app", icon: Bell },
+};
+
+function ViaChip({ channel, delivered, error, incoming = false }: { channel: MessageChannel; delivered: boolean; error?: string | null; incoming?: boolean }) {
+  const v = incoming ? FROM[channel] ?? VIA[channel] : delivered ? VIA[channel] : { label: channel === "discord" ? "Discord DM didn't arrive" : "Not delivered", icon: CircleAlert };
   const Icon = v.icon;
   return (
     <span className={`m-via${delivered ? "" : " is-failed"}`} title={error ?? undefined}>
@@ -1535,7 +1541,8 @@ function dayLabel(iso: string) {
   return days === 0 ? "Today" : days === 1 ? "Yesterday" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 }
 
-/** One person's messages from Plexbie, Discord style: newest at the bottom, a day line between days. */
+/** One person's messages with Plexbie, Discord style: newest at the bottom, a day line
+ *  between days, and what they sent Plexbie (tinted) between Plexbie's messages. */
 function Conversation({ person, onBack }: { person: MessagePerson; onBack: () => void }) {
   const res = useLoad<LoggedMessage[]>(() => api.conversation(person.id), [person.id]);
   // On a phone the conversation covers the list: Back returns to the list, not off the page.
@@ -1544,12 +1551,12 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
   useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [res.data]);
   let lastDay = "";
   return (
-    <section className="m-chat" aria-label={`Messages to ${person.name}`}>
+    <section className="m-chat" aria-label={`Messages with ${person.name}`}>
       <header className="m-chat__head">
         <button type="button" className="m-chat__back" onClick={onBack} aria-label="Back to everyone"><ArrowLeft size={20} aria-hidden /></button>
         <Initial name={person.name} big />
         <div><h3 className="m-card__title">{person.name}</h3>
-          <span className="muted m-person__meta">{person.count} message{person.count === 1 ? "" : "s"} from Plexbie · by {person.via.map((v) => VIA[v].label.toLowerCase()).join(", ")}</span></div>
+          <span className="muted m-person__meta">{person.count} message{person.count === 1 ? "" : "s"} from Plexbie{person.received ? ` · ${person.received} from ${person.name}` : ""} · by {person.via.map((v) => VIA[v].label.toLowerCase()).join(", ")}</span></div>
       </header>
       <div className="m-chat__body">
         {res.loading ? <div className="skeleton" style={{ height: 160 }} /> : null}
@@ -1560,15 +1567,16 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
           return (
             <div key={m.id}>
               {showDay ? <div className="m-chat__day"><span>{day}</span></div> : null}
-              <article className={`m-msg${m.delivered ? "" : " is-failed"}`}>
-                <img className="m-msg__avatar" src="/brand/plexbie-64.png" alt="" width={36} height={36} />
+              <article className={`m-msg${m.direction === "in" ? " is-in" : ""}${m.delivered ? "" : " is-failed"}`}>
+                {m.direction === "in" ? <span className="m-msg__avatar"><Initial name={person.name} /></span>
+                  : <img className="m-msg__avatar" src="/brand/plexbie-64.png" alt="" width={36} height={36} />}
                 <div className="m-msg__main">
-                  <div className="m-msg__meta"><b>Plexbie</b> <time dateTime={m.at}>{new Date(m.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</time></div>
+                  <div className="m-msg__meta"><b>{m.direction === "in" ? person.name : "Plexbie"}</b> <time dateTime={m.at}>{new Date(m.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</time></div>
                   <div className="m-msg__bubble">
                     {m.title ? <b className="m-msg__title">{m.title}</b> : null}
                     <p>{m.text}</p>
                   </div>
-                  <ViaChip channel={m.channel} delivered={m.delivered} error={m.error} />
+                  <ViaChip channel={m.channel} delivered={m.delivered} error={m.error} incoming={m.direction === "in"} />
                 </div>
               </article>
             </div>
@@ -1594,10 +1602,10 @@ function MessagesTab() {
   return (
     <section className="section">
       <div className="m-head">
-        <h2>What Plexbie said</h2>
+        <h2>Messages</h2>
         <SearchField value={query} onChange={setQuery} />
       </div>
-      <p className="muted">Every message Plexbie sends someone, and how it got there. Kept for 90 days.</p>
+      <p className="muted">Every message Plexbie sends someone and how it got there, and what they send Plexbie: DMs, “Something wrong?” and answers on their tickets. Kept for 90 days.</p>
       <div className={`m-inbox${current ? " has-open" : ""}`}>
         <ul className="m-inbox__list" aria-label="People">
           {shown.map((p) => (
@@ -1606,7 +1614,7 @@ function MessagesTab() {
                 <Initial name={p.name} big />
                 <span className="m-inbox__text">
                   <span className="m-inbox__top"><b>{p.name}</b><time dateTime={p.last.at}>{since(p.last.at)}</time></span>
-                  <span className="m-inbox__last">{p.last.text}</span>
+                  <span className="m-inbox__last">{p.last.direction === "in" ? <b>{p.name.split(" ")[0]}: </b> : null}{p.last.text}</span>
                   <span className="m-inbox__via">
                     {p.via.map((v) => { const Icon = VIA[v].icon; return <Icon key={v} size={13} aria-label={VIA[v].label} />; })}
                     {p.failed ? <span className="m-inbox__failed">{p.failed} not delivered</span> : null}
@@ -1615,10 +1623,10 @@ function MessagesTab() {
               </button>
             </li>
           ))}
-          {!shown.length ? <li className="muted" style={{ padding: 12 }}>{q ? "Nobody matches." : "Plexbie hasn't messaged anyone yet."}</li> : null}
+          {!shown.length ? <li className="muted" style={{ padding: 12 }}>{q ? "Nobody matches." : "No messages yet."}</li> : null}
         </ul>
         {current ? <Conversation person={current} onBack={() => setOpen(null)} /> : (
-          <div className="m-inbox__empty muted">Pick someone to see what Plexbie sent them.</div>
+          <div className="m-inbox__empty muted">Pick someone to see their messages with Plexbie.</div>
         )}
       </div>
     </section>

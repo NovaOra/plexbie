@@ -119,7 +119,7 @@ class TicketModal(discord.ui.Modal, title="Open a ticket"):
         if actions is None:
             return await interaction.response.send_message("Tickets need the website running. Ask an admin.", ephemeral=True)
         try:
-            out = await actions.ask_help(_person(interaction), self.key, {"reason": self.reason, "note": str(self.note.value or "")})
+            out = await actions.ask_help(_person(interaction), self.key, {"reason": self.reason, "note": str(self.note.value or ""), "source": "discord"})
         except Exception as e:
             return await interaction.response.send_message(_said(e), ephemeral=True)
         await interaction.response.send_message(f"🛠️ {out.get('message') or 'Sent.'} You'll hear back here.", ephemeral=True)
@@ -154,7 +154,7 @@ class ReplyModal(discord.ui.Modal, title="Your answer"):
         if actions is None or not isinstance(h, dict):
             return await interaction.response.send_message("That ticket can't be found.", ephemeral=True)
         try:
-            out = await actions.member_reply(_person(interaction), h.get("request") or "", {"text": str(self.text.value)})
+            out = await actions.member_reply(_person(interaction), h.get("request") or "", {"text": str(self.text.value), "source": "discord"})
         except Exception as e:
             return await interaction.response.send_message(_said(e), ephemeral=True)
         await interaction.response.send_message(f"💬 {out.get('message') or 'Sent.'}", ephemeral=True)

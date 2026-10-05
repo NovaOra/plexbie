@@ -274,12 +274,15 @@ export interface WatchPartyMine { seconds: number; sessions: number; last: strin
 /* ------------------------------------------------------------ message log */
 
 export type MessageChannel = "discord" | "web" | "email" | "none";
+/** "out": Plexbie to them. "in": them to Plexbie (a DM, "Something wrong?", a ticket answer). */
+export type MessageDirection = "out" | "in";
 export interface MessagePerson {
-  id: string; name: string; count: number; failed: number; via: MessageChannel[];
-  last: { at: string; text: string; channel: MessageChannel; delivered: boolean };
+  /** count: from Plexbie; received: from them. */
+  id: string; name: string; count: number; received?: number; failed: number; via: MessageChannel[];
+  last: { at: string; text: string; channel: MessageChannel; delivered: boolean; direction?: MessageDirection };
 }
 export interface LoggedMessage {
-  id: string; at: string; channel: MessageChannel; delivered: boolean;
+  id: string; at: string; direction?: MessageDirection; channel: MessageChannel; delivered: boolean;
   title: string | null; text: string; context: string; error: string | null;
 }
 
