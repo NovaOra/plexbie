@@ -73,6 +73,24 @@ def looks_foreign_language(release_title: str) -> bool:
     return bool(tokens & LANGUAGE_TAGS)
 
 
+
+#: What admins are told about a show with no TheTVDB entry.
+NO_TVDB_NOTE = ("⚠️ This show isn't on TheTVDB, so Sonarr can't take it and Seerr would drop the request. "
+                "It wasn't sent to Seerr: it needs a hand download, then Plexbie sees it on Plex.")
+
+
+async def no_tvdb_entry(services, tmdb_id) -> bool:
+    """Whether a show (by TMDB id) has no TheTVDB ID, as Seerr sees it. False when Seerr
+    can't say (not set up, unreachable): then the request goes through as usual."""
+    if not tmdb_id or not services.seerr.configured:
+        return False
+    try:
+        tv = await services.seerr.get(f"tv/{int(tmdb_id)}")
+    except Exception as e:
+        logger.info(f"Couldn't check TheTVDB for TMDB {tmdb_id}: {e}")
+        return False
+    return isinstance(tv, dict) and bool(tv.get("name")) and not ((tv.get("externalIds") or {}).get("tvdbId"))
+
 class AdminChannelUnavailable(RuntimeError):
     """The admin channel is unset or the bot cannot see it, so nothing was posted."""
 
@@ -1256,6 +1274,8 @@ class AdminApprovalView(_RequestApprovalBase):
         self.monitor = monitor
         self._seerr_noop_reason = None
         self._seerr_refused = None
+        #: Set when the show has no TheTVDB entry: Sonarr can't take it, so it needs a hand download.
+        self._no_tvdb = False
 
     def _restore(self, record: Dict[str, Any], message_id: int, bot) -> None:
         self.media = record.get('media', {})
@@ -1416,6 +1436,15 @@ class AdminApprovalView(_RequestApprovalBase):
             # Seerr adds the film to Radarr and Radarr searches; check what it grabbed
             # really is the film, and search by ID ourselves if it found nothing.
             self._follow_up_movie()
+        if submitted and self._no_tvdb:
+            return {
+                "success": True,
+                "mode": "manual",
+                "admin_note": NO_TVDB_NOTE,
+                "user_message": f"✅ Your request for **{title}** was approved. It can't be fetched automatically, "
+                                "so an admin will add it by hand. That can take a little longer.",
+                "followup_message": f"Approved, but {NO_TVDB_NOTE[0].lower()}{NO_TVDB_NOTE[1:]}",
+            }
         if submitted and self.media.get("media_type") != "movie" and self.media.get("id"):
             # Seerr adds the show to Sonarr; Sonarr's search-on-add skips episodes
             # it thinks haven't aired. Follow up with our own season search.
@@ -1606,6 +1635,18 @@ class AdminApprovalView(_RequestApprovalBase):
                     # Note: Seerr doesn't have a direct "monitor" flag
                     # Monitoring is typically handled by Sonarr/Radarr after the request
                     # We're just requesting the specific season(s)
+
+            if media_type == "tv" and await no_tvdb_entry(self.services, self.media.get('id')):
+                # Sonarr only knows shows by their TheTVDB ID. Seerr would accept this one,
+                # fail to pass it to Sonarr and quietly delete its own request (as it did with
+                # Faraway Downs), so it isn't sent: it's approved here and flagged for a hand
+                # download instead, on the admin card and on Manage → All requests.
+                self._no_tvdb = True
+                if getattr(self, "_message_id", None):
+                    await set_fields(self._message_id, no_tvdb=True)
+                logger.warning(f"{self.media.get('title') or self.media.get('name')} has no TheTVDB entry: "
+                               "approved, but not sent to Seerr (Sonarr can't take it); it needs a hand download")
+                return True
 
             from webhooks.seerr_handler import remember_submission
             remember_submission(media_type, self.media.get('id'))

@@ -382,7 +382,7 @@ class Progress:
 
             series = (await self._sonarr_series()).get(tmdb)
             if series is None:
-                return {"stage": "approved", "detail": "Approved and passed to Seerr"}
+                return await self._not_in_sonarr(tmdb, seasons)
             wanted = None
             if isinstance(seasons, list) and seasons:
                 wanted = {int(s) for s in seasons}
@@ -439,6 +439,22 @@ class Progress:
         except Exception as e:
             logger.warning(f"portal progress for {media.get('title') or media.get('name')}: {e}")
             return {"stage": "approved", "detail": "Approved. Live progress isn't available right now"}
+
+    async def _not_in_sonarr(self, tmdb: Any, seasons: Any) -> dict:
+        """A show Sonarr doesn't have. Usually it's on its way through Seerr; but one added
+        by hand (a show Sonarr can't take) is on Plex, and then it's simply there. The
+        "notInSonarr" mark lets Data say what went wrong when it isn't (Data.request_row)."""
+        try:
+            rk = await self._plex_key("show", f"tmdb://{tmdb}")
+            counts = await self._plex_seasons(rk) if rk else {}
+        except Exception as e:
+            logger.info(f"Plex not asked about TMDB {tmdb}: {e}")
+            counts = {}
+        wanted = [int(s) for s in seasons] if isinstance(seasons, list) and seasons else sorted(n for n in counts if n)
+        rows = [{"n": n, "have": counts.get(n, 0), "total": counts.get(n, 0)} for n in wanted]
+        if rows and all(r["have"] for r in rows):
+            return {"stage": "available", "seasons": rows}
+        return {"stage": "approved", "detail": "Approved and passed to Seerr", "notInSonarr": True}
 
     async def book(self, book: dict, shelf_titles: List[str]) -> dict:
         """Live stage of an approved book: SABnzbd while downloading, then the shelf."""

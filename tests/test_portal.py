@@ -1029,6 +1029,83 @@ def test_an_admin_ticket_goes_on_needs_help_and_tells_the_member_only_when_asked
     assert [t["opened_by"] for t in detail["tickets"]] == [ticket["opened_by"]] * 2
 
 
+# ------------------------------------------- shows Sonarr never got (Seerr)
+def test_a_show_seerr_cant_pass_to_sonarr_says_why_and_looks_stuck_straight_away():
+    """Faraway Downs: TMDB has no TheTVDB ID for it, so Seerr accepted the request, failed
+    to hand it to Sonarr and deleted its own request. Plexbie said "Approved" for 12 hours."""
+    from core.clients import ServiceError
+    from database.request_store import mark_resolved, save_request, set_fields
+    from portal.admin import Admin
+    from portal.data import Data
+
+    data = Data(FakeServices(Config(seerr_url="http://seerr", seerr_token="t")))
+
+    async def video(media, seasons):
+        return {"stage": "approved", "detail": "Approved and passed to Seerr", "notInSonarr": True}
+    data.progress.video = video
+    shows = {204999: {"name": "Faraway Downs", "externalIds": {"tvdbId": None}},
+             300: {"name": "Has TVDB", "externalIds": {"tvdbId": 9}}, 301: {"name": "Dropped", "externalIds": {"tvdbId": 10}}}
+
+    async def seerr(path, ttl):
+        return shows[int(path.split("/")[1])]
+    data._seerr = seerr
+
+    async def seerr_get(path, **kw):
+        if path == "request/31":
+            raise ServiceError("Seerr answered HTTP 404", 404)
+        return {"id": 30}
+    data.services.seerr.get = seerr_get
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        for key, mid, name, rid in ((1, 204999, "Faraway Downs", 230), (2, 300, "Has TVDB", 30), (3, 301, "Dropped", 31)):
+            await save_request(key, user_id=7, media={"id": mid, "media_type": "tv", "name": name}, seasons=[1])
+            await mark_resolved(key, "approved", "Sam")
+            await set_fields(key, overseerr_request_id=rid)
+        return await data.my_requests(7), await Admin(data).all_requests()
+
+    mine, listed = asyncio.run(scenario())
+    by = {r["title"]["title"]: r for r in mine}
+    assert by["Faraway Downs"]["progress"]["problem"] == Data.NO_TVDB[1]
+    assert by["Faraway Downs"]["progress"]["detail"] == Data.NO_TVDB[0]
+    assert by["Dropped"]["progress"]["problem"] == Data.SEERR_DROPPED[1]
+    assert "problem" not in by["Has TVDB"]["progress"]            # still on its way: nothing to say
+    assert all("notInSonarr" not in (r["progress"] or {}) for r in mine)
+    stuck = {r["title"]["title"]: r["stuck"] for r in listed["rows"]}
+    assert stuck["Faraway Downs"] == [Data.NO_TVDB[1]] and stuck["Dropped"] == [Data.SEERR_DROPPED[1]]
+    assert stuck["Has TVDB"] == []          # approved just now: not stuck yet
+
+
+def test_a_show_added_by_hand_counts_once_it_is_on_plex():
+    from portal.progress import Progress
+    from portal.cache import TTLCache
+    progress = Progress(FakeServices(Config()), TTLCache())
+
+    async def plex_key(kind, *guids):
+        return "77" if "tmdb://204999" in guids else None
+
+    async def plex_seasons(rk):
+        return {1: 6}
+    progress._plex_key, progress._plex_seasons = plex_key, plex_seasons
+    on_plex = asyncio.run(progress._not_in_sonarr(204999, [1]))
+    missing = asyncio.run(progress._not_in_sonarr(5, [1]))
+    assert on_plex == {"stage": "available", "seasons": [{"n": 1, "have": 6, "total": 6}]}
+    assert missing["stage"] == "approved" and missing["notInSonarr"]
+
+
+def test_approving_a_show_with_no_tvdb_entry_says_so_instead_of_sending_it_to_seerr():
+    from plugins.media_requests.cog import no_tvdb_entry
+    services = FakeServices(Config(seerr_url="http://seerr", seerr_token="t"))
+
+    async def get(path, **kw):
+        return {"204999": {"name": "Faraway Downs", "externalIds": {"tvdbId": None}},
+                "1396": {"name": "Breaking Bad", "externalIds": {"tvdbId": 81189}}}[path.split("/")[1]]
+    services.seerr.get = get
+    assert asyncio.run(no_tvdb_entry(services, 204999)) is True
+    assert asyncio.run(no_tvdb_entry(services, 1396)) is False
+    assert asyncio.run(no_tvdb_entry(FakeServices(Config()), 204999)) is False   # no Seerr: don't guess
+
+
 # ------------------------------------------------------- works out of the box
 def test_the_website_is_on_by_default_with_no_borrowed_address():
     import os

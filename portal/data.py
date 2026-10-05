@@ -503,6 +503,43 @@ class Data:
         out.sort(key=lambda r: r["slot"], reverse=True)
         return out
 
+    #: When Seerr can't pass a show on: its words for the request (detail, problem).
+    NO_TVDB = ("Approved. It isn't on TheTVDB, so it can't be fetched automatically",
+               "Not on TheTVDB, so it can't be fetched automatically. An admin will add it by hand.")
+    SEERR_DROPPED = ("Approved, but Seerr no longer has the request",
+                     "Seerr dropped this request before it reached Sonarr. An admin will look into it.")
+
+    async def why_not_in_sonarr(self, rec: dict, media: dict) -> Optional[tuple]:
+        """An approved show Sonarr doesn't have: whether Seerr can't pass it on (no
+        TheTVDB entry) or has dropped the request. None when nothing's known to be wrong
+        (it may simply be on its way)."""
+        if rec.get("no_tvdb"):
+            return self.NO_TVDB
+        if not self.services.seerr.configured or not media.get("id"):
+            return None
+        try:
+            tv = await self._seerr(f"tv/{int(media['id'])}", ttl=6 * 3600)
+            if isinstance(tv, dict) and tv.get("name") and not (tv.get("externalIds") or {}).get("tvdbId"):
+                return self.NO_TVDB
+        except Exception as e:
+            logger.info(f"portal: Seerr didn't say whether {media.get('name')} is on TheTVDB: {e}")
+        rid = rec.get("overseerr_request_id")
+        if rid:
+            async def exists():
+                try:
+                    await self.services.seerr.get(f"request/{int(rid)}")
+                    return True
+                except ServiceError as e:
+                    if e.status == 404:
+                        return False
+                    raise
+            try:
+                if not await self.cache.get(f"seerr:request:{rid}", 600, exists):
+                    return self.SEERR_DROPPED
+            except Exception as e:
+                logger.info(f"portal: Seerr didn't say whether request {rid} is still there: {e}")
+        return None
+
     async def request_row(self, key: str, rec: dict, open_help: Dict[str, dict], books: Dict[str, Any]) -> dict:
         """One request as members see it: its title, live stage and progress. Shared by
         My requests and the admins' All requests. `books` caches the shelf between rows."""
@@ -543,6 +580,10 @@ class Data:
             stage = live.get("stage", "approved")
         else:
             live = await self.progress.video(media, rec.get("seasons"))
+            if live.pop("notInSonarr", False):
+                why = await self.why_not_in_sonarr(rec, media)
+                if why:
+                    live = {**live, "detail": why[0], "problem": why[1]}
             stage = live.get("stage", "approved")
         if status == "closed" and stage in ("approved", "searching", "upcoming", "requested"):
             # Cleared in bulk on 2026-10-02: old, unrecorded, and not pending in
