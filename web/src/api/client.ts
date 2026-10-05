@@ -1,4 +1,4 @@
-import type { AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail } from "./types";
+import type { AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
 import * as sample from "./sample";
 export { DEMO } from "./sample";
 
@@ -150,11 +150,23 @@ export const api = {
     SAMPLE ? sample.adminAll(q) : call(`/admin/all?q=${enc(q)}`),
   adminRequest: (key: string): Promise<AdminRequestDetail> =>
     SAMPLE ? sample.adminRequest(key) : call(`/admin/request/${enc(key)}`),
-  requestTicket: (key: string, note: string, tell: boolean): Promise<Ack & { help: { id: string; reason: string } }> =>
-    SAMPLE ? sample.requestTicket(key, note, tell) : post(`/admin/request/${enc(key)}/ticket`, { note, tell }),
+  requestTicket: (key: string, note: string, tell: boolean, message = ""): Promise<Ack & { help: { id: string; reason: string } }> =>
+    SAMPLE ? sample.requestTicket(key, note, tell, message) : post(`/admin/request/${enc(key)}/ticket`, { note, tell, message }),
+  adminTicket: (id: string): Promise<AdminTicketDetail> =>
+    SAMPLE ? sample.adminTicket(id) : call(`/admin/ticket/${enc(id)}`),
+  /** "note": admins only; "reply": sent to the member the usual way. */
+  ticketComment: (id: string, kind: "note" | "reply", text: string): Promise<Ack> =>
+    SAMPLE ? sample.ticketComment(id, kind, text) : post(`/admin/ticket/${enc(id)}/comment`, { kind, text }),
+  ticketStatus: (id: string, status: "open" | "waiting" | "resolved", message = ""): Promise<Ack> =>
+    SAMPLE ? sample.ticketStatus(id, status, message) : post(`/admin/ticket/${enc(id)}/status`, { status, message }),
+  ticketTake: (id: string): Promise<Ack> =>
+    SAMPLE ? sample.ticketTake(id) : post(`/admin/ticket/${enc(id)}/take`),
+  /** The member answers on the ticket on their own request. */
+  answerTicket: (requestId: string, text: string): Promise<Ack> =>
+    SAMPLE ? sample.answerTicket(requestId, text) : post(`/requests/${enc(requestId)}/help/reply`, { text }),
   requestSearch: (key: string, how: "again" | "episodes" | "name"): Promise<Ack> =>
     SAMPLE ? sample.requestSearch(key, how) : post(`/admin/request/${enc(key)}/search/${how}`),
-  admin: <T,>(section: "requests" | "all" | "joins" | "people" | "cleanup" | "health" | "invites" | "plexinvites" | "discord" | "messages" | "help"): Promise<T> =>
+  admin: <T,>(section: "requests" | "all" | "tickets" | "joins" | "people" | "cleanup" | "health" | "invites" | "plexinvites" | "discord" | "messages" | "help"): Promise<T> =>
     SAMPLE ? (sample.admin(section) as Promise<T>) : call<T>(`/admin/${section}`),
   logout: (): Promise<void> => (SAMPLE ? sample.logout() : call("/logout", { method: "POST" })),
 };

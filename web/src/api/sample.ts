@@ -159,7 +159,7 @@ function demoJourney(r: MediaRequest): MediaRequest {
   if (t < 21) return { ...r, stage: "importing", progress: { percent: 100, detail: "Plex usually picks it up within a few minutes" } };
   return { ...r, stage: "available", progress: null };
 }
-export const myRequests = () => wait([...mine].map((r) => (DEMO && r.slot === 214 ? demoJourney(r) : r)).sort((a, b) => b.slot - a.slot), DEMO ? 60 : 260);
+export const myRequests = () => wait([...mine].map((r) => withTicket(DEMO && r.slot === 214 ? demoJourney(r) : r)).sort((a, b) => b.slot - a.slot), DEMO ? 60 : 260);
 
 export const search = (q: string, kind: MediaKind) => {
   const needle = q.trim().toLowerCase();
@@ -309,6 +309,7 @@ export const admin = (section: string): Promise<unknown> => {
   };
   data.invites = invites.map((i) => ({ ...i }));
   data.all = allRequests("");
+  data.tickets = ticketsList();
   data.help = helps.map((h) => ({ ...h }));
   data.messages = Object.entries(conversations).map(([id, list]) => {
     const last = list[list.length - 1];
@@ -465,12 +466,14 @@ export const adminRequest = (key: string) => {
   const tickets = helps.filter((h) => h.request === key).map((h) => ({ ...h }));
   return wait({ ...r, via: key === "5002" ? "the website" : "Discord", seerrId: null, discordUrl: null, tickets, activity: activity[key] ?? [] }, 250);
 };
-export const requestTicket = (key: string, note: string, tell: boolean) => {
+export const requestTicket = (key: string, note: string, tell: boolean, message = "") => {
   const r = everyone.find((x) => x.id === key);
   const help = { id: `h${Date.now()}`, reason: "Opened by an admin" };
   helps.unshift({ id: help.id, request: key, slot: r?.slot ?? 0, title: r?.title.title ?? "", kind: r?.title.kind ?? "movie", seasons: null,
     who: r?.requester ?? "Someone", reason: help.reason, note, status_then: r ? r.stage : "", status: "open", created_at: new Date().toISOString(),
     ...({ opened_by: "Sam Rivera" } as object) });
+  threadOf(helps[0]);
+  if (tell) entry(help.id, "reply", "Sam Rivera", message.trim() || `An admin is looking into your request for ${r?.title.title ?? "it"}.`);
   if (r) { r.help = help; r.stuck = [`Help asked: ${help.reason}`, ...r.stuck]; }
   return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told` : ""}. It's on Needs help.`, help }, 450);
 };
@@ -479,3 +482,101 @@ export const requestSearch = (key: string, how: "again" | "episodes" | "name") =
   (activity[key] ??= []).push({ at: new Date().toISOString(), by: "Sam Rivera", did: said });
   return wait({ ok: true, message: said }, 500);
 };
+
+/* ------------------------------------------------------------- tickets */
+
+type Entry = import("./types").TicketEntry;
+type Help = import("./types").AdminHelp & { opened_by?: string };
+const threads: Record<string, Entry[]> = {};
+const owners: Record<string, string | null> = { h1: "Sam Rivera" };
+const waits: Record<string, boolean> = { h3: true };
+let nextEntry = 1;
+const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+
+/** The demo member's own ticket: an admin asked them something and waits on the answer. */
+helps.push({ id: "h3", request: "5001", slot: 214, title: "Severance", kind: "tv", seasons: [2], who: "Sam Rivera",
+  reason: "Wrong or missing episodes", note: "Episode 4 is missing", status_then: "Downloading, 62%", status: "open", created_at: at(90) });
+threads.h3 = [
+  { id: "e1", at: at(90), by: "Sam Rivera", kind: "member", text: "Wrong or missing episodes. Episode 4 is missing" },
+  { id: "e2", at: at(70), by: "Alex Kim", kind: "note", text: "Sonarr skipped E04, it was flagged as a sample. Retrying." },
+  { id: "e3", at: at(65), by: "Alex Kim", kind: "reply", text: "Found it. Is it the 4K version you're after, or is 1080p fine?" },
+  { id: "e4", at: at(64), by: "Alex Kim", kind: "status", text: "Waiting on them" },
+];
+
+function threadOf(h: Help): Entry[] {
+  threads[h.id] ??= [
+    { id: `x${nextEntry++}`, at: h.created_at, by: h.opened_by ?? h.who, kind: h.opened_by ? "note" : "member",
+      text: h.opened_by ? h.note || h.reason : h.note ? `${h.reason}. ${h.note}` : h.reason },
+    ...(h.actions ?? []).map((a): Entry => ({ id: `x${nextEntry++}`, at: a.at, by: a.by, kind: "action", text: a.did })),
+    ...(h.status === "resolved" ? [
+      ...(h.reply ? [{ id: `x${nextEntry++}`, at: h.resolved_at ?? h.created_at, by: h.resolved_by ?? "An admin", kind: "reply", text: h.reply } as Entry] : []),
+      { id: `x${nextEntry++}`, at: h.resolved_at ?? h.created_at, by: h.resolved_by ?? "An admin", kind: "status", text: "Solved" } as Entry,
+    ] : []),
+  ];
+  return threads[h.id];
+}
+function entry(id: string, kind: Entry["kind"], by: string, text: string) {
+  const h = helps.find((x) => x.id === id);
+  if (h) threadOf(h).push({ id: `x${nextEntry++}`, at: new Date().toISOString(), by, kind, text });
+}
+function ticketRow(h: Help): import("./types").AdminTicketRow {
+  const t = threadOf(h);
+  const last = t[t.length - 1];
+  return { id: h.id, requestKey: h.request, slot: h.slot, title: h.title, kind: h.kind, seasons: h.seasons, who: h.who,
+    reason: h.reason, status: h.status, waiting: !!waits[h.id] && h.status === "open", owner: owners[h.id] ?? null,
+    openedBy: h.opened_by ?? null, offer: h.offer ?? null, createdAt: h.created_at, updatedAt: last?.at ?? h.created_at,
+    last: last ? { by: last.by, kind: last.kind, text: last.text.slice(0, 160) } : null, count: t.length };
+}
+export function ticketsList(): import("./types").AdminTickets {
+  const rows = helps.map(ticketRow);
+  const newest = (rs: typeof rows) => rs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const action = newest(rows.filter((r) => r.status === "open" && !r.waiting));
+  const waiting = newest(rows.filter((r) => r.status === "open" && r.waiting));
+  const solved = newest(rows.filter((r) => r.status !== "open"));
+  return { rows: [...action, ...waiting, ...solved], counts: { action: action.length, waiting: waiting.length, solved: solved.length } };
+}
+export const adminTicket = (id: string) => {
+  const h = helps.find((x) => x.id === id) ?? helps[0];
+  const request = allRequests("").rows.find((r) => r.id === h.request) ?? null;
+  return wait({ ...ticketRow(h), note: h.note, statusThen: h.status_then, quiet: false, thread: [...threadOf(h)], request }, 250);
+};
+export const ticketComment = (id: string, kind: "note" | "reply", text: string) => {
+  entry(id, kind, "Sam Rivera", text);
+  const who = helps.find((x) => x.id === id)?.who ?? "them";
+  return wait({ ok: true, message: kind === "reply" ? `Sent to ${who}.` : "Note added. Only admins see it." }, 350);
+};
+export const ticketStatus = (id: string, status: "open" | "waiting" | "resolved", message = "") => {
+  const h = helps.find((x) => x.id === id);
+  if (!h) return wait({ ok: false, message: "No such ticket." });
+  if (status === "resolved") {
+    if (message.trim()) entry(id, "reply", "Sam Rivera", message.trim());
+    entry(id, "status", "Sam Rivera", "Solved");
+    h.status = "resolved"; h.resolved_by = "Sam Rivera"; h.resolved_at = new Date().toISOString(); waits[id] = false;
+    return wait({ ok: true, message: `Resolved, and ${h.who} has been told.` });
+  }
+  if (h.status === "resolved") { h.status = "open"; entry(id, "status", "Sam Rivera", "Reopened"); }
+  if (status === "waiting") { waits[id] = true; entry(id, "status", "Sam Rivera", "Waiting on them"); }
+  else if (waits[id]) { waits[id] = false; entry(id, "status", "Sam Rivera", "Back with the admins"); }
+  return wait({ ok: true, message: status === "waiting" ? `Waiting on ${h.who}'s answer.` : "Open." });
+};
+export const ticketTake = (id: string) => {
+  const mine = owners[id] === "Sam Rivera";
+  owners[id] = mine ? null : "Sam Rivera";
+  entry(id, "status", "Sam Rivera", mine ? "Let it go" : "Took it");
+  return wait({ ok: true, message: mine ? "Let go. Anyone can take it." : "It's yours. You'll get an alert when they answer." });
+};
+export const answerTicket = (requestId: string, text: string) => {
+  const h = helps.find((x) => x.request === requestId && x.status === "open");
+  if (!h) return wait({ ok: false, message: "This ticket is closed." });
+  entry(h.id, "member", h.who, text);
+  waits[h.id] = false;
+  return wait({ ok: true, message: "Sent. The admins have it." }, 400);
+};
+/** A member's request with its open ticket, as they see it. */
+function withTicket(r: MediaRequest): MediaRequest {
+  const h = helps.find((x) => x.request === r.id && x.status === "open");
+  if (!h) return r;
+  const thread = threadOf(h).filter((e) => e.kind === "member" || e.kind === "reply" || (e.kind === "status" && ["Solved", "Reopened"].includes(e.text)))
+    .map((e) => (e.kind === "member" ? { ...e, by: "You" } : e));
+  return { ...r, help: { id: h.id, reason: h.reason, status: h.status, waiting: !!waits[h.id], thread } };
+}

@@ -98,8 +98,8 @@ export interface MediaRequest {
   id?: string;
   /** The slot number members can refer to; stable and sequential. */
   slot: number;
-  /** An open help request on this one, if the person asked. */
-  help?: { id: string; reason: string } | null;
+  /** The open ticket on this one, as its member sees it (what they said and what was said to them). */
+  help?: MemberTicket | null;
   title: Title;
   stage: RequestStage;
   requestedAt: string;
@@ -281,6 +281,40 @@ export interface MessagePerson {
 export interface LoggedMessage {
   id: string; at: string; channel: MessageChannel; delivered: boolean;
   title: string | null; text: string; context: string; error: string | null;
+}
+
+/* ------------------------------------------------------------- tickets */
+
+/** One line on a ticket's timeline. "note" is admins only; "reply" was sent to the member. */
+export interface TicketEntry {
+  id: string; at: string; by: string;
+  kind: "member" | "note" | "reply" | "action" | "status";
+  text: string;
+}
+export interface MemberTicket {
+  id: string; reason: string;
+  status?: "open" | "resolved";
+  /** An admin asked something and waits on the member's answer. */
+  waiting?: boolean;
+  thread?: TicketEntry[];
+}
+/** A ticket on Manage → Tickets. */
+export interface AdminTicketRow {
+  id: string; requestKey: string; slot: number; title: string; kind: string; seasons: number[] | "all" | null;
+  who: string; reason: string; status: "open" | "resolved"; waiting: boolean; owner?: string | null;
+  openedBy?: string | null; offer?: "name" | null; createdAt: string; updatedAt: string;
+  last?: { by: string; kind: TicketEntry["kind"]; text: string } | null; count: number;
+}
+export interface AdminTickets {
+  rows: AdminTicketRow[];
+  /** Needing an admin, waiting on the member, and the last 50 solved. */
+  counts: { action: number; waiting: number; solved: number };
+}
+export interface AdminTicketDetail extends AdminTicketRow {
+  note?: string | null; statusThen?: string | null; quiet?: boolean;
+  thread: TicketEntry[];
+  /** Its request, as Manage → All requests shows it (null if the request is gone). */
+  request: AdminRequestRow | null;
 }
 
 /* ------------------------------------------------- all requests (Manage) */

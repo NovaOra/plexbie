@@ -1823,3 +1823,50 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-reqsheet__history h3 { margin: 0 0 8px; font-size: 1rem; }
 .m-reqsheet__history ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 0.9rem; }
 .m-reqsheet__history .muted { margin-right: 6px; }
+
+/* ------------------------------------------------------- Manage → Tickets */
+.m-ticket {
+  display: grid; gap: 6px; width: 100%; padding: 14px 16px; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 14px; -webkit-tap-highlight-color: transparent;
+  transition: background 120ms ease, transform 120ms ease;
+}
+.m-ticket:active { transform: scale(0.99); }
+.m-ticket:focus-visible { outline: 2px solid var(--screen); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) { .m-ticket:hover { background: var(--panel-raised); } }
+.m-ticket.is-hot { border-color: rgb(255 92 147 / 0.5); }
+.m-ticket__title { font-weight: 760; font-size: 1.05rem; }
+.m-ticket__reason { color: var(--ink); font-size: 0.92rem; }
+.m-ticket__last { color: var(--slate-ink); font-size: 0.88rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.m-ticket__last b { color: var(--ink); font-weight: 650; }
+.m-ticket__tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.m-pill--hot { background: rgb(255 92 147 / 0.16); color: var(--tally); }
+.m-pill--wait { background: rgb(229 160 13 / 0.16); color: #f2c66d; }
+.m-pill--done { background: rgb(255 209 228 / 0.14); color: var(--screen); }
+.m-ticket__take { margin-left: auto; min-height: 36px; }
+.m-ticket__request { display: grid; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--panel-raised); font-size: 0.9rem; }
+.m-reqsheet__ticket { flex-wrap: wrap; align-items: center; }
+.m-reqsheet__ticket .m-btn { margin-left: auto; min-height: 36px; }
+
+/* The timeline: notes only admins see are tinted amber and labelled; replies the member got are pink. */
+.m-thread { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.m-thread__entry { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; background: var(--panel-raised); border: 1px solid transparent; }
+.m-thread__entry.is-note { background: rgb(229 160 13 / 0.1); border-color: rgb(229 160 13 / 0.35); }
+.m-thread__entry.is-reply { background: rgb(255 209 228 / 0.08); border-color: rgb(255 209 228 / 0.3); }
+.m-thread__entry.is-action { background: transparent; border-color: var(--rule); font-size: 0.9rem; }
+.m-thread__entry.is-status { padding: 2px 4px; background: none; text-align: center; }
+.m-thread__status { color: var(--slate-ink); font-size: 0.82rem; }
+.m-thread__head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 0.86rem; }
+.m-thread__tag { padding: 1px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: rgb(255 255 255 / 0.06); }
+.is-note .m-thread__tag { color: #f2c66d; background: rgb(229 160 13 / 0.16); }
+.is-reply .m-thread__tag { color: var(--screen); background: rgb(255 209 228 / 0.14); }
+.m-thread__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.m-composer { display: grid; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid var(--rule); background: var(--panel); }
+.m-composer.is-note { border-color: rgb(229 160 13 / 0.45); }
+.m-composer.is-reply { border-color: rgb(255 209 228 / 0.45); }
+.m-composer .m-seg__item[aria-checked="true"] { background: var(--screen); color: var(--on-screen); }
+.m-composer.is-note .m-seg__item[aria-checked="true"] { background: #f2c66d; color: #241a05; }
+.m-textarea--note { border-color: rgb(229 160 13 / 0.5); }
+.m-textarea--reply { border-color: rgb(255 209 228 / 0.5); }
+.m-ticket__solve { justify-self: start; }
+.help-ticket.is-waiting { color: var(--tally); font-weight: 700; }
