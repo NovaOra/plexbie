@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useInView, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, Coffee, Copy, GitFork, Heart, Pause, Play, Star } from "../components/icons";
 import type { RequestStage } from "../api/types";
 import { CONTACT, DEMO_SITE, GITHUB, REPO_PUBLIC, SUPPORT } from "./links";
@@ -136,14 +136,17 @@ const REQ_STAGES: RequestStage[] = ["requested", "approved", "downloading", "unp
 
 function RequestShow() {
   const reduced = useReducedMotion();
+  const box = useRef<HTMLDivElement>(null);
+  // It plays through once, from the moment it's on screen.
+  const seen = useInView(box, { once: true, amount: 0.6 });
   const [i, setI] = useState(reduced ? REQ_STAGES.length - 1 : 0);
   useEffect(() => {
-    if (reduced) return;
+    if (reduced || !seen) return;
     const t = setInterval(() => setI((n) => Math.min(n + 1, REQ_STAGES.length - 1)), 1300);
     return () => clearInterval(t);
-  }, [reduced]);
+  }, [reduced, seen]);
   return (
-    <div className="show-req">
+    <div className="show-req" ref={box}>
       <Journey stage={REQ_STAGES[i]} />
       <Strap key={REQ_STAGES[i]} stage={REQ_STAGES[i]} wipe={!reduced}>{stageHelp(REQ_STAGES[i])}</Strap>
     </div>
@@ -160,7 +163,8 @@ function Program({ title, text, children }: { title: string; text: string; child
   );
 }
 
-const CHANNELS: TvChannel[] = [
+/** What Plexbie does, as cards below the TV. */
+const FEATURES: { name: string; render: () => ReactNode }[] = [
   {
     name: "Requests",
     render: () => (
@@ -195,13 +199,13 @@ const CHANNELS: TvChannel[] = [
   },
 ];
 
-/** The feature channels, then the film (channel 05), which the set rests on. */
+/** The TV's two channels: the teaser (01), then the three-minute tour (02). */
 function channels(play?: { film: Film; ask: number }): TvChannel[] {
-  return [...CHANNELS, ...(Object.keys(FILMS) as Film[]).map((film) => ({
+  return (Object.keys(FILMS) as Film[]).map((film) => ({
     name: FILMS[film].channel,
     hold: true,
     render: () => <TvFilm key={play?.film === film ? play.ask : 0} film={film} start={play?.film === film} />,
-  }))];
+  }));
 }
 
 function ChannelGuide({ play }: { play?: { film: Film; ask: number } }) {
@@ -211,9 +215,20 @@ function ChannelGuide({ play }: { play?: { film: Film; ask: number } }) {
     <section id="channels" className="guide" aria-labelledby="guide-h" style={{ scrollMarginTop: 80 }}>
       <div className="guide__head">
         <h2 id="guide-h" className="display section-title">Tonight’s line-up</h2>
-        <p className="muted">Everything Plexbie does, on one telly. Turn the dial, hit the buttons, or let it play. Channel 05 is the three-minute tour.</p>
+        <p className="muted">Two channels: the teaser on 01, and the three-minute tour on 02. Or try it yourself in the demo.</p>
       </div>
       <RetroTv channels={list} tuneTo={tuneTo} onTune={(name) => track("channel", { l: name })} />
+    </section>
+  );
+}
+
+function Features() {
+  return (
+    <section id="features" className="features" aria-labelledby="features-h" style={{ scrollMarginTop: 80 }}>
+      <h2 id="features-h" className="display section-title">What it does</h2>
+      <div className="features__grid">
+        {FEATURES.map((f) => <article key={f.name} className="feature" aria-label={f.name}>{f.render()}</article>)}
+      </div>
     </section>
   );
 }
@@ -400,6 +415,7 @@ export function Project() {
       <Hero onWatch={() => setPlay((p) => ({ film: "tour", ask: (p?.ask ?? 0) + 1 }))} />
       <div className="shell project__body">
         <ChannelGuide play={play} />
+        <Features />
       </div>
       <Plugins />
       <div className="shell project__body">

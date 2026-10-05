@@ -2,15 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { Play } from "../components/icons";
 import { track } from "./track";
 
-// The project's film, hosted on Cloudflare R2 (media.plexbie.com), shown as a channel on
-// the page's TV: the three-minute tour. (The 70-second teaser is on R2 too, unused.) Nothing loads until
+// The project's films, hosted on Cloudflare R2 (media.plexbie.com), the page's TV's two
+// channels: the teaser (01) and the three-minute tour (02). Nothing loads until
 // someone presses play, and there's no autoplay. A new cut gets a new name (-v2), since
 // the files are cached for a year.
 
 const MEDIA = "https://media.plexbie.com/video";
 
-export type Film = "tour";
+export type Film = "teaser" | "tour";
 export const FILMS: Record<Film, { channel: string; name: string; file: string; length: string }> = {
+  // 16:9 for now, letterboxed on the TV; becomes "plexbie-teaser-4x3" once that cut is on R2.
+  teaser: { channel: "Teaser", name: "The Plexbie teaser", file: "plexbie-teaser", length: "1:13" },
   // The 4:3 cut, made for the TV's screen (plexbie-trailer's Trailer43 composition).
   tour: { channel: "Full tour", name: "The three-minute tour of Plexbie", file: "plexbie-tour-4x3", length: "3:02" },
 };

@@ -15,7 +15,7 @@ export function ProjectLayout({ children }: { children?: ReactNode }) {
             Plexbie
           </Link>
           <nav className="masthead__nav" aria-label="Project">
-            <a href="/#channels">Features</a>
+            <a href="/#features">Features</a>
             <a href="/#self-host">Self-host</a>
             {REPO_PUBLIC ? <a href={GITHUB} rel="noopener">GitHub</a> : null}
           </nav>

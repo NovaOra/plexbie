@@ -1052,6 +1052,13 @@ html, body { overflow-x: clip; }
 
 /* Channel guide */
 .guide { display: grid; gap: 32px; min-width: 0; }
+/* What it does: the feature programmes, each on its own card (sized like a screen: cqi). */
+.features { display: grid; gap: 24px; min-width: 0; }
+.features__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.feature {
+  container-type: inline-size; min-width: 0; padding: clamp(20px, 5cqi, 32px); border-radius: 22px;
+  background: var(--panel); border: 1px solid var(--rule);
+}
 .guide__head { display: grid; gap: 10px; }
 
 .show-req { display: grid; gap: 18px; }
