@@ -57,8 +57,10 @@ def _plain(text: str) -> str:
 async def record(*, channel: str, text: str, context: str = "", delivered: bool = True,
                  discord_id: Optional[Any] = None, discord_name: Optional[str] = None,
                  plex_name: Optional[str] = None, plex_account_id: Optional[Any] = None,
-                 title: Optional[str] = None, error: Optional[str] = None, direction: str = "out") -> None:
-    """Note one message to one person (or, with direction="in", from them). Never raises."""
+                 title: Optional[str] = None, error: Optional[str] = None, direction: str = "out",
+                 sent_by: Optional[str] = None) -> Optional[str]:
+    """Note one message to one person (or, with direction="in", from them); `sent_by` is the
+    admin who wrote it, when one did. Returns its key. Never raises."""
     global _writes
     try:
         now = datetime.now(timezone.utc)
@@ -76,12 +78,15 @@ async def record(*, channel: str, text: str, context: str = "", delivered: bool 
             "text": _plain(text),
             "context": context[:200],
             "error": (error or "")[:300] or None,
+            "by": (sent_by or "")[:80] or None,
         })
         _writes += 1
         if _writes % TRIM_EVERY == 1:
             await trim()
+        return key
     except Exception as e:
         logger.warning(f"Could not log a message ({context}): {type(e).__name__}: {e}")
+        return None
 
 
 async def trim(now: Optional[datetime] = None) -> int:
@@ -104,17 +109,35 @@ def person_key(entry: Dict[str, Any]) -> str:
     return f"p{(entry.get('plex_name') or entry.get('plex_account_id') or 'unknown').lower()}"
 
 
+#: Conversations an admin marked done (read): {person: {"at", "by"}}. A newer message from
+#: them makes it unread again; the history itself is never touched.
+SEEN_NAMESPACE = "message_seen"
+
+
+async def mark_done(person: str, by: Optional[str], done: bool = True) -> None:
+    from database.kv_store import kv_delete
+    if done:
+        await kv_set(SEEN_NAMESPACE, person, {"at": datetime.now(timezone.utc).isoformat(), "by": by})
+    else:
+        await kv_delete(SEEN_NAMESPACE, person)
+
+
 async def people() -> List[Dict[str, Any]]:
-    """Everyone Plexbie has written to, newest conversation first, with the last message."""
+    """Everyone Plexbie has written to or heard from, newest conversation first, with the
+    last message, how many of theirs no admin has seen yet, and who marked it done."""
     by: Dict[str, Dict[str, Any]] = {}
+    seen = await kv_get_all(SEEN_NAMESPACE)
     for key, e in sorted((await kv_get_all(NAMESPACE)).items()):
         if not isinstance(e, dict):
             continue
         k = person_key(e)
-        p = by.setdefault(k, {"id": k, "name": None, "count": 0, "received": 0, "failed": 0, "via": set()})
+        p = by.setdefault(k, {"id": k, "name": None, "count": 0, "received": 0, "failed": 0, "unread": 0, "via": set(),
+                              "done": seen.get(k) if isinstance(seen.get(k), dict) else None})
         p["name"] = e.get("discord_name") or e.get("plex_name") or p["name"] or "Someone"
         incoming = e.get("direction") == "in"
         p["received" if incoming else "count"] += 1
+        if incoming and not (p["done"] and (p["done"].get("at") or "") >= (e.get("at") or "")):
+            p["unread"] += 1
         p["failed"] += 0 if e.get("delivered") else 1
         p["via"].add(e.get("channel"))
         p["last"] = {"at": e.get("at"), "text": e.get("title") or e.get("text"), "channel": e.get("channel"),
@@ -130,27 +153,28 @@ async def conversation(person: str) -> List[Dict[str, Any]]:
     for key, e in sorted((await kv_get_all(NAMESPACE)).items()):
         if isinstance(e, dict) and person_key(e) == person:
             out.append({"id": key, "at": e.get("at"), "direction": "in" if e.get("direction") == "in" else "out",
-                        "channel": e.get("channel"), "delivered": e.get("delivered"),
+                        "by": e.get("by"), "ticket": e.get("ticket"), "channel": e.get("channel"), "delivered": e.get("delivered"),
                         "title": e.get("title"), "text": e.get("text"), "context": e.get("context"), "error": e.get("error")})
     return out
 
 
-async def record_dm(message) -> None:
-    """A Discord DM someone sent Plexbie (an on_message listener). Never raises."""
+async def record_dm(message) -> Optional[str]:
+    """A Discord DM someone sent Plexbie. Returns its key (None when it isn't one). Never raises."""
     try:
         if getattr(message, "guild", None) is not None or getattr(message.author, "bot", False):
-            return
+            return None
         text = message.content or ""
         files = [a.filename for a in getattr(message, "attachments", None) or []]
         if files:
             text = f"{text}\nAttached: {', '.join(files)}".strip()
         if not text.strip():
-            return
+            return None
         author = message.author
-        await record(channel="discord", direction="in", text=text, context="Discord DM",
-                     discord_id=author.id, discord_name=getattr(author, "display_name", None) or author.name)
+        return await record(channel="discord", direction="in", text=text, context="Discord DM",
+                            discord_id=author.id, discord_name=getattr(author, "display_name", None) or author.name)
     except Exception as e:
         logger.warning(f"Could not log a DM to Plexbie: {type(e).__name__}: {e}")
+        return None
 
 
 async def record_from_ticket(h: dict, *, text: str, title: str, source: str, context: str) -> None:
@@ -160,3 +184,30 @@ async def record_from_ticket(h: dict, *, text: str, title: str, source: str, con
                  discord_id=h.get("discord_id"), discord_name=h.get("who") if h.get("discord_id") else None,
                  plex_name=h.get("plex_name") or (None if h.get("discord_id") else h.get("who")),
                  plex_account_id=h.get("plex_account_id"))
+
+
+async def identity(person: str) -> Dict[str, Any]:
+    """How to reach someone with a conversation: their Discord id, or Plex name/account."""
+    found: Dict[str, Any] = {}
+    for key, e in sorted((await kv_get_all(NAMESPACE)).items()):
+        if isinstance(e, dict) and person_key(e) == person:
+            for k in ("discord_id", "discord_name", "plex_name", "plex_account_id"):
+                if e.get(k):
+                    found[k] = e[k]
+    if found:
+        found["name"] = found.get("discord_name") or found.get("plex_name") or "Someone"
+    return found
+
+
+async def entry(key: str) -> Optional[Dict[str, Any]]:
+    from database.kv_store import kv_get
+    e = await kv_get(NAMESPACE, key)
+    return e if isinstance(e, dict) else None
+
+
+async def note_ticket(key: str, hid: str) -> None:
+    """A message someone sent Plexbie was added to their ticket."""
+    from database.kv_store import kv_get
+    e = await kv_get(NAMESPACE, key)
+    if isinstance(e, dict):
+        await kv_set(NAMESPACE, key, {**e, "ticket": hid})

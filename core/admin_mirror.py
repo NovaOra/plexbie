@@ -59,9 +59,10 @@ async def _send_admin_receipt(bot, services, *, header: str, content: Optional[s
         logger.warning(f"Could not mirror to the admin channel: {e}")
 
 
-async def _log(user, *, context: str, content: Optional[str], embed, delivered: bool, error: Optional[str] = None):
+async def _log(user, *, context: str, content: Optional[str], embed, delivered: bool, error: Optional[str] = None,
+               sent_by: Optional[str] = None):
     from core.message_log import embed_text, record
-    await record(channel="discord", delivered=delivered, error=error, context=context,
+    await record(channel="discord", delivered=delivered, error=error, context=context, sent_by=sent_by,
                  discord_id=getattr(user, "id", None),
                  discord_name=getattr(user, "display_name", None) or getattr(user, "name", None) or str(user),
                  title=getattr(embed, "title", None) if embed is not None else None,
@@ -85,10 +86,10 @@ async def _to_app(user, content: Optional[str], embed) -> None:
 
 
 async def send_user_dm(bot, services, user, *, context: str, content: Optional[str] = None,
-                       embed: Optional[discord.Embed] = None, mirror: bool = True, view=None):
-    """DM someone, log it on Manage → Messages, and (with `mirror`) copy it to the
-    admin channel. Raises if the DM didn't go; it's logged either way. A copy goes to
-    the Plexbie app on their phone either way, which helps most when their DMs are closed."""
+                       embed: Optional[discord.Embed] = None, view=None, sent_by: Optional[str] = None):
+    """DM someone and log it on Manage → Messages (delivered or not; the admin channel no
+    longer gets a receipt for every DM). Raises if the DM didn't go. A copy goes to the
+    Plexbie app on their phone either way, which helps most when their DMs are closed."""
     # In the background: the DM never waits on Expo's push service.
     task = asyncio.create_task(_to_app(user, content, embed))
     _app_tasks.add(task)
@@ -96,42 +97,26 @@ async def send_user_dm(bot, services, user, *, context: str, content: Optional[s
     try:
         sent = await user.send(content=content, embed=embed, **({"view": view} if view is not None else {}))
     except Exception as e:
-        await _log(user, context=context, content=content, embed=embed, delivered=False,
+        await _log(user, context=context, content=content, embed=embed, delivered=False, sent_by=sent_by,
                    error="Their Discord DMs are closed" if isinstance(e, discord.Forbidden) else str(e))
-        if not mirror:
-            raise
-        await _send_admin_receipt(
-            bot,
-            services,
-            header=f"⚠️ Plexbie DM failed → <@{user.id}> ({user}) — {context}",
-            content=f"Error: `{e}`",
-            embed=embed,
-        )
         raise
 
-    await _log(user, context=context, content=content, embed=embed, delivered=True)
-    if mirror:
-        await _send_admin_receipt(
-            bot,
-            services,
-            header=f"📬 Plexbie DM sent → <@{user.id}> ({user}) — {context}",
-            content=content,
-            embed=embed,
-        )
+    await _log(user, context=context, content=content, embed=embed, delivered=True, sent_by=sent_by)
     return sent
 
 
 async def dm_user_id(bot, services, user_id, *, context: str, content: Optional[str] = None,
-                     embed: Optional[discord.Embed] = None, view=None):
+                     embed: Optional[discord.Embed] = None, view=None, sent_by: Optional[str] = None):
     """DM a Discord account by id: from the cache, else fetched. The sent message (truthy)
-    if it went, else False; a closed DM or any failure is logged (and mirrored, by
-    send_user_dm), never raised."""
+    if it went, else False; a closed DM or any failure is logged (on Manage → Messages),
+    never raised."""
     if not (bot and user_id):
         return False
     try:
         uid = int(user_id)
         user = bot.get_user(uid) or await bot.fetch_user(uid)
-        sent = await send_user_dm(bot, services, user, context=context, content=content, embed=embed, view=view)
+        sent = await send_user_dm(bot, services, user, context=context, content=content, embed=embed, view=view,
+                                  sent_by=sent_by)
         return sent or True
     except Exception as e:
         logger.info(f"Couldn't DM {user_id} ({context}): {e}")

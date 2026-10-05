@@ -1462,6 +1462,26 @@ function DiscordTab() {
       </section>
 
       <section className="section">
+        <h2>DMs to Plexbie</h2>
+        <p className="muted">When someone DMs Plexbie, admins get an alert and it lands in Messages, and in their own thread under the admin channel. Reply from Messages, or in the thread with Reply or <code>/reply</code>.</p>
+        {d.inbox ? (
+          <>
+            <div className="m-set-row">
+              <span><b>Answer DMs automatically</b><span className="muted">On someone’s first DM in 12 hours: “Thanks! The admins have your message and will reply here.”</span></span>
+              <Switch on={d.inbox.autoreply} label="Answer DMs automatically" disabled={readOnly}
+                onChange={async (on) => {
+                  const out = await act(null, () => api.inboxSettings(on), { failText: "Not saved" });
+                  if (out) { toast({ text: out.message }); void refresh("discord"); }
+                }} />
+            </div>
+            {d.inbox.threadsMissing ? (
+              <p className="m-stuck"><CircleAlert size={15} aria-hidden /><span>Plexbie can’t make threads in the admin channel, so DMs are posted in the channel itself. Give Plexbie’s role {d.inbox.threadsMissing} there.</span></p>
+            ) : null}
+          </>
+        ) : null}
+      </section>
+
+      <section className="section">
         <h2>Say something as Plexbie</h2>
         <form className="m-invite-form" onSubmit={send}>
           <div className="field">
@@ -1544,7 +1564,33 @@ function dayLabel(iso: string) {
 /** One person's messages with Plexbie, Discord style: newest at the bottom, a day line
  *  between days, and what they sent Plexbie (tinted) between Plexbie's messages. */
 function Conversation({ person, onBack }: { person: MessagePerson; onBack: () => void }) {
-  const res = useLoad<LoggedMessage[]>(() => api.conversation(person.id), [person.id]);
+  const { refresh, toast, readOnly } = useManage();
+  const { session } = useSession();
+  const { busy, act } = useAct();
+  const [version, setVersion] = useState(0);
+  const [text, setText] = useState("");
+  const res = useLoad<LoggedMessage[]>(() => api.conversation(person.id), [person.id, version]);
+  const reload = () => { setVersion((v) => v + 1); void refresh("messages"); };
+  const me = session?.user.name ?? "you";
+  const discord = person.id.startsWith("d");
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    const out = await act("send", () => api.messageReply(person.id, text.trim()), { failText: "Not sent" });
+    if (!out) return;
+    buzz(12);
+    toast({ text: "Sent as Plexbie", detail: out.message });
+    setText("");
+    reload();
+  };
+  const done = async (yes: boolean) => {
+    const out = await act("done", () => api.messageDone(person.id, yes));
+    if (out) { toast({ text: yes ? "Marked done" : "Marked unread" }); reload(); }
+  };
+  const toTicket = async (key: string) => {
+    const out = await act(key, () => api.messageToTicket(key), { failText: "Not added" });
+    if (out) { toast({ text: "Added to their ticket", detail: out.message }); reload(); void refresh("tickets"); }
+  };
   // On a phone the conversation covers the list: Back returns to the list, not off the page.
   useBackToClose(true, onBack);
   const end = useRef<HTMLDivElement>(null);
@@ -1556,7 +1602,12 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
         <button type="button" className="m-chat__back" onClick={onBack} aria-label="Back to everyone"><ArrowLeft size={20} aria-hidden /></button>
         <Initial name={person.name} big />
         <div><h3 className="m-card__title">{person.name}</h3>
-          <span className="muted m-person__meta">{person.count} message{person.count === 1 ? "" : "s"} from Plexbie{person.received ? ` · ${person.received} from ${person.name}` : ""} · by {person.via.map((v) => VIA[v].label.toLowerCase()).join(", ")}</span></div>
+          <span className="muted m-person__meta">{person.count} message{person.count === 1 ? "" : "s"} from Plexbie{person.received ? ` · ${person.received} from ${person.name}` : ""} · by {person.via.map((v) => VIA[v].label.toLowerCase()).join(", ")}</span>
+          {person.done ? <span className="muted m-person__meta">Marked done{person.done.by ? ` by ${person.done.by}` : ""} {since(person.done.at)}</span> : null}</div>
+        <button type="button" className="btn btn--quiet m-btn m-chat__done" disabled={readOnly || busy === "done"}
+          onClick={() => void done(!!person.unread || !person.done)}>
+          {person.unread || !person.done ? <><Check size={16} aria-hidden /> Done</> : "Mark unread"}
+        </button>
       </header>
       <div className="m-chat__body">
         {res.loading ? <div className="skeleton" style={{ height: 160 }} /> : null}
@@ -1577,6 +1628,13 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
                     <p>{m.text}</p>
                   </div>
                   <ViaChip channel={m.channel} delivered={m.delivered} error={m.error} incoming={m.direction === "in"} />
+                  {m.by ? <span className="muted m-msg__by">Sent by {m.by}</span> : null}
+                  {m.direction === "in" && m.ticket ? <span className="muted m-msg__by"><LifeBuoy size={13} aria-hidden /> On their ticket</span> : null}
+                  {m.direction === "in" && !m.ticket && person.ticket && m.context === "Discord DM" ? (
+                    <button type="button" className="btn btn--quiet m-btn m-msg__action" disabled={readOnly || busy === m.id} onClick={() => void toTicket(m.id)}>
+                      <LifeBuoy size={14} aria-hidden /> Add to their ticket on {person.ticket.title}
+                    </button>
+                  ) : null}
                 </div>
               </article>
             </div>
@@ -1585,6 +1643,18 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
         {res.data && !res.data.length ? <p className="muted">No messages kept for {person.name}.</p> : null}
         <div ref={end} />
       </div>
+      <form className="m-chat__composer" onSubmit={send}>
+        <label className="visually-hidden" htmlFor={`m-reply-${person.id}`}>Message to {person.name}</label>
+        <textarea id={`m-reply-${person.id}`} className="m-textarea m-textarea--reply" rows={2} maxLength={1500} value={text}
+          onChange={(e) => setText(e.target.value)} placeholder={`Message ${person.name} as Plexbie`}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(e); }} />
+        <div className="m-chat__send">
+          <span className="muted m-person__meta">{discord ? "A Discord DM from Plexbie" : "A phone alert, else an email"}, signed “— {me} (admin)”</span>
+          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy === "send" || !text.trim()}>
+            {busy === "send" ? "Sending…" : "Send as Plexbie"}
+          </button>
+        </div>
+      </form>
     </section>
   );
 }
@@ -1592,7 +1662,13 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
 /** Everything Plexbie has said to people, by Discord DM, website alert or email. */
 function MessagesTab() {
   const { data } = useManage();
-  const [open, setOpen] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  // An alert about a DM opens straight on that conversation (?who=d123).
+  const [open, setOpenState] = useState<string | null>(params.get("who"));
+  const setOpen = (who: string | null) => {
+    setOpenState(who);
+    if (params.get("who")) setParams((p) => { p.delete("who"); return p; }, { replace: true });
+  };
   const [query, setQuery] = useState("");
   const people = data.messages;
   if (!people) return <div className="skeleton" style={{ height: 300 }} />;
@@ -1613,7 +1689,7 @@ function MessagesTab() {
               <button type="button" className={`m-inbox__person${p.id === open ? " is-open" : ""}`} aria-current={p.id === open ? "true" : undefined} onClick={() => { buzz(5); setOpen(p.id); }}>
                 <Initial name={p.name} big />
                 <span className="m-inbox__text">
-                  <span className="m-inbox__top"><b>{p.name}</b><time dateTime={p.last.at}>{since(p.last.at)}</time></span>
+                  <span className="m-inbox__top"><b>{p.name}</b>{p.unread ? <span className="m-pill m-pill--hot">{p.unread} new</span> : null}<time dateTime={p.last.at}>{since(p.last.at)}</time></span>
                   <span className="m-inbox__last">{p.last.direction === "in" ? <b>{p.name.split(" ")[0]}: </b> : null}{p.last.text}</span>
                   <span className="m-inbox__via">
                     {p.via.map((v) => { const Icon = VIA[v].icon; return <Icon key={v} size={13} aria-label={VIA[v].label} />; })}
@@ -2131,6 +2207,7 @@ function waiting(data: Store) {
   return {
     requests: data.requests?.pending.length,
     tickets: data.tickets?.counts.action ?? 0,
+    messages: data.messages?.filter((p) => (p.unread ?? 0) > 0).length ?? 0,
     joins: data.joins?.filter((j) => j.status === "pending").length,
     leaving: data.cleanup?.warning.length,
     down: data.health?.filter((h) => !h.ok).length,
@@ -2277,10 +2354,10 @@ export function Manage() {
   const w = waiting(data);
   const counts: Partial<Record<Section, number>> = {
     requests: w.requests || undefined, all: data.all?.counts?.stuck || undefined, tickets: w.tickets || undefined,
-    joins: w.joins, cleanup: w.leaving, health: w.down,
+    joins: w.joins, cleanup: w.leaving, health: w.down, messages: w.messages || undefined,
   };
   /** "All requests · 2 stuck"; everything else counts what's waiting. */
-  const word = (t: Section) => (t === "all" ? "stuck" : t === "tickets" ? "open" : "waiting");
+  const word = (t: Section) => (t === "all" ? "stuck" : t === "tickets" ? "open" : t === "messages" ? "new" : "waiting");
   const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed };
 
   return (

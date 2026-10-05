@@ -556,6 +556,7 @@ doesn't need Administrator:
 | Manage Channels | **Set up this server for me** makes its category and channels |
 | Manage Server | Reading the server's invites, to see who brought whom |
 | Create Invite | Invite links for people approved to join |
+| Create Public Threads, Send Messages in Threads | A thread per person who DMs Plexbie, under the admin channel (only admins see it), to read and answer their DMs. Already set up? Give Plexbie's role these two in the admin channel; Manage → Health says if they're missing |
 
 In Discord's developer portal, the bot also needs the **Server Members** and **Message
 Content** intents turned on; the setup page checks both. For handing out roles, Plexbie's own

@@ -2324,3 +2324,149 @@ def test_app_alerts_are_off_unless_this_install_opts_in():
         os.environ.pop("APP_PUSH", None)
         if saved is not None:
             os.environ["APP_PUSH"] = saved
+
+
+# ------------------------------------------------- DMs: the shared inbox
+def _inbox_bot(dms, thread_posts, admin_posts):
+    """A bot with an admin channel (id 9) that can make threads, and people who can be DMed."""
+    class Thread:
+        id, archived = 77, False
+
+        async def send(self, content=None, **kw):
+            thread_posts.append((content, kw.get("allowed_mentions"), bool(kw.get("view"))))
+
+    class Start:
+        async def create_thread(self, name, auto_archive_duration=None):
+            return Thread()
+
+    class Channel:
+        guild = None
+
+        async def send(self, content=None, **kw):
+            admin_posts.append(content)
+            return Start()
+
+    class Bot:
+        services = FakeServices(Config())
+        portal_actions = None
+
+        def get_channel(self, cid):
+            return Thread() if int(cid) == 77 else Channel()
+
+        def get_user(self, uid):
+            return None
+
+        async def fetch_user(self, uid):
+            class U:
+                id, name, display_name = uid, "Jordan", "Jordan"
+
+                async def send(self, content=None, embed=None, view=None):
+                    dms.append(content)
+                    return True
+            return U()
+    bot = Bot()
+    bot.services.config.admin_channel_id = 9
+    return bot
+
+
+def test_the_inbox_routes_are_admins_only():
+    for path, body in (("/api/admin/messages/d7/reply", {"text": "hi"}), ("/api/admin/messages/d7/done", {}),
+                       ("/api/admin/message/20261005T120000000000-abcdef/to-ticket", {}), ("/api/admin/inbox", {"autoreply": False})):
+        assert _run(MEMBER, "POST", path, headers=OK_HEADERS, body=body)[0] == 403, path
+        assert _run(None, "POST", path, headers=OK_HEADERS, body=body)[0] in (401, 403), path
+
+
+def test_a_dm_is_answered_once_posted_in_its_thread_and_admins_can_reply_signed():
+    from core import message_log
+    from portal import inbox
+    dms, thread_posts, admin_posts, alerts = [], [], [], []
+    bot = _inbox_bot(dms, thread_posts, admin_posts)
+    actions = _Actions(FakeServices(Config()))
+    actions.bot = bot
+    actions.config.admin_channel_id = 9
+
+    async def alert(who, name, text):
+        alerts.append((who, text))
+    actions.alert_admins_about_dm = alert
+    bot.portal_actions = actions
+    sam = {**ADMIN, "user": {"id": "1", "name": "Sam", "via": "discord"}, "discordId": "1"}
+
+    class Msg:
+        guild, attachments = None, []
+
+        def __init__(self, text):
+            async def send(_self, content=None, embed=None, view=None):
+                dms.append(content)
+            self.content = text
+            self.author = type("A", (), {"id": 7, "name": "jordan", "display_name": "Jordan", "bot": False, "send": send})()
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await inbox.on_dm(bot, Msg("hey, @everyone is Dune coming?"))
+        await inbox.on_dm(bot, Msg("also the sound is off"))            # no second auto-reply, no second alert
+        await inbox.on_dm(bot, Msg("jordan@example.com"))              # /join-plex's email reply: logged only
+        before = {p["id"]: p for p in await message_log.people()}["d7"]
+        out = await actions.message_reply(sam, "d7", {"text": "Grabbing it tonight"})
+        after = {p["id"]: p for p in await message_log.people()}["d7"]
+        refused = []
+        for who, text in (("d999", "hi"), ("d7", ""), ("x7", "hi")):
+            try:
+                await actions.message_reply(sam, who, {"text": text})
+            except Exception as e:
+                refused.append(getattr(e, "status", None))
+        convo = await message_log.conversation("d7")
+        return before, out, after, refused, convo
+
+    before, out, after, refused, convo = asyncio.run(scenario())
+    assert dms[0] == inbox.AUTOREPLY_TEXT and dms[1] == "Grabbing it tonight\n— Sam (admin)" and len(dms) == 2
+    assert alerts == [("d7", "hey, @everyone is Dune coming?")]
+    assert admin_posts and "Jordan" in admin_posts[0]                   # the thread's starter, then everything in the thread
+    assert all(m is not None and not m.everyone for _, m, _ in thread_posts) and len(thread_posts) == 3
+    assert thread_posts[0][2] and "↩️ **Sam** replied: Grabbing it tonight" == thread_posts[-1][0]
+    assert before["unread"] == 3 and after["unread"] == 0 and after["done"]["by"] == "Sam"
+    assert out["ok"] and refused == [404, 400, 404]
+    mine = [m for m in convo if m["by"] == "Sam"]
+    assert len(mine) == 1 and mine[0]["direction"] == "out"
+
+
+def test_a_dm_can_go_on_their_open_ticket():
+    from core import message_log
+    from database.request_store import mark_resolved, save_request
+    from portal import help as helpdesk
+    posted, dms = [], []
+    actions = _Actions(FakeServices(Config()))
+    actions.bot = _ticket_bot(posted, dms)
+    actions.data = _all_requests_data()
+    jordan = {"user": {"id": "7", "name": "Jordan", "via": "discord"}, "member": True, "admin": False, "discordId": "7"}
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(601, user_id=7, media={"id": 1, "media_type": "movie", "title": "Searching Forever"})
+        await mark_resolved(601, "approved", "Sam")
+        await actions.ask_help(jordan, "601", {"reason": "stuck", "note": "still 0%"})
+        key = await message_log.record(channel="discord", direction="in", text="any news?", discord_id=7, discord_name="Jordan")
+        out = await actions.message_to_ticket(ADMIN, key)
+        try:
+            await actions.message_to_ticket(ADMIN, key)
+            twice = None
+        except Exception as e:
+            twice = getattr(e, "status", None)
+        t = (await helpdesk.open_for({"601"}))["601"]
+        return out, twice, helpdesk.thread_of(t), await message_log.conversation("d7")
+
+    out, twice, thread, convo = asyncio.run(scenario())
+    assert out["ok"] and twice == 409
+    assert ("member", "any news?") in [(e["kind"], e["text"]) for e in thread]
+    assert [m for m in convo if m["text"] == "any news?"][0]["ticket"] == out["ticket"]
+
+
+def test_the_admin_channel_gets_no_receipt_when_plexbie_dms_someone():
+    from core.admin_mirror import dm_user_id
+    dms, thread_posts, admin_posts = [], [], []
+    bot = _inbox_bot(dms, thread_posts, admin_posts)
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        return await dm_user_id(bot, bot.services, 7, context="approved", content="✅ Approved")
+
+    assert asyncio.run(scenario()) and dms == ["✅ Approved"] and admin_posts == [] and thread_posts == []

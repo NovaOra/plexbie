@@ -270,6 +270,8 @@ PERMISSIONS = {
     "Attach Files": 1 << 15,          # book covers
     "Read Message History": 1 << 16,  # finding its stats boards again
     "Manage Roles": 1 << 28,          # Plex Member, New on Plex, and making its roles
+    "Create Public Threads": 1 << 35,  # a thread per person who DMs Plexbie, in the admin channel
+    "Send Messages in Threads": 1 << 38,
 }
 BOT_PERMISSIONS = sum(PERMISSIONS.values())
 VIEW, SEND, EMBED, ATTACH, HISTORY = 1 << 10, 1 << 11, 1 << 14, 1 << 15, 1 << 16

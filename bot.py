@@ -58,9 +58,13 @@ class Plexbie(commands.Bot):
         """Initialize bot components on startup"""
         logger.info("Starting Plexbie bot setup")
 
-        # What people DM Plexbie goes on Manage → Messages, beside what Plexbie sent them.
-        from core.message_log import record_dm
-        self.add_listener(record_dm, "on_message")
+        # What people DM Plexbie: on Manage → Messages, an alert to the admins, and their
+        # thread under the admin channel (portal/inbox.py).
+        from portal import inbox
+
+        async def on_dm(message):
+            await inbox.on_dm(self, message)
+        self.add_listener(on_dm, "on_message")
 
         # Set up global interaction logging
         @self.tree.error

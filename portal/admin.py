@@ -282,6 +282,21 @@ class Admin:
             "stuck": stuck_reasons(row, approved_at, mark, now),
         }
 
+    # ------------------------------------------------------------ messages
+    async def message_people(self) -> List[dict]:
+        """Manage → Messages: everyone, with their open ticket (for "Add to their ticket")."""
+        from core import message_log
+        from portal import help as helpdesk
+        open_by: Dict[str, dict] = {}
+        for hid, h in (await kv_get_all(helpdesk.NAMESPACE)).items():
+            if isinstance(h, dict) and h.get("status") == "open":
+                row = {"id": hid, "title": h.get("title") or "", "slot": h.get("slot") or 0}
+                for k in (f"d{h['discord_id']}" if h.get("discord_id") else None,
+                          f"p{(h.get('plex_name') or '').lower()}" if h.get("plex_name") else None):
+                    if k:
+                        open_by[k] = row
+        return [{**p, "ticket": open_by.get(p["id"])} for p in await message_log.people()]
+
     # ------------------------------------------------------------ tickets
     async def tickets(self) -> dict:
         """Manage → Tickets: every ticket, the ones needing an admin first, then those
@@ -548,6 +563,12 @@ class Admin:
                 await probe("Plex", plex)
             if cfg.discord_client_id and cfg.discord_client_secret and cfg.discord_callback_url and cfg.discord_bot_token:
                 await probe("Discord sign-in", discord_sign_in)
+            if self.bot is not None:
+                from portal.inbox import threads_ok
+                missing = threads_ok(self.bot)
+                checks.append({"name": "Discord DM threads", "ok": not missing, "ms": 0,
+                               "detail": f"Give Plexbie's role {missing} in the admin channel, so each DM gets its own thread."
+                               if missing else None})
             for client in (self.services.seerr, self.services.sonarr, self.services.radarr,
                            self.services.tautulli, self.services.sab):
                 if client.configured:

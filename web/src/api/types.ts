@@ -268,7 +268,11 @@ export interface NewInvite { url: string; invite: AdminInvite }
 
 export interface DiscordJoin { who: string; by: string; via: "discord" | "plexbie"; code: string | null; at: string | null; role: string | null }
 export interface WatchPartyLive { channel: string | null; streamer: string; title: string | null; startedAt: string | null; people: string[] }
-export interface DiscordOverview { channels: { id: string; name: string }[]; joins: DiscordJoin[]; party: WatchPartyLive | null }
+export interface DiscordOverview {
+  channels: { id: string; name: string }[]; joins: DiscordJoin[]; party: WatchPartyLive | null;
+  /** DMs to Plexbie: whether it answers them itself, and what it lacks to keep a thread per person. */
+  inbox?: { autoreply: boolean; threadsMissing: string | null };
+}
 export interface WatchPartyMine { seconds: number; sessions: number; last: string | null }
 
 /* ------------------------------------------------------------ message log */
@@ -280,9 +284,19 @@ export interface MessagePerson {
   /** count: from Plexbie; received: from them. */
   id: string; name: string; count: number; received?: number; failed: number; via: MessageChannel[];
   last: { at: string; text: string; channel: MessageChannel; delivered: boolean; direction?: MessageDirection };
+  /** Their messages no admin has marked done. */
+  unread?: number;
+  /** Who marked the conversation done, and when (the history stays). */
+  done?: { at: string; by: string | null } | null;
+  /** Their open ticket, for "Add to their ticket". */
+  ticket?: { id: string; title: string; slot: number } | null;
 }
 export interface LoggedMessage {
   id: string; at: string; direction?: MessageDirection; channel: MessageChannel; delivered: boolean;
+  /** The admin who wrote it (a reply from Manage or Discord). */
+  by?: string | null;
+  /** Something they sent that an admin put on their ticket. */
+  ticket?: string | null;
   title: string | null; text: string; context: string; error: string | null;
 }
 

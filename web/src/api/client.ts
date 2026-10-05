@@ -142,6 +142,17 @@ export const api = {
     SAMPLE ? sample.helpResolve(id) : post(`/admin/help/${enc(id)}/resolve`, { reply }),
   conversation: (who: string): Promise<LoggedMessage[]> =>
     SAMPLE ? sample.conversation(who) : call(`/admin/messages/${enc(who)}`),
+  /** Answer someone as Plexbie, signed with your name. */
+  messageReply: (who: string, text: string): Promise<Ack> =>
+    SAMPLE ? sample.messageReply(who, text) : post(`/admin/messages/${enc(who)}/reply`, { text }),
+  messageDone: (who: string, done: boolean): Promise<Ack> =>
+    SAMPLE ? sample.messageDone(who, done) : post(`/admin/messages/${enc(who)}/done`, { done }),
+  /** Put something they sent Plexbie on their open ticket. */
+  messageToTicket: (key: string): Promise<Ack> =>
+    SAMPLE ? sample.messageToTicket(key) : post(`/admin/message/${enc(key)}/to-ticket`, {}),
+  inboxSettings: (autoreply: boolean): Promise<Ack> =>
+    SAMPLE ? sample.wait({ ok: true, message: autoreply ? "Plexbie answers new DMs." : "Plexbie won't answer DMs by itself." }, 400)
+      : post("/admin/inbox", { autoreply }),
   plexInviteCancel: (email: string): Promise<Ack> =>
     SAMPLE ? sample.wait({ ok: true, message: `Plex invite to ${email} cancelled.` }, 500) : post("/admin/plex-invites/cancel", { email }),
   plexInviteChange: (email: string, next: string): Promise<Ack> =>

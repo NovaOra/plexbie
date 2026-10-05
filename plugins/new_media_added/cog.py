@@ -1046,31 +1046,11 @@ class NewMediaAddedCog(commands.Cog):
             logger.error(f"Error checking if monitored: {e}", exc_info=True)
             return False
 
-    async def _get_receipt_channel(self):
-        """Return the admin-facing receipt channel, preferring admin then updates."""
-        for channel_id in [self.services.config.admin_channel_id, self.services.config.updates_channel_id]:
-            if not channel_id:
-                continue
-            channel = self.bot.get_channel(channel_id)
-            if channel:
-                return channel
-        return None
-
-    async def _send_receipt(self, message: str):
-        """Send an admin-facing receipt message for requester DM activity."""
-        channel = await self._get_receipt_channel()
-        if not channel:
-            logger.warning(f"No receipt channel available for requester DM receipt: {message}")
-            return
-
-        await channel.send(message)
-
-    async def _notify_website_requester(self, tracked_media, message: str, reason: str, receipt_detail: str):
+    async def _notify_website_requester(self, tracked_media, message: str, reason: str):
         """The requester asked on the website without Discord: phone alert from plexbie.com, else email."""
         from core.media_tracking import get_media_tracker
         from core.notify import notify_member, plain
 
-        who = tracked_media.requester_plex_name or tracked_media.requester_plex_id
         how = await notify_member(
             self.services, title=f"Ready to watch: {tracked_media.title}", body=plain(message),
             url="/app/schedule", plex_account_id=tracked_media.requester_plex_id,
@@ -1079,10 +1059,6 @@ class NewMediaAddedCog(commands.Cog):
         # every webhook for someone with no alerts and no email would only spam the log.
         tracked_media.mark_requester_notified(reason if how != "none" else f"{reason} (no alert route)")
         await run_blocking(get_media_tracker().save_tracking_data)
-        await self._send_receipt(
-            f"📬 {who} (website, no Discord) told about **{tracked_media.title}** — {receipt_detail}"
-            f"{' by phone alert' if how == 'push' else ' by email' if how == 'email' else '; they have no alerts or email set up'}."
-        )
 
     async def _send_requester_availability_dm(self, tracked_media, media_kind: str, detail: Optional[str] = None):
         """Send a friendly requester DM when media first becomes watchable on Plex."""
@@ -1093,25 +1069,23 @@ class NewMediaAddedCog(commands.Cog):
             if media_kind == "movie":
                 dm_message = f"✅ **Good news!** The movie you requested, **{tracked_media.title}**, is now available on Plex."
                 reason = "movie_available"
-                receipt_detail = "movie available on Plex"
             else:
                 dm_message = (
                     f"✅ **Good news!** **{tracked_media.title}** is now ready to start on Plex — "
                     f"**{detail or 'Episode 1'}** is available."
                 )
                 reason = "requested_season_episode_1_available"
-                receipt_detail = detail or "Episode 1 available"
 
             from portal.ticket_view import mark_arrived
             if not tracked_media.requester_user_id:
-                await self._notify_website_requester(tracked_media, dm_message, reason, receipt_detail)
+                await self._notify_website_requester(tracked_media, dm_message, reason)
                 await mark_arrived(self.bot, tracked_media.tmdb_id, plex_id=tracked_media.requester_plex_id)
                 return
 
             user = await self.bot.fetch_user(tracked_media.requester_user_id)
-            # Not mirrored: _send_receipt below posts this plugin's own, shorter receipt.
+            # On Manage → Messages like every DM (no receipt in the admin channel).
             await send_user_dm(self.bot, self.services, user, context=f"arrival of {tracked_media.title}",
-                               content=dm_message, mirror=False)
+                               content=dm_message)
             tracked_media.mark_requester_notified(reason)
             # The approval DM's "Open a ticket" comes off now it's here.
             await mark_arrived(self.bot, tracked_media.tmdb_id, user_id=tracked_media.requester_user_id)
@@ -1119,18 +1093,10 @@ class NewMediaAddedCog(commands.Cog):
             from core.media_tracking import get_media_tracker
             get_media_tracker().save_tracking_data()
 
-            await self._send_receipt(
-                f"📬 Requester DM sent to <@{tracked_media.requester_user_id}> for **{tracked_media.title}** — {receipt_detail}."
-            )
             logger.info(f"Sent requester availability DM to user {tracked_media.requester_user_id} for {tracked_media.title}")
 
         except discord.Forbidden:
-            await self._send_receipt(
-                f"⚠️ Could not DM <@{tracked_media.requester_user_id}> for **{tracked_media.title}** because their DMs are disabled."
-            )
+            # Logged as not delivered on Manage → Messages.
             logger.warning(f"Cannot DM user {tracked_media.requester_user_id} - DMs are disabled")
         except Exception as e:
-            await self._send_receipt(
-                f"⚠️ Failed to send requester DM to <@{tracked_media.requester_user_id}> for **{tracked_media.title}**: `{e}`"
-            )
             logger.error(f"Error sending requester availability DM: {e}", exc_info=True)

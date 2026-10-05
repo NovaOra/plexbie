@@ -81,6 +81,10 @@ async def start_portal(bot, services) -> Optional[web.AppRunner]:
     if hasattr(bot, "add_dynamic_items"):
         from portal.ticket_view import TicketOpenButton, TicketReplyButton
         bot.add_dynamic_items(TicketOpenButton, TicketReplyButton)   # tickets from members' DMs
+        from portal import inbox
+        bot.add_dynamic_items(inbox.ReplyButton, inbox.TicketButton, inbox.DoneButton)   # DM threads
+        if hasattr(bot, "tree") and not bot.tree.get_command("reply"):
+            bot.tree.add_command(inbox.reply_command)                                   # /reply in a DM thread
     invites = Invites()
     auth.invites = invites
     dist = cfg.web_dist if Path(cfg.web_dist).is_dir() else None

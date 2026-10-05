@@ -164,7 +164,7 @@ def test_every_discord_dm_also_reaches_the_app_without_waiting_for_it():
         async def scenario():
             await _init(pathlib.Path(tempfile.mkdtemp()) / "d.db")
             try:
-                await admin_mirror.send_user_dm(None, None, User(), context="test", content="**Dune** was approved", mirror=False)
+                await admin_mirror.send_user_dm(None, None, User(), context="test", content="**Dune** was approved")
             except RuntimeError:
                 pass
             before = list(calls)

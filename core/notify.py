@@ -469,7 +469,7 @@ async def push_to_admins(*, discord_ids: set, plex_account_ids: set, title: str,
 # household's pages moved): older versions of the phone app only know those addresses.
 async def notify_member(services, *, title: str, body: str, url: str = "/app", tag: Optional[str] = None,
                         plex_account_id: Optional[str] = None, plex_name: Optional[str] = None,
-                        email: Optional[str] = None, context: str = "") -> str:
+                        email: Optional[str] = None, context: str = "", sent_by: Optional[str] = None) -> str:
     """Tell a member something without Discord. Returns "push", "email" or "none"."""
     from core.message_log import record
     how = "none"
@@ -492,5 +492,5 @@ async def notify_member(services, *, title: str, body: str, url: str = "/app", t
         logger.warning(f"notify_member failed ({context}): {type(e).__name__}: {e}")
     await record(channel={"push": "web", "email": "email"}.get(how, "none"), delivered=how != "none",
                  error=None if how != "none" else "No phone alerts turned on and no email to send to",
-                 plex_name=plex_name, plex_account_id=plex_account_id, title=title, text=body, context=context)
+                 plex_name=plex_name, plex_account_id=plex_account_id, title=title, text=body, context=context, sent_by=sent_by)
     return how

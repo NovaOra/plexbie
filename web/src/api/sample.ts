@@ -313,12 +313,16 @@ export const admin = (section: string): Promise<unknown> => {
   data.help = helps.map((h) => ({ ...h }));
   data.messages = Object.entries(conversations).map(([id, list]) => {
     const last = list[list.length - 1];
+    const done = doneBy[id] ?? null;
     return { id, name: names[id], count: list.filter((m) => m.direction === "out").length, received: list.filter((m) => m.direction === "in").length,
+      unread: list.filter((m) => m.direction === "in" && !(done && done.at >= m.at)).length, done,
+      ticket: id === "d302" ? { id: "h1", title: "Severance", slot: 213 } : null,
       failed: list.filter((m) => !m.delivered).length, via: [...new Set(list.map((m) => m.channel))],
       last: { at: last.at, text: last.title ?? last.text, channel: last.channel, delivered: last.delivered, direction: last.direction } };
   }).sort((a, b) => b.last.at.localeCompare(a.last.at));
   data.discord = {
     channels: [{ id: "10", name: "general" }, { id: "11", name: "plex-updates" }, { id: "12", name: "movie-night" }],
+    inbox: { autoreply: true, threadsMissing: null },
     party: { channel: "Watch Party", streamer: "Alex Kim", title: "Dune: Part Two", startedAt: ago(42), people: ["Alex Kim", "Jordan Lee", "Priya"] },
     joins: [
       { who: "Grandpa", by: "Sam Rivera", via: "plexbie", code: "Grandpa", at: ago(60 * 24 * 8), role: null },
@@ -368,11 +372,14 @@ export const popular = () => wait({
 
 /** Invented conversations for the Messages tab. */
 const names: Record<string, string> = { d301: "Marcus T.", pgrandpa_j: "grandpa_j", d302: "Alex Kim" };
-const msg = (minutes: number, channel: "discord" | "web" | "email" | "none", text: string, title: string | null = null, delivered = true, error: string | null = null,
-  direction: "out" | "in" = "out") => ({ id: `m${minutes}${channel}${direction}`, at: ago(minutes), direction, channel, delivered, title, text, context: "", error });
+type Msg = { id: string; at: string; direction: "out" | "in"; channel: "discord" | "web" | "email" | "none"; delivered: boolean; title: string | null;
+  text: string; context: string; error: string | null; by?: string | null; ticket?: string | null };
+const msg = (minutes: number, channel: Msg["channel"], text: string, title: string | null = null, delivered = true, error: string | null = null,
+  direction: Msg["direction"] = "out"): Msg => ({ id: `m${minutes}${channel}${direction}`, at: ago(minutes), direction, channel, delivered, title, text, context: "", error });
 /** Something the person sent Plexbie. */
-const said = (minutes: number, channel: "discord" | "web", text: string, title: string | null = null) => msg(minutes, channel, text, title, true, null, "in");
-const conversations: Record<string, ReturnType<typeof msg>[]> = {
+const said = (minutes: number, channel: "discord" | "web", text: string, title: string | null = null): Msg =>
+  ({ ...msg(minutes, channel, text, title, true, null, "in"), context: title ? "ticket answer" : "Discord DM" });
+const conversations: Record<string, Msg[]> = {
   d302: [
     msg(60 * 24 * 3, "discord", "Your request has been approved! A Plex invitation has been sent to alex@example.com.", "Request Approved!"),
     msg(60 * 5, "discord", "Good news! Dune: Part Two is now available on Plex."),
@@ -380,6 +387,7 @@ const conversations: Record<string, ReturnType<typeof msg>[]> = {
     said(40, "web", "Stuck downloading. It's been at 62% since this morning.", "Something wrong with Severance"),
     msg(30, "discord", "Found a copy that works. Is the 4K version OK, or would you rather wait for 1080p?", "🛠️ About your request: Severance"),
     said(22, "discord", "4K is great, thank you!", "Answer about Severance"),
+    said(6, "discord", "oh and the subtitles on episode 3 are out of sync"),
   ],
   d301: [
     msg(60 * 24, "discord", "Hey there! We noticed you haven't watched anything on the Plex server in 25 days.\nWhat happens next?: If you remain inactive for 5 more days you'll be removed.", "Plex Inactivity Warning"),
@@ -391,7 +399,23 @@ const conversations: Record<string, ReturnType<typeof msg>[]> = {
     msg(60 * 8, "none", "You haven't watched anything on the household Plex in 25 days.", "Watch something to keep your Plex access", false, "No phone alerts turned on and no email to send to"),
   ],
 };
-export const conversation = (who: string) => wait(conversations[who] ?? []);
+export const conversation = (who: string) => wait((conversations[who] ?? []).map((m) => ({ ...m })));
+/** Who marked each conversation done (sample visit only). */
+const doneBy: Record<string, { at: string; by: string }> = { pgrandpa_j: { at: ago(60 * 7), by: "Sam Rivera" } };
+export const messageReply = (who: string, text: string) => {
+  conversations[who]?.push({ ...msg(0, who.startsWith("d") ? "discord" : "web", `${text}\n— Sam Rivera (admin)`), id: `r${Date.now()}`, by: "Sam Rivera" });
+  doneBy[who] = { at: new Date().toISOString(), by: "Sam Rivera" };
+  return wait({ ok: true, message: `Sent to ${names[who]} as a ${who.startsWith("d") ? "Discord DM" : "phone alert"}.` }, 500);
+};
+export const messageDone = (who: string, done: boolean) => {
+  if (done) doneBy[who] = { at: new Date().toISOString(), by: "Sam Rivera" }; else delete doneBy[who];
+  return wait({ ok: true, message: done ? "Marked done. It stays in the history." : "Marked unread." }, 300);
+};
+export const messageToTicket = (key: string) => {
+  const m = Object.values(conversations).flat().find((x) => x.id === key);
+  if (m) m.ticket = "h1";
+  return wait({ ok: true, message: "Added to their ticket on Severance." }, 400);
+};
 
 /** Help requests made in this dev session. */
 const helps: import("./types").AdminHelp[] = [

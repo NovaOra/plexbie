@@ -1722,6 +1722,13 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
   .m-inbox__empty { display: grid; place-items: center; }
   .m-chat__back { display: none; }
 }
+.m-chat__composer { display: grid; gap: 8px; padding: 12px 14px 14px; border-top: 1px solid var(--rule); }
+.m-chat__send { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.m-chat__head .m-chat__done { margin-left: auto; }
+.m-chat__head > div { display: grid; gap: 2px; }
+.m-msg__by { display: inline-flex; align-items: center; gap: 4px; font-size: 0.76rem; }
+.m-msg__action { justify-self: start; min-height: 36px; padding: 6px 12px; font-size: 0.85rem; }
+.m-inbox__top .m-pill { margin-left: 6px; margin-right: auto; }
 .m-all__more { display: flex; justify-content: center; margin-top: 16px; }
 .m-chat { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
 .m-chat__head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--rule); }

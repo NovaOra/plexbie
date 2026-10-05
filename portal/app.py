@@ -312,8 +312,7 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         if section == "plexinvites" and actions is not None:
             return web.json_response(await actions.plex_invites(user))
         if section == "messages":
-            from core import message_log
-            return web.json_response(await message_log.people())
+            return web.json_response(await admin.message_people())
         if section == "all":
             return web.json_response(await admin.all_requests(request.query.get("q", ""), everything=request.query.get("all") == "1"))
         if section == "tickets":
@@ -707,6 +706,28 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return web.json_response(result, status=200 if result.get("ok") else 409)
 
         r.add_post("/api/admin/say", safe(post_say))
+
+        # Manage → Messages: answer as Plexbie, mark done, put a DM on their ticket.
+        async def post_message_reply(request):
+            payload = await body(request)
+            return web.json_response(await actions.message_reply(await admin_only(request), request.match_info["who"], payload))
+
+        async def post_message_done(request):
+            payload = await body(request)
+            return web.json_response(await actions.message_done(await admin_only(request), request.match_info["who"], payload))
+
+        async def post_message_to_ticket(request):
+            await body(request)
+            return web.json_response(await actions.message_to_ticket(await admin_only(request), request.match_info["key"]))
+
+        async def post_inbox_settings(request):
+            payload = await body(request)
+            return web.json_response(await actions.inbox_settings(await admin_only(request), payload))
+
+        r.add_post("/api/admin/messages/{who}/reply", safe(post_message_reply))
+        r.add_post("/api/admin/messages/{who}/done", safe(post_message_done))
+        r.add_post("/api/admin/message/{key}/to-ticket", safe(post_message_to_ticket))
+        r.add_post("/api/admin/inbox", safe(post_inbox_settings))
         r.add_post("/api/admin/cleanup/settings", safe(post_cleanup_settings))
         r.add_post("/api/admin/cleanup/scan", safe(post_cleanup_scan))
 

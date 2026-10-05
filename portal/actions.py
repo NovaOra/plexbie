@@ -26,6 +26,12 @@ from database.request_store import get_request
 from portal.data import Data
 from core.discord_lookup import admin_channel, home_guild
 
+
+def discord_escape(text: str) -> str:
+    """Someone's name in a Discord message, without its markdown."""
+    import discord
+    return discord.utils.escape_markdown(text or "")
+
 logger = get_logger(__name__)
 
 #: (max actions, per seconds) by kind.
@@ -975,7 +981,103 @@ class Actions:
             }
         channels = [{"id": str(c.id), "name": c.name} for c in (guild.text_channels if guild else [])
                     if guild.me is None or c.permissions_for(guild.me).send_messages]
-        return {"channels": channels, "joins": joins, "party": party}
+        from portal import inbox
+        return {"channels": channels, "joins": joins, "party": party,
+                "inbox": {**(await inbox.settings()), "threadsMissing": inbox.threads_ok(self.bot) if self.bot else None}}
+
+    # ------------------------------------------------ DMs: the shared inbox
+    async def inbox_settings(self, user: dict, body: dict) -> dict:
+        from portal import inbox
+        self.limit(user["user"]["id"], "admin")
+        s = await inbox.set_settings(autoreply=_flag(body, "autoreply"))
+        return {"ok": True, "message": "Plexbie answers new DMs." if s["autoreply"] else "Plexbie won't answer DMs by itself."}
+
+    async def alert_admins_about_dm(self, who: str, name: str, text: str) -> None:
+        """Someone DMed Plexbie: a phone/browser alert to every admin who turned alerts on."""
+        from core import notify
+        from database.kv_store import kv_get as get
+        from portal.auth import OWNER_ID
+        owner = await get(*OWNER_ID)
+        try:
+            await notify.push_to_admins(discord_ids=self._admin_ids(), plex_account_ids={owner} if owner else set(),
+                                        title=f"{name} messaged Plexbie", body=text[:140],
+                                        url=f"/manage?tab=messages&who={quote(who)}", tag=f"dm-{who}")
+        except Exception as e:
+            logger.info(f"Couldn't alert admins about a DM: {type(e).__name__}: {e}")
+
+    @staticmethod
+    def _who(who: str) -> str:
+        from portal.inbox import WHO
+        if not WHO.fullmatch(who or ""):
+            raise web.HTTPNotFound(text='{"error":"No such conversation."}', content_type="application/json")
+        return who
+
+    async def message_reply(self, user: dict, who: str, body: dict) -> dict:
+        """An admin answers someone as Plexbie, signed with their name: a Discord DM, or for
+        people without Discord a phone alert or email. Only to someone Plexbie already has
+        a conversation with. Logged with who sent it, copied to the person's DM thread, and
+        the conversation is marked done."""
+        from core import message_log
+        from portal import inbox
+        self._who(who)
+        self.limit(user["user"]["id"], "admin")
+        text = str(body.get("text") or "").strip()
+        if not 1 <= len(text) <= 1500:
+            raise web.HTTPBadRequest(text='{"error":"Write a message (up to 1500 characters)."}', content_type="application/json")
+        ident = await message_log.identity(who)
+        if not ident:
+            raise web.HTTPNotFound(text='{"error":"No such conversation."}', content_type="application/json")
+        admin = self.actor(user)
+        content = inbox.signed(text, admin)
+        if who.startswith("d"):
+            if not ident.get("discord_id") or not self.bot:
+                raise web.HTTPConflict(text='{"error":"Plexbie isn\'t connected to Discord right now."}', content_type="application/json")
+            from core.admin_mirror import dm_user_id
+            sent = await dm_user_id(self.bot, self.services, ident["discord_id"], context="reply from an admin",
+                                    content=content, sent_by=admin)
+            if not sent:
+                raise web.HTTPConflict(text='{"error":"It didn\'t arrive: their Discord DMs are closed to Plexbie. It\'s noted in the conversation."}',
+                                       content_type="application/json")
+            said = f"Sent to {ident['name']} as a Discord DM."
+            await inbox.post(self.bot, who, ident["name"], f"↩️ **{discord_escape(admin)}** replied: {text}")
+        else:
+            from core.notify import notify_member
+            how = await notify_member(self.services, title="A message from your Plex admins", body=content, url="/",
+                                      plex_account_id=ident.get("plex_account_id"), plex_name=ident.get("plex_name"),
+                                      context="reply from an admin", sent_by=admin)
+            if how == "none":
+                raise web.HTTPConflict(text='{"error":"It didn\'t arrive: they have no phone alerts and no email. It\'s noted in the conversation."}',
+                                       content_type="application/json")
+            said = f"Sent to {ident['name']} as a {'phone alert' if how == 'push' else 'email'}."
+        await message_log.mark_done(who, admin)
+        return {"ok": True, "message": said}
+
+    async def message_done(self, user: dict, who: str, body: dict) -> dict:
+        from core import message_log
+        self._who(who)
+        self.limit(user["user"]["id"], "admin")
+        done = _flag(body, "done") if "done" in body else True
+        await message_log.mark_done(who, self.actor(user), done)
+        return {"ok": True, "message": "Marked done. It stays in the history." if done else "Marked unread."}
+
+    async def message_to_ticket(self, user: dict, key: str) -> dict:
+        """A DM someone sent Plexbie goes on their open ticket, as their answer."""
+        from core import message_log
+        from portal import help as helpdesk
+        from portal.inbox import open_ticket_for
+        self.limit(user["user"]["id"], "admin")
+        e = await message_log.entry(key) if re.fullmatch(r"[0-9T]{20,30}-[0-9a-f]{6}", key or "") else None
+        if not e or e.get("direction") != "in":
+            raise web.HTTPNotFound(text='{"error":"That message isn\'t one someone sent Plexbie."}', content_type="application/json")
+        if e.get("ticket"):
+            raise web.HTTPConflict(text='{"error":"It\'s already on their ticket."}', content_type="application/json")
+        ticket = await open_ticket_for(e)
+        if not ticket:
+            raise web.HTTPConflict(text='{"error":"They have no open ticket. Open one from All requests."}', content_type="application/json")
+        await helpdesk.add(ticket["id"], "member", ticket.get("who") or "They", e.get("text") or "", waiting=False)
+        await helpdesk.add(ticket["id"], "action", self.actor(user), "Added their Discord DM to the ticket")
+        await message_log.note_ticket(key, ticket["id"])
+        return {"ok": True, "message": f"Added to their ticket on {ticket.get('title') or 'their request'}.", "ticket": ticket["id"]}
 
     async def remove_person(self, user: dict, body: dict) -> dict:
         self.limit(user["user"]["id"], "admin")
