@@ -6,8 +6,8 @@
 
 <p align="center">
   <b>Your household’s Plex, on air.</b><br>
-  A Discord bot and a website that look after a home Plex server: requests, invites,<br>
-  who’s watching, and all the quiet housekeeping in between.
+  A Discord bot, a website and a phone app that look after a home Plex server: requests,<br>
+  invites, who’s watching, and all the quiet housekeeping in between.
 </p>
 
 <p align="center">
@@ -22,6 +22,7 @@
   <a href="#tonights-line-up">Features</a> ·
   <a href="#see-it-in-action">See it in action</a> ·
   <a href="#the-website-built-in">The website</a> ·
+  <a href="#in-your-pocket">The app</a> ·
   <a href="#eleven-plugins-keep-the-ones-you-like">Plugins</a> ·
   <a href="#on-air-in-six-commands">Get started</a> ·
   <a href="https://plexbie.com">plexbie.com</a> ·
@@ -37,7 +38,7 @@ https://github.com/user-attachments/assets/b5409525-02c4-48ea-bc10-70a2202e68a6
 ## Tonight’s line-up
 
 Plexbie is built like a TV schedule: four channels, each doing one job well, and every one of them reachable from
-Discord *or* from the website.
+Discord, the website or the phone app.
 
 <table>
   <tr>
@@ -76,7 +77,7 @@ Discord *or* from the website.
   </tr>
 </table>
 
-<p align="center"><sub><b>All made up.</b> Every title, cover, name and message in the video, these recordings and the screenshots below comes from Plexbie’s demo mode. None of it is a real library, household or person.</sub></p>
+<p align="center"><sub><b>All made up.</b> Every title, cover, name and message in the video, these recordings and the screenshots below comes from Plexbie’s demo mode (the app’s sample household, for the app). None of it is a real library, household or person.</sub></p>
 
 ## The website, built in
 
@@ -100,6 +101,26 @@ The bot serves its own website from the same container, on port 7979 out of the 
 - **No Discord? No problem:** invite links, Sign in with Plex, and phone alerts (or email) for everything Discord
   members are DMed, including the heads-up before an account would lapse.
 - **Phone first:** installable, tactile (swipe to approve, hold to confirm), and checked for accessibility.
+
+## In your pocket
+
+A native app for Android and iPhone, [NovaOra/plexbie-app](https://github.com/NovaOra/plexbie-app). It works
+with any Plexbie: members type your address when they sign in, and nothing goes through anyone else’s server.
+Requests, their progress, the library and, for admins, the whole Manage page, with Liquid Glass on iOS 26.
+
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="docs/screens/app-iphone-home.png" alt="The app's home screen on iPhone: what just arrived and your requests" width="180"><br><sub><b>Home</b>, iPhone</sub></td>
+    <td align="center" width="25%"><img src="docs/screens/app-android-requests.png" alt="My requests on Android, each with its stage and download progress" width="180"><br><sub><b>My requests</b>, Android</sub></td>
+    <td align="center" width="25%"><img src="docs/screens/app-iphone-title.png" alt="A show's page on iPhone, with the request already downloading" width="180"><br><sub><b>A title</b>, iPhone</sub></td>
+    <td align="center" width="25%"><img src="docs/screens/app-android-manage.png" alt="Manage on Android: help requests with Search again and Resolve" width="180"><br><sub><b>Manage</b>, Android</sub></td>
+  </tr>
+</table>
+
+- **Android:** the APK from the app’s releases, or the download card on your Plexbie’s **Alerts** page.
+- **iPhone:** through SideStore or AltStore, with each member’s own free Apple ID. Your Plexbie gives every member
+  a personal source, so updates arrive there too.
+- **Offering it to your household** takes three files in `config/app/`; see [The phone app](#the-phone-app).
 
 ## Eleven plugins. Keep the ones you like.
 
@@ -487,7 +508,9 @@ this for you and names the exact address to add. Without a public address,
 
 Plex sign-in needs nothing registered, so it follows the address on its own.
 
-**The phone app** (Android and iPhone, [NovaOra/plexbie-app](https://github.com/NovaOra/plexbie-app)) works
+### The phone app
+
+The app (Android and iPhone, [NovaOra/plexbie-app](https://github.com/NovaOra/plexbie-app)) works
 with any Plexbie: members type your address when they sign in.
 
 - **Offering it from your Plexbie:** copy the three files from the app's latest
