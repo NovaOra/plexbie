@@ -1,0 +1,44 @@
+# Runtime state (lives in the config/ mount)
+config/*.env
+config/.web_session_secret
+config/*.db
+config/*.json
+logs/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Editor / OS noise
+.DS_Store
+
+# Ad-hoc backups - use git history instead
+*.bak
+*.bak-*
+*.bak_*
+*.sync-conflict-*
+*.afterpatch-check
+
+# Design-review captures (contain real server data) and design-tool scratch
+.impeccable/review/
+.impeccable/questions/
+
+# The maintainer's design notes and review captures (kept locally, not published)
+PRODUCT.md
+.impeccable/
+
+# Setup page in progress (portal/setup.py)
+config/.setup-in-progress
+
+# Never committed or built into the image: settings, data, the app files an install hosts, keys.
+.env
+config/app/
+config/cache/
+*.db
+*.db-*
+*.keystore
+*.jks
+*.pem
+*.key
+*.p12

@@ -1,0 +1,14 @@
+{
+    "name": "user_mgmt",
+    "version": "2.0.0",
+    "description": "Automatic user inactivity tracking with 30-day removal",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": [
+        "/remove-user - Manually remove a user from Plex",
+        "/list-plex-users - List Plex accounts on the server, or only malformed ones",
+        "/list-tracked-users - List tracked users in the database, flagging orphans",
+        "/manage-links - Manage Discord to Plex account links"
+    ]
+}

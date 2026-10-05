@@ -1,0 +1,9 @@
+{
+    "name": "new_media_added",
+    "version": "1.0.0",
+    "description": "Post new media notifications from Plex webhooks with rich TMDB/TVDB info",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": []
+}

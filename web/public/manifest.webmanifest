@@ -1,0 +1,30 @@
+{
+  "id": "/app",
+  "name": "Plexbie",
+  "short_name": "Plexbie",
+  "description": "The household Plex: requests, what's new, and what's on.",
+  "lang": "en",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#10172b",
+  "theme_color": "#10172b",
+  "icons": [
+    {
+      "src": "/brand/plexbie-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/plexbie-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/plexbie-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

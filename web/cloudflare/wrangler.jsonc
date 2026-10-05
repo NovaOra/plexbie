@@ -1,0 +1,24 @@
+{
+  // plexbie.com, the Plexbie project's site: `npm run build:project`, then
+  // `npx wrangler deploy --config cloudflare/wrangler.jsonc` from web/.
+  "name": "plexbie-site",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "../dist-project",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true
+  },
+  "vars": { "HOME": "https://home.plexbie.com" },
+  // The site's own visit counts (POST /e), read by the dashboard in stats/. Its salt is
+  // a secret: `npx wrangler secret put STATS_SALT --config cloudflare/wrangler.jsonc`.
+  "d1_databases": [{ "binding": "STATS", "database_name": "plexbie-stats", "database_id": "6119b409-4f85-4450-aff9-eee46eda0f36" }],
+  "triggers": { "crons": ["17 3 * * *"] },
+  "routes": [
+    { "pattern": "plexbie.com", "custom_domain": true },
+    { "pattern": "www.plexbie.com", "custom_domain": true }
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}

@@ -1,0 +1,41 @@
+# Keeps pinned versions current, one grouped pull request per kind each week.
+#
+# Python: only the packages Plexbie asks for itself (requirements.txt). The rest
+# are pinned in constraints.txt as a set that's known to work together; bumping
+# one of those alone (say multidict, under aiohttp) can't install, so every such
+# pull request failed its tests. Refresh constraints.txt from a working image
+# (pip freeze) when a direct update needs newer ones.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      actions: {patterns: ["*"]}
+  # The Dockerfile pins its base images by digest; this moves the digests on.
+  - package-ecosystem: docker
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      images: {patterns: ["*"]}
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly}
+    allow:
+      - dependency-name: discord.py
+      - dependency-name: python-dotenv
+      - dependency-name: pydantic
+      - dependency-name: sqlalchemy
+      - dependency-name: aiosqlite
+      - dependency-name: aiohttp
+      - dependency-name: plexapi
+      - dependency-name: mutagen
+      - dependency-name: pywebpush
+      - dependency-name: pytest
+    groups:
+      python: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /web
+    schedule: {interval: weekly}
+    groups:
+      website: {patterns: ["*"]}

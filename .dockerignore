@@ -1,0 +1,65 @@
+# Keep the build context to what the bot actually runs.
+#
+# The Dockerfile does COPY . . , so anything here lands in the image. Before this
+# file existed, 3.1 MB of .bak / .sync-conflict copies were being baked into every
+# build. Mirrors .gitignore, with the additions that matter for an image.
+#
+# Unlike .gitignore, a pattern here matches from the context root only: "*.bak"
+# excludes ./x.bak but not ./core/x.bak. Anything that can appear at any depth
+# needs "**/". Without it 904 KB of __pycache__ - written by the running bot into
+# its bind-mounted plugin directories - was being baked into every image.
+
+# Ad-hoc backups - git history serves this purpose now
+**/*.bak
+**/*.bak-*
+**/*.bak_*
+**/*.sync-conflict-*
+**/*.afterpatch-check
+
+# Runtime state; these are bind-mounted at run time, not baked in.
+# The settings template is the one exception: it's copied into an empty
+# config folder on first start.
+config/*
+!config/.env.example
+logs/
+**/*.db
+**/*.log
+
+# Tests are run against a mounted source tree, not from inside the image
+tests/
+requirements-dev.txt
+
+# Python and editor noise
+**/__pycache__/
+**/*.py[cod]
+**/.DS_Store
+.git/
+.gitignore
+
+# The website is built inside the image (see the Dockerfile's web stage)
+web/node_modules/
+web/dist/
+web/dist-preview/
+web/dist-project/
+.impeccable/
+
+# Repo-only material: README images, the Unraid template, CI. None of it runs.
+docs/
+unraid/
+.github/
+web/scripts/
+
+# Local design notes (git-ignored too): never shipped in an image
+PRODUCT.md
+
+# Never committed or built into the image: settings, data, the app files an install hosts, keys.
+.env
+config/app/
+config/cache/
+**/*.db
+**/*.db-*
+**/*.keystore
+**/*.jks
+**/*.pem
+**/*.key
+**/*.p12

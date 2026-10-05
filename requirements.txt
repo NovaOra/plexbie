@@ -1,0 +1,25 @@
+# Exact versions, so every image build installs the same code (Dependabot proposes
+# updates). What these pull in is pinned in constraints.txt.
+
+# Discord bot framework
+discord.py==2.7.1
+
+# Configuration
+python-dotenv==1.2.4
+pydantic==2.13.5
+
+# Database
+SQLAlchemy[asyncio]==2.1.2
+aiosqlite==0.22.1
+
+# HTTP client
+aiohttp==3.14.3
+
+# Plex API
+PlexAPI==4.18.3
+
+# Bookshelf Processor (audio/ebook metadata)
+mutagen==1.48.1
+
+# Web portal: phone/browser notifications for members without Discord
+pywebpush==2.5.0

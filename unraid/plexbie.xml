@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Plexbie</Name>
+  <Repository>ghcr.io/novaora/plexbie:latest</Repository>
+  <Registry>https://github.com/NovaOra/plexbie/pkgs/container/plexbie</Registry>
+  <Network>host</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/NovaOra/plexbie/issues</Support>
+  <Project>https://github.com/NovaOra/plexbie</Project>
+  <Overview>Plexbie looks after a household Plex server, from Discord and from its own website: requests for shows, films, audiobooks and ebooks with an admin approval step and live download progress, Plex invites (including invite links for family without Discord), who's watching, inactivity reminders, cleanup of unwatched media, and a Manage page for admins.[br][br]
+[b]Setup:[/b] install, then press WebUI (or open http://[your server]:7979). The setup page asks for the setup code from Plexbie's log (Docker tab, Plexbie icon, Logs), then walks you through each key, with where to find it and a Test button: your Discord bot, Sign in with Plex, and optionally Seerr, Sonarr, Radarr, SABnzbd, Tautulli and TMDB. Press Finish and Plexbie starts. Everything is saved to config/.env in the appdata folder.</Overview>
+  <Category>MediaServer:Other Tools:Utilities</Category>
+  <WebUI>http://[IP]:7979/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/NovaOra/plexbie/main/unraid/plexbie.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/NovaOra/plexbie/main/web/public/brand/plexbie-512.png</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>A Discord bot and a Plex server. Sonarr, Radarr, Seerr, Tautulli and SABnzbd are optional. Use it with media you own or are entitled to use.</Requires>
+  <Config Name="Config" Target="/app/config" Default="/mnt/user/appdata/plexbie/config" Mode="rw" Description="Settings (.env, made for you on first start) and the database. The only folder you need to touch." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/plexbie/config</Config>
+  <Config Name="Logs" Target="/app/logs" Default="/mnt/user/appdata/plexbie/logs" Mode="rw" Description="Log files." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/plexbie/logs</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User Plexbie runs as (99 = nobody, Unraid's default owner of shares). It never runs as root: 0 is refused (99 is used) unless PLEXBIE_ALLOW_ROOT=1." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group Plexbie runs as (100 = users)." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="Media and downloads" Target="/data" Default="" Mode="rw" Description="Optional, for filing audiobooks and ebooks. Plexbie can change anything you mount here, so mount only the folder that holds your book downloads and book library (for example /mnt/user/data/books), not a whole share. For separate folders, add one path per folder at the same place under /data." Type="Path" Display="always" Required="false" Mask="false"></Config>
+</Container>

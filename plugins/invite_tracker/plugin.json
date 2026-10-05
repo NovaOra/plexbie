@@ -1,0 +1,11 @@
+{
+    "name": "invite_tracker",
+    "version": "1.0.0",
+    "description": "Track which invite each new member used, and who made it",
+    "author": "Plexbie",
+    "enabled": true,
+    "dependencies": [],
+    "commands": [
+        "/who-invited"
+    ]
+}

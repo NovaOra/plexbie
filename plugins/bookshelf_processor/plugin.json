@@ -1,0 +1,7 @@
+{
+  "name": "bookshelf_processor",
+  "version": "1.0.0",
+  "description": "Watches SABnzbd download directories and organizes ebooks/audiobooks for Audiobookshelf",
+  "author": "Plexbie",
+  "commands": []
+}

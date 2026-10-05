@@ -1,0 +1,51 @@
+# Plexbie: the Discord bot and its website, in one container.
+#
+# This file works from a fresh clone: the paths are relative, so
+# `docker compose up -d` from the repository root mounts ./config and ./logs and
+# starts the bot, with the website at http://<this host>:7979 (WEB_PORT in
+# config/.env; 0 turns it off). Adjust the media paths below if you use
+# bookshelf_processor.
+#
+# Build the image first:
+#     docker build -t plexbie:latest .
+services:
+  plexbie:
+    image: plexbie:latest
+    container_name: plexbie
+    restart: unless-stopped
+    working_dir: /app
+    command: ["python", "-u", "bot.py"]
+
+    # The webhook listener binds to 127.0.0.1 by default (WEBHOOK_BIND), which
+    # only keeps it off the network if the container shares the host's network
+    # namespace. If you swap this for a bridge network with published ports, set
+    # a secret for every webhook you enable (Plexbie makes any missing one on
+    # start): a route with no secret refuses every request. See the README's
+    # Security section.
+    network_mode: host
+
+    # Plexbie runs as this user and group, not root (0 is refused unless
+    # PLEXBIE_ALLOW_ROOT=1), and owns ./config and ./logs, readable by that group
+    # only (docker/entrypoint.sh). Use your own `id -u` / `id -g` on a desktop.
+    environment:
+      PUID: "99"
+      PGID: "100"
+
+    volumes:
+      # config/.env and the SQLite database live here. Keep this directory off
+      # any file-syncing tool: syncing a live SQLite file can corrupt it.
+      - ./config:/app/config
+      - ./logs:/app/logs
+
+      # Only needed for the bookshelf_processor plugin, which files finished
+      # audiobook and ebook downloads into an Audiobookshelf-shaped library.
+      # Point the first two at your download client's completed directories and
+      # the second two at the library it should build. Override the container
+      # paths with BOOKSHELF_* in config/.env if these do not suit you.
+      - ./media/downloads/audiobooks:/watch/audiobooks
+      - ./media/downloads/ebooks:/watch/ebooks
+      - ./media/library/audiobooks:/library/audiobooks
+      - ./media/library/ebooks:/library/ebooks
+
+      # Deliberately no bind mounts over individual plugins: a stale file on the
+      # host would silently override the code in the image.

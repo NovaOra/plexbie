@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Set up Plexbie</title>
+<link rel="icon" href="/brand/plexbie-64.png">
+<style>
+:root {
+  color-scheme: dark;
+  --field: #10172b; --field-deep: #0b1122; --panel: #18213a; --panel-raised: #212b4a; --rule: #2d385b;
+  --slate: #6879a6; --slate-ink: #aeb8d8; --ink: #f7f1f6; --screen: #ffd1e4; --screen-deep: #f5b3cf;
+  --on-screen: #141b30; --tally: #ff5c93; --good: #7ee0b0; --warn: #ffc56b;
+  --r: 6px; --gutter: 16px; --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --font: "Archivo Variable", "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; background: var(--field); color: var(--ink); font: 16px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased; caret-color: var(--tally); }
+a { color: var(--screen); text-underline-offset: 3px; }
+a:hover { color: #fff; }
+.wrap { max-width: 640px; margin: 0 auto; padding: 20px var(--gutter) 120px; }
+header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+header img { width: 44px; height: 44px; border-radius: 10px; }
+header b { font-size: 1.15rem; letter-spacing: 0.01em; }
+header span { display: block; color: var(--slate-ink); font-size: 0.85rem; }
+.steps { display: flex; gap: 6px; margin: 0 0 22px; padding: 0; list-style: none; }
+.steps li { flex: 1; height: 4px; border-radius: 2px; background: var(--rule); transition: background 300ms ease; }
+.steps li.on { background: var(--tally); }
+.steps li.done { background: var(--screen-deep); }
+h1 { font-size: 1.6rem; line-height: 1.2; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-size: 1.1rem; margin: 0 0 4px; }
+p { margin: 0 0 12px; }
+.muted { color: var(--slate-ink); }
+.small { font-size: 0.88rem; }
+section.step { display: none; }
+section.step.on { display: block; animation: in 260ms var(--ease-out); }
+@keyframes in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { section.step.on { animation: none; } }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; margin: 14px 0; }
+.card.opt > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.card.opt > summary::-webkit-details-marker { display: none; }
+.card.opt > summary::after { content: "+"; margin-left: auto; color: var(--slate-ink); font-size: 1.3rem; line-height: 1; }
+.card.opt[open] > summary::after { content: "–"; }
+.card.opt[open] > summary { margin-bottom: 12px; }
+.tag { font-size: 0.75rem; font-weight: 600; padding: 1px 8px; border-radius: 99px; background: var(--panel-raised); color: var(--slate-ink); }
+.tag.ok { background: rgb(126 224 176 / 0.15); color: var(--good); }
+ol.how { margin: 0 0 14px; padding-left: 1.3em; color: var(--slate-ink); font-size: 0.93rem; }
+ol.how li { margin: 4px 0; }
+ol.how b { color: var(--ink); font-weight: 600; }
+label { display: block; font-weight: 600; font-size: 0.92rem; margin: 12px 0 5px; }
+label small { font-weight: 400; color: var(--slate-ink); }
+input, select { width: 100%; font: inherit; color: var(--ink); background: var(--field-deep); border: 1px solid var(--rule);
+  border-radius: var(--r); padding: 11px 12px; min-height: 46px; }
+input::placeholder { color: var(--slate); }
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--tally); outline-offset: 2px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+button, .btn { font: inherit; font-weight: 600; border-radius: var(--r); border: 1px solid var(--rule); background: var(--panel-raised);
+  color: var(--ink); padding: 10px 16px; min-height: 44px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+  transition: transform 160ms var(--ease-out), background 160ms ease; }
+button:active, .btn:active { transform: scale(0.97); }
+button:disabled { opacity: 0.55; cursor: progress; }
+.primary { background: var(--screen); color: var(--on-screen); border-color: var(--screen); }
+.primary:hover { background: #fff; color: var(--on-screen); }
+.quiet { background: transparent; }
+.result { font-size: 0.9rem; margin-top: 10px; min-height: 1.2em; }
+.result.ok { color: var(--good); }
+.result.bad { color: var(--tally); }
+.result.warn { color: var(--warn); }
+.banner { border: 1px solid rgb(255 92 147 / 0.35); background: rgb(255 92 147 / 0.08); padding: 12px 14px; border-radius: var(--r); margin-bottom: 16px; }
+.servers label { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; background: var(--field-deep); border: 1px solid var(--rule);
+  border-radius: var(--r); padding: 10px 12px; margin: 8px 0; cursor: pointer; word-break: break-all; }
+.servers input { width: auto; min-height: 0; margin-top: 4px; accent-color: var(--tally); }
+.nav { position: fixed; inset: auto 0 0 0; background: linear-gradient(to top, var(--field) 70%, transparent); padding: 18px var(--gutter) max(18px, env(safe-area-inset-bottom)); }
+.nav div { max-width: 640px; margin: 0 auto; display: flex; gap: 10px; justify-content: space-between; }
+.nav .primary { flex: 1; justify-content: center; max-width: 320px; margin-left: auto; }
+.summary { list-style: none; padding: 0; margin: 0; }
+.summary li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--rule); }
+.summary li span:last-child { color: var(--slate-ink); }
+.summary li.ok span:last-child { color: var(--good); }
+.summary li.need span:last-child { color: var(--tally); }
+code { background: var(--field-deep); padding: 1px 6px; border-radius: 4px; font-size: 0.88em; overflow-wrap: anywhere; }
+.spin { width: 44px; height: 44px; border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--tally); animation: spin 0.8s linear infinite; margin: 30px auto; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hidden { display: none !important; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip { min-height: 36px; padding: 6px 10px; font: 500 0.85rem ui-monospace, Menlo, monospace; background: var(--field-deep); }
+.field-help { font-size: 0.85rem; color: var(--slate-ink); margin: 5px 0 0; }
+.key-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; letter-spacing: 0; }
+input[type=file] { padding: 9px; }
+h1[tabindex] { outline: none; }
+body.locked .step, body.locked .nav, body.locked .steps { display: none !important; }
+.code-input { font: 600 1.15rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.08em; text-transform: uppercase; }
+</style>
+</head>
+<body class="locked">
+<div class="wrap">
+  <header>
+    <img src="/brand/plexbie-192.png" alt="" width="44" height="44">
+    <div><b>Plexbie</b><span>First-time setup</span></div>
+  </header>
+  <ol class="steps" aria-hidden="true"><li></li><li></li><li></li><li></li><li></li><li></li></ol>
+  <div id="problem" class="banner hidden" role="alert"></div>
+
+  <!-- 0. The setup code from the log -->
+  <section id="gate" class="hidden" aria-labelledby="h-gate">
+    <h1 id="h-gate" tabindex="-1">Enter the setup code</h1>
+    <p class="muted">So that only you can set Plexbie up, it printed a code in its log when it started. In Unraid, click Plexbie's icon on the Docker tab and choose <b>Logs</b>; it's the line that starts <code>Setup code:</code>.</p>
+    <form id="gate-form" class="card" autocomplete="off">
+      <label for="gate-code">Setup code</label>
+      <input id="gate-code" class="code-input" spellcheck="false" autocapitalize="characters" placeholder="ABCD-EFGH-JKLM-NPQR" required>
+      <div class="row"><button type="submit" class="primary" id="gate-go">Continue</button></div>
+      <p class="result" id="gate-result" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <!-- 1. Discord -->
+  <section class="step" data-step="0" aria-labelledby="h-discord">
+    <h1 id="h-discord">Connect your Discord bot</h1>
+    <p class="muted">Plexbie talks to your household through a Discord bot you own. Making one takes about two minutes.</p>
+    <details class="card opt" id="import-card">
+      <summary>Moving from another Plexbie? Bring its settings</summary>
+      <p class="muted small">Pick the old <code>.env</code> file and every setting in it is filled in here, ready to check on each step. Ports and folder paths stay as this install's own.</p>
+      <label for="import-file">Old settings file</label>
+      <input id="import-file" type="file" accept=".env,.txt,text/plain">
+      <p class="result" id="import-result" aria-live="polite"></p>
+    </details>
+    <div class="card">
+      <ol class="how">
+        <li>Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Discord Developer Portal</a> and press <b>New Application</b>. Call it <b>Plexbie</b>.</li>
+        <li>Go to <b>Bot</b> on the left. Press <b>Reset Token</b>, then <b>Copy</b>.</li>
+        <li>On that same page, under <b>Privileged Gateway Intents</b>, turn on <b>Server Members Intent</b>. Press <b>Save Changes</b>.</li>
+        <li>Paste the token here and press <b>Check</b>.</li>
+      </ol>
+      <label for="DISCORD_BOT_TOKEN">Bot token</label>
+      <input id="DISCORD_BOT_TOKEN" type="password" autocomplete="off" spellcheck="false" data-key>
+      <div class="row"><button type="button" id="discord-check">Check</button></div>
+      <p class="result" id="discord-result" aria-live="polite"></p>
+    </div>
+
+    <div class="card hidden" id="discord-invite">
+      <h2>Add the bot to your server</h2>
+      <p class="muted small">Opens Discord. Pick your server and press <b>Authorize</b>. Then come back here and press <b>Refresh</b>.</p>
+      <div class="row"><a class="btn primary" id="invite-link" target="_blank" rel="noopener">Add Plexbie to my server</a>
+        <button type="button" class="quiet" id="discord-refresh">Refresh</button></div>
+    </div>
+
+    <div class="card hidden" id="discord-guild">
+      <label for="GUILD_ID">Your server</label>
+      <select id="GUILD_ID" data-key></select>
+      <div id="discord-build" class="hidden" style="margin-top:14px">
+        <p class="muted small" style="margin:0"><b style="color:var(--ink)">New server, or starting fresh?</b> Plexbie can set it up:
+          a Plexbie category with <b>#new-on-plex</b>, <b>#plex-stats</b>, a private <b>#plexbie-admin</b> and a <b>Watch Party</b>
+          voice channel; the <b>Plexbie Admin</b>, <b>Plex Member</b> and <b>New on Plex</b> roles; the stats boards; and a
+          "ping me for new arrivals" button. Anything already there by those names is reused. Then everything below is filled in.</p>
+        <div class="row"><button type="button" class="primary" id="discord-build-go">Set up this server for me</button></div>
+        <p class="result" id="build-result" aria-live="polite"></p>
+        <p class="muted small" style="margin:6px 0 0">Give yourself the <b>Plexbie Admin</b> role afterwards (Server Settings → Members) to see #plexbie-admin.</p>
+      </div>
+      <div id="discord-where" class="hidden">
+        <label for="ADMIN_CHANNEL_ID">Admin channel <small>where join requests and health alerts go (keep it private)</small></label>
+        <select id="ADMIN_CHANNEL_ID" data-key data-kind="channel"></select>
+        <label for="UPDATES_CHANNEL_ID">New arrivals channel <small>announces new movies and shows</small></label>
+        <select id="UPDATES_CHANNEL_ID" data-key data-kind="channel"></select>
+        <label for="PLEX_MEMBER_ROLE_ID">Member role <small>given to people once they join your Plex</small></label>
+        <select id="PLEX_MEMBER_ROLE_ID" data-key data-kind="role"></select>
+        <label for="ARRIVALS_ROLE_ID">"New arrivals" ping role <small>optional; mentioned once per new post, never on updates. Members opt in with a button</small></label>
+        <select id="ARRIVALS_ROLE_ID" data-key data-kind="role"></select>
+        <label for="ADMIN_ROLE_ID">Admin role <small>optional; the server owner and Discord admins are admins already</small></label>
+        <select id="ADMIN_ROLE_ID" data-key data-kind="role"></select>
+        <p class="muted small" style="margin-top:12px">Don't see a channel or role? Make it in Discord, then press <b>Refresh</b> above. For the member role, drag Plexbie's own role above it in Server Settings → Roles so Plexbie is allowed to hand it out.</p>
+        <details class="card opt" style="margin-bottom:0">
+          <summary>More Discord settings <span class="tag">optional</span></summary>
+          <label for="WATCH_PARTY_CHANNEL_ID">Watch party voice channel <small>people streaming Plex together here earn watch time</small></label>
+          <select id="WATCH_PARTY_CHANNEL_ID" data-key data-kind="voice"></select>
+          <label for="STATS_CHANNEL_ID">Stats channel <small>live "now watching", leaderboard and streak boards</small></label>
+          <select id="STATS_CHANNEL_ID" data-key data-kind="channel"></select>
+          <div id="stats-boards" class="hidden">
+            <p class="muted small" style="margin:10px 0 0">The three boards are messages Plexbie keeps editing. Discord only lets it edit its own, so let it post them:</p>
+            <div class="row"><button type="button" id="stats-create">Post the three boards for me</button></div>
+            <label for="NOW_WATCHING_MESSAGE_ID">Now watching board</label>
+            <select id="NOW_WATCHING_MESSAGE_ID" data-key data-kind="message"></select>
+            <label for="LEADERBOARD_MESSAGE_ID">Leaderboard board</label>
+            <select id="LEADERBOARD_MESSAGE_ID" data-key data-kind="message"></select>
+            <label for="WATCH_STREAK_MESSAGE_ID">Watch streak board</label>
+            <select id="WATCH_STREAK_MESSAGE_ID" data-key data-kind="message"></select>
+            <p class="result" id="stats-result" aria-live="polite"></p>
+          </div>
+        </details>
+      </div>
+      <p class="result" id="guild-result" aria-live="polite"></p>
+    </div>
+  </section>
+
+  <!-- 2. Plex -->
+  <section class="step" data-step="1" aria-labelledby="h-plex">
+    <h1 id="h-plex">Connect your Plex server</h1>
+    <p class="muted">Sign in with the Plex account that owns the server. Plexbie keeps the key it gets and uses it to invite and look after your household.</p>
+    <div class="card">
+      <div class="row" style="margin-top:0"><button type="button" class="primary" id="plex-signin">Sign in with Plex</button></div>
+      <p class="result" id="plex-result" aria-live="polite"></p>
+      <div class="servers hidden" id="plex-servers" role="radiogroup" aria-label="Address for your Plex server"></div>
+    </div>
+    <details class="card opt" id="plex-manual">
+      <summary>Or paste the address and token yourself</summary>
+      <ol class="how">
+        <li>Open Plex in a browser and sign in.</li>
+        <li>Open any movie, press <b>⋯</b> → <b>Get Info</b> → <b>View XML</b>.</li>
+        <li>In the address bar of the page that opens, copy everything after <code>X-Plex-Token=</code>.</li>
+      </ol>
+      <label for="PLEX_URL">Server address <small>like http://192.168.1.10:32400</small></label>
+      <input id="PLEX_URL" inputmode="url" spellcheck="false" data-key placeholder="http://192.168.1.10:32400">
+      <label for="PLEX_TOKEN">Plex token</label>
+      <input id="PLEX_TOKEN" type="password" autocomplete="off" spellcheck="false" data-key>
+    </details>
+    <div class="row"><button type="button" data-test="plex">Test Plex</button></div>
+    <p class="result" id="test-plex" aria-live="polite"></p>
+    <details class="card opt">
+      <summary>Plex username and password <span class="tag">rarely needed</span></summary>
+      <p class="muted small">Sign in with Plex above already lets Plexbie invite people, remove them and see who your server is shared with. These are only a fallback if your Plex token can't do that (a token copied from a server rather than from signing in, say).</p>
+      <label for="PLEX_USERNAME">Plex username or email</label>
+      <input id="PLEX_USERNAME" autocomplete="off" spellcheck="false" data-key>
+      <label for="PLEX_PASSWORD">Plex password</label>
+      <input id="PLEX_PASSWORD" type="password" autocomplete="off" data-key>
+    </details>
+  </section>
+
+  <!-- 3. Apps -->
+  <section class="step" data-step="2" aria-labelledby="h-apps">
+    <h1 id="h-apps">Your other apps</h1>
+    <p class="muted">All optional. Add the ones you run; each one turns on more of Plexbie. Use the address Plexbie's server can reach, like <code>http://192.168.1.10:8989</code>.</p>
+    <div id="apps"></div>
+  </section>
+
+  <!-- 4. Website -->
+  <section class="step" data-step="3" aria-labelledby="h-web">
+    <h1 id="h-web">Your website</h1>
+    <p class="muted">Plexbie's website is already running at this address. These are only needed once you share it outside your home.</p>
+    <div class="card">
+      <label for="domain">Your domain <small>optional, like example.com</small></label>
+      <input id="domain" inputmode="url" spellcheck="false" autocomplete="off" placeholder="example.com">
+      <p class="muted small" style="margin-top:8px">Your household's Plexbie goes at <b>plexbie.</b><i>your domain</i>. Point that name at this server (port <span id="web-port">7979</span>) in your Cloudflare tunnel or reverse proxy, then check it below.</p>
+      <details id="other-address" style="margin-top:10px">
+        <summary class="small">Use a different address</summary>
+        <p class="muted small">For a name you already use, a Tailscale address (like <code>server.tail1234.ts.net</code>), or a dynamic-DNS name.</p>
+      </details>
+      <label for="WEB_PUBLIC_URL" style="margin-top:12px">Public address</label>
+      <input id="WEB_PUBLIC_URL" inputmode="url" spellcheck="false" data-key placeholder="https://plexbie.example.com">
+      <div class="row" style="margin-top:10px">
+        <button type="button" class="btn" id="check-address">Check this address</button>
+        <span class="result" id="address-result" role="status"></span>
+      </div>
+      <p class="muted small" style="margin-top:8px">Leave it empty and links use whatever address people open the site with. Set it once you put the site behind a domain so invite links and sign-in always use the right name.</p>
+    </div>
+    <div class="card">
+      <label for="SITE_OPERATOR">Who runs this Plexbie <small>optional, your name or your household's</small></label>
+      <input id="SITE_OPERATOR" spellcheck="false" maxlength="80" data-key placeholder="The Smith household">
+      <label for="SITE_CONTACT" style="margin-top:12px">Contact email <small>optional</small></label>
+      <input id="SITE_CONTACT" type="email" spellcheck="false" maxlength="120" data-key placeholder="you@example.com">
+      <p class="muted small" style="margin-top:8px">Your website's Privacy and Terms pages name you as the person who runs it, and tell people where to write. Without these they say "its owner" and "an admin".</p>
+    </div>
+    <details class="card opt">
+      <summary>"Log in with Discord" on the website <span class="tag">optional</span></summary>
+      <p class="muted small">"Sign in with Plex" works without this. To also let people log in with Discord:</p>
+      <ol class="how">
+        <li>In the <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Developer Portal</a>, open your Plexbie app → <b>OAuth2</b>.</li>
+        <li>Under <b>Redirects</b>, add <code id="callback-url"></code> exactly, and save. If you change your public address later, add the new one there too (Manage → Health tells you if it's missing).</li>
+        <li>Press <b>Reset Secret</b>, copy it, and paste it below.</li>
+      </ol>
+      <label for="DISCORD_CLIENT_SECRET">Client secret</label>
+      <input id="DISCORD_CLIENT_SECRET" type="password" autocomplete="off" spellcheck="false" data-key>
+    </details>
+  </section>
+
+  <!-- 5. Everything else -->
+  <section class="step" data-step="4" aria-labelledby="h-more">
+    <h1 id="h-more">Everything else</h1>
+    <p class="muted">All optional, and fine to leave as they are. These are the rest of Plexbie's settings, grouped the way they are in <code>config/.env</code>.</p>
+    <div id="more"></div>
+  </section>
+
+  <!-- 6. Finish -->
+  <section class="step" data-step="5" aria-labelledby="h-done">
+    <div id="finish-panel">
+      <h1 id="h-done">Ready to start</h1>
+      <p class="muted">Here's what Plexbie will start with. You can come back to any of these later in <code>config/.env</code>.</p>
+      <div class="card"><ul class="summary" id="summary"></ul></div>
+      <p class="result" id="finish-result" aria-live="polite"></p>
+    </div>
+    <div id="starting" class="hidden" aria-live="polite">
+      <div class="spin" aria-hidden="true"></div>
+      <h1 style="text-align:center">Starting Plexbie…</h1>
+      <p class="muted" style="text-align:center" id="starting-note">Saved. Connecting to Discord and Plex. This page opens Plexbie by itself.</p>
+    </div>
+  </section>
+</div>
+
+<nav class="nav" aria-label="Setup steps"><div>
+  <button type="button" class="quiet" id="back">Back</button>
+  <button type="button" class="primary" id="next">Next</button>
+</div></nav>
+
+<script>
+const APPS = [
+  { id: "seerr", name: "Seerr", what: "Requests from the website and Discord", url: "SEERR_URL", key: "SEERR_TOKEN", port: 5055,
+    events: "Requests made or decided in Seerr itself show up in Plexbie too, with the requester told the outcome, and a failed download opens a help request for you.",
+    how: ["Open Seerr and go to <b>Settings</b> → <b>General</b>.", "Copy the <b>API Key</b> at the top."] },
+  { id: "sonarr", name: "Sonarr", what: "Download progress for shows, searching again", url: "SONARR_URL", key: "SONARR_TOKEN", port: 8989,
+    how: ["Open Sonarr and go to <b>Settings</b> → <b>General</b>.", "Under <b>Security</b>, copy the <b>API Key</b>."] },
+  { id: "radarr", name: "Radarr", what: "Download progress for movies, searching again", url: "RADARR_URL", key: "RADARR_TOKEN", port: 7878,
+    how: ["Open Radarr and go to <b>Settings</b> → <b>General</b>.", "Under <b>Security</b>, copy the <b>API Key</b>."] },
+  { id: "sabnzbd", name: "SABnzbd", what: "Live download percentages", url: "SABNZBD_URL", key: "SABNZBD_API_KEY", port: 8080,
+    how: ["Open SABnzbd and press the <b>⚙</b> (Config) → <b>General</b>.", "Under <b>Security</b>, copy the <b>API Key</b> (not the NZB Key)."] },
+  { id: "tautulli", name: "Tautulli", what: "Leaderboards, now watching, the inactivity check", url: "TAUTULLI_URL", key: "TAUTULLI_TOKEN", port: 8181,
+    events: "Now Watching updates the moment someone presses play, someone warned for not watching hears they're fine right away, and you hear within seconds if Plex goes down. Plexbie then checks far less often.",
+    how: ["Open Tautulli and go to <b>Settings</b> → <b>Web Interface</b>.", "Tick <b>Enable API</b>, then copy the <b>API key</b> and save."] },
+  { id: "tmdb", name: "TMDB", what: "Posters and summaries in announcements", key: "TMDB_API_KEY",
+    how: ['Make a free account at <a href="https://www.themoviedb.org/signup" target="_blank" rel="noopener">themoviedb.org</a>.',
+          'Open <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">Settings → API</a> and request a <b>Developer</b> key.',
+          "Copy the <b>API Key</b> (the short one, not the Read Access Token)."] },
+];
+const SECRET = new Set();
+let state = { fields: {} }, step = 0, guilds = [], guildData = null;
+const $ = (s) => document.querySelector(s);
+/** Text for innerHTML: what Plex or a typed box said, never markup. */
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const STEPS = document.querySelectorAll("section.step");
+
+// The code from Plexbie's log, kept for this tab only (a reload doesn't ask again).
+let setupCode = "";
+try { setupCode = sessionStorage.getItem("plexbie.setup") || ""; } catch (_) {}
+async function api(path, body) {
+  const headers = { "X-Setup-Code": setupCode };
+  const r = await fetch("/setup/api/" + path, body === undefined ? { headers } : {
+    method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 403 || r.status === 429) {
+    const d = await r.json().catch(() => ({}));
+    if (d.needsCode) { await askForCode(d.problem, setupCode ? d.error : ""); return api(path, body); }
+  }
+  if (r.status === 400) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.error || "Check the details and try again.");
+  }
+  if (!r.ok) throw new Error("The server answered " + r.status);
+  return r.json();
+}
+// Show the code screen until the code from the log is accepted.
+let gateWaiting = null;
+function askForCode(problem, error) {
+  if (!gateWaiting) gateWaiting = new Promise((resolve) => {
+    document.body.classList.add("locked");
+    $("#gate").classList.remove("hidden");
+    if (problem) { $("#problem").textContent = problem; $("#problem").classList.remove("hidden"); }
+    say("#gate-result", error || "", error ? "bad" : "");
+    $("#h-gate").focus();
+    $("#gate-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const code = $("#gate-code").value.trim();
+      $("#gate-go").disabled = true;
+      try {
+        const r = await fetch("/setup/api/state", { headers: { "X-Setup-Code": code } });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) return say("#gate-result", d.error || "That code isn't right.", "bad");
+        setupCode = code;
+        try { sessionStorage.setItem("plexbie.setup", code); } catch (_) {}
+        $("#gate").classList.add("hidden");
+        document.body.classList.remove("locked");
+        gateWaiting = null;
+        resolve();
+      } finally { $("#gate-go").disabled = false; }
+    };
+  });
+  return gateWaiting;
+}
+function say(el, text, kind) { el = typeof el === "string" ? $(el) : el; el.textContent = text || ""; el.className = "result" + (kind ? " " + kind : ""); }
+
+// Everything typed so far, keyed like config/.env. Blank secrets mean "keep".
+function values() {
+  const out = {};
+  document.querySelectorAll("[data-key]").forEach((el) => { if (el.value || !SECRET.has(el.id)) out[el.id] = el.value.trim(); });
+  return out;
+}
+
+function renderApps() {
+  $("#apps").innerHTML = APPS.map((a) => `
+    <details class="card opt" id="app-${a.id}">
+      <summary>${a.name} <span class="tag" id="tag-${a.id}">skip</span></summary>
+      <p class="muted small">${a.what}.</p>
+      <ol class="how">${a.how.map((h) => `<li>${h}</li>`).join("")}</ol>
+      ${a.url ? `<label for="${a.url}">Address</label>
+      <input id="${a.url}" inputmode="url" spellcheck="false" data-key placeholder="http://192.168.1.10:${a.port}">` : ""}
+      <label for="${a.key}">API key</label>
+      <input id="${a.key}" type="password" autocomplete="off" spellcheck="false" data-key>
+      <div class="row"><button type="button" data-test="${a.id}">Test ${a.name.split(" ")[0]}</button></div>
+      <p class="result" id="test-${a.id}" aria-live="polite"></p>
+      ${a.events ? `<p class="muted small" style="margin-top:14px"><b style="color:var(--ink)">Live updates.</b> ${a.events}</p>
+      <div class="row" style="margin-top:6px"><button type="button" data-connect="${a.id}">Connect live updates</button></div>
+      <p class="result" id="connect-${a.id}" aria-live="polite"></p>` : ""}
+    </details>`).join("");
+}
+
+function fill() {
+  for (const [k, f] of Object.entries(state.fields)) {
+    const el = document.getElementById(k);
+    if (!el) continue;
+    if (f.value === null) { SECRET.add(k); el.placeholder = f.set ? "Saved ✓ (leave empty to keep it)" : ""; }
+    else if (!el.value && f.value && el.tagName !== "SELECT") el.value = f.value;
+  }
+  for (const a of APPS) {
+    const on = state.fields[a.key]?.set;
+    const tag = $("#tag-" + a.id);
+    tag.textContent = on ? "added" : "skip"; tag.className = "tag" + (on ? " ok" : "");
+  }
+  if (typeof countMore === "function") countMore();
+  if (state.problem) { $("#problem").textContent = state.problem; $("#problem").classList.remove("hidden"); }
+}
+
+function show(n) {
+  step = Math.max(0, Math.min(STEPS.length - 1, n));
+  STEPS.forEach((s, i) => s.classList.toggle("on", i === step));
+  document.querySelectorAll(".steps li").forEach((li, i) => li.className = i < step ? "done" : i === step ? "on" : "");
+  $("#back").style.visibility = step ? "visible" : "hidden";
+  $("#next").textContent = step === STEPS.length - 1 ? "Finish and start Plexbie" : "Next";
+  if (step === 3) domainFromAddress();
+  if (step === 3) $("#callback-url").textContent = (($("#WEB_PUBLIC_URL").value.trim() || location.origin).replace(/\/$/, "")) + "/auth/discord/callback";
+  if (step === STEPS.length - 1) summary();
+  scrollTo({ top: 0 });
+  STEPS[step].querySelector("h1").focus?.();
+}
+
+function summary() {
+  const f = (k) => state.fields[k]?.set || !!values()[k];
+  const rows = [
+    ["Discord bot", f("DISCORD_BOT_TOKEN") ? "✓" : "needed", f("DISCORD_BOT_TOKEN") ? "ok" : "need"],
+    ["Discord server", f("GUILD_ID") ? "✓" : "not picked", f("GUILD_ID") ? "ok" : ""],
+    ["Plex", f("PLEX_TOKEN") && f("PLEX_URL") ? "✓" : "needed", f("PLEX_TOKEN") && f("PLEX_URL") ? "ok" : "need"],
+    ...APPS.map((a) => [a.name, f(a.key) ? "✓" : "skipped", f(a.key) ? "ok" : ""]),
+    ["Other settings", (() => { const n = moreKeys.filter(changed).length; return n ? `${n} changed` : "defaults"; })(), moreKeys.some(changed) ? "ok" : ""],
+    ["Public address", f("WEB_PUBLIC_URL") ? values().WEB_PUBLIC_URL || "✓" : "not yet", f("WEB_PUBLIC_URL") ? "ok" : ""],
+  ];
+  $("#summary").innerHTML = rows.map(([a, b, c]) => `<li class="${c}"><span>${esc(a)}</span><span>${esc(b)}</span></li>`).join("");
+}
+
+async function save() {
+  const v = values();
+  if (v.DISCORD_CLIENT_SECRET) v.DISCORD_CALLBACK_URL = $("#callback-url").textContent || "";
+  state = await api("save", { values: v });
+  fill();
+}
+
+// ---- Discord
+function options(sel, items, none) {
+  const cur = state.fields[sel.id]?.value || sel.value;
+  sel.innerHTML = (none ? `<option value="">${none}</option>` : "") +
+    items.map((i) => `<option value="${i.id}"${i.id === cur ? " selected" : ""}>${{ channel: "# ", voice: "🔊 " }[sel.dataset.kind] || ""}${i.name.replace(/</g, "&lt;")}</option>`).join("");
+}
+async function checkDiscord(btn) {
+  btn.disabled = true; say("#discord-result", "Checking…");
+  try {
+    const d = await api("discord", { DISCORD_BOT_TOKEN: $("#DISCORD_BOT_TOKEN").value.trim() });
+    if (!d.ok) return say("#discord-result", d.error, "bad");
+    $("#DISCORD_BOT_TOKEN").value = "";
+    state = await api("state"); fill();
+    say("#discord-result", d.missingIntents.length
+      ? `Found ${d.name}, but ${d.missingIntents.join(" and ")} Intent ${d.missingIntents.length > 1 ? "are" : "is"} off. Turn ${d.missingIntents.length > 1 ? "them" : "it"} on (step 3), save, and press Check again.`
+      : `Found your bot, ${d.name}. 🎉`, d.missingIntents.length ? "warn" : "ok");
+    $("#invite-link").href = d.invite;
+    $("#discord-invite").classList.remove("hidden");
+    guilds = d.guilds;
+    if (!guilds.length) { $("#discord-guild").classList.add("hidden"); return; }
+    $("#discord-guild").classList.remove("hidden");
+    options($("#GUILD_ID"), guilds, guilds.length > 1 ? "Choose…" : "");
+    if ($("#GUILD_ID").value) await pickGuild();
+  } catch (e) { say("#discord-result", e.message, "bad"); }
+  finally { btn.disabled = false; }
+}
+async function pickGuild() {
+  const g = $("#GUILD_ID").value;
+  if (!g) return $("#discord-where").classList.add("hidden");
+  say("#guild-result", "Loading channels and roles…");
+  const d = await api("discord/guild", { guild: g });
+  if (!d.ok) return say("#guild-result", d.error, "bad");
+  say("#guild-result", "");
+  document.querySelectorAll("#discord-where select").forEach((s) => {
+    const items = { channel: d.channels, voice: d.voice, role: d.roles }[s.dataset.kind];
+    if (items) options(s, items, s.id === "ADMIN_CHANNEL_ID" || s.id === "PLEX_MEMBER_ROLE_ID" ? "Choose…" : "None");
+  });
+  $("#discord-where").classList.remove("hidden");
+  $("#discord-build").classList.remove("hidden");
+  if ($("#STATS_CHANNEL_ID").value) await loadBoards();
+}
+async function loadBoards(create) {
+  const ch = $("#STATS_CHANNEL_ID").value;
+  $("#stats-boards").classList.toggle("hidden", !ch);
+  if (!ch) return;
+  say("#stats-result", create ? "Posting…" : "");
+  const d = await api("discord/messages", { channel: ch, create: !!create });
+  if (!d.ok) return say("#stats-result", d.error, "bad");
+  if (create) { state = await api("state"); }
+  document.querySelectorAll('[data-kind="message"]').forEach((s) => options(s, d.messages, d.messages.length ? "Choose…" : "None yet"));
+  say("#stats-result", create ? "Posted and picked. Plexbie fills them in once it starts." : "", create ? "ok" : "");
+}
+
+// ---- Plex
+async function plexSignIn(btn) {
+  // Our own page first: it makes the plex.tv PIN from this browser (Plex refuses
+  // one made elsewhere) and moves on to plex.tv by itself, so a phone keeps it in
+  // the browser instead of handing the tap to the Plex app.
+  const win = window.open("", "plexauth", "width=520,height=720");
+  if (!win) return say("#plex-result", "Your browser blocked the Plex window. Allow pop-ups for this page and try again.", "bad");
+  // The window can't send the setup code, so it gets a one-use ticket instead.
+  try { win.location = "/setup/plex/go?t=" + encodeURIComponent((await api("plex/ticket", {})).ticket); }
+  catch (e) { try { win.close(); } catch (_) {} return say("#plex-result", e.message, "bad"); }
+  btn.disabled = true; say("#plex-result", "Waiting for you to sign in to Plex in the new window…");
+  try {
+    for (let i = 0; i < 200; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const d = await api("plex/pin/current").catch(() => ({ ok: true, waiting: true }));
+      if (!d.ok) continue;
+      if (!d.waiting) { try { win.close(); } catch (_) {} return plexServers(d); }
+    }
+    say("#plex-result", "That took too long. Press Sign in with Plex to try again.", "bad");
+  } catch (e) { say("#plex-result", e.message, "bad"); }
+  finally { btn.disabled = false; }
+}
+function plexServers(d) {
+  state.fields.PLEX_TOKEN = { set: true, value: null }; fill();
+  if (!d.servers.length) return say("#plex-result", `Signed in as ${d.account}, but that account doesn't own a Plex server.`, "bad");
+  say("#plex-result", `Signed in as ${d.account}. Pick the address Plexbie should use; the first one is usually right.`, "ok");
+  const box = $("#plex-servers"), saved = state.fields.PLEX_URL?.value;
+  box.innerHTML = d.servers.map((s, si) => `<p class="small muted" style="margin:10px 0 0">${s.name.replace(/</g, "&lt;")}</p>` + s.urls.map((u, ui) =>
+    `<label><input type="radio" name="plexurl" value="${esc(u)}"> <span>${esc(u)}</span></label>`).join("")).join("");
+  const radios = [...box.querySelectorAll("input")];
+  (radios.find((r) => r.value === saved) || radios[0]).checked = true;
+  box.classList.remove("hidden");
+  const pick = () => { $("#PLEX_URL").value = box.querySelector("input:checked")?.value || ""; };
+  box.onchange = pick; pick();
+}
+
+// ---- Tests
+async function test(btn) {
+  const id = btn.dataset.test, out = $("#test-" + id);
+  btn.disabled = true; say(out, "Testing…");
+  try {
+    const d = await api("test", { service: id, values: values() });
+    say(out, d.ok ? d.message : d.error, d.ok ? "ok" : "bad");
+    if (d.ok) await save();
+  } catch (e) { say(out, e.message, "bad"); }
+  finally { btn.disabled = false; }
+}
+
+// ---- Finish
+async function finish(btn) {
+  btn.disabled = true; say("#finish-result", "");
+  try {
+    const v = values();
+    if (v.DISCORD_CLIENT_SECRET) v.DISCORD_CALLBACK_URL = $("#callback-url").textContent || "";
+    const d = await api("finish", { values: v });
+    if (!d.ok) {
+      const names = { DISCORD_BOT_TOKEN: "the Discord bot token", PLEX_URL: "the Plex address", PLEX_TOKEN: "the Plex sign-in" };
+      say("#finish-result", "Still needed: " + d.missing.map((m) => names[m] || m).join(", ") + ".", "bad");
+      return (btn.disabled = false);
+    }
+    $("#finish-panel").classList.add("hidden"); $("#starting").classList.remove("hidden");
+    document.querySelector(".nav").classList.add("hidden");
+    await new Promise((r) => setTimeout(r, 2500));
+    for (let i = 0; i < 90; i++) {
+      try {
+        const r = await fetch("/api/session", { cache: "no-store" });
+        if ((r.headers.get("content-type") || "").includes("json")) return location.replace("/");
+      } catch (_) {}
+      if (i === 30) $("#starting-note").textContent = "Still starting. If this keeps going, look at the container's log for the reason.";
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    location.reload();
+  } catch (e) { say("#finish-result", e.message, "bad"); btn.disabled = false; }
+}
+
+renderApps();
+
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let moreKeys = [];
+async function renderMore() {
+  const d = await api("more");
+  moreKeys = d.sections.flatMap((sec) => sec.keys.map((k) => k.key));
+  $("#more").innerHTML = d.sections.map((sec, i) => `
+    <details class="card opt" data-more="${i}">
+      <summary>${esc(sec.title)} <span class="tag" data-count="${i}"></span></summary>
+      ${sec.note ? `<p class="muted small">${esc(sec.note)}</p>` : ""}
+      ${sec.keys.map((k) => `
+        <label for="${k.key}">${k.label ? `${esc(k.label)} <small class="key-name">${k.key}</small>` : `<span class="key-name">${k.key}</span>`}</label>
+        <input id="${k.key}" ${k.secret ? 'type="password" autocomplete="off"' : ""} spellcheck="false" data-key data-section="${i}"
+          placeholder="${k.secret ? "" : esc(k.default)}">
+        ${k.help ? `<p class="field-help">${esc(k.help)}</p>` : ""}`).join("")}
+      ${sec.keys.some((k) => k.key.startsWith("BOOKSHELF_") && !k.key.endsWith("SECONDS")) ? `<div class="row"><button type="button" class="quiet" data-folders="${i}">Find my book folders</button></div>
+      <div class="result" id="folders-${i}" aria-live="polite"></div>` : ""}
+      ${sec.checkable ? `<div class="row"><button type="button" data-check="${i}">Check these</button></div>
+      <div class="result" id="check-${i}" aria-live="polite"></div>` : ""}
+    </details>`).join("");
+  document.querySelectorAll("[data-check]").forEach((b) => b.onclick = () => checkSection(b));
+  document.querySelectorAll("[data-folders]").forEach((b) => b.onclick = () => findFolders(b));
+  fill();
+  $("#more").addEventListener("input", countMore);
+}
+// A setting counts as changed when it differs from the template's default.
+function changed(key) {
+  const el = document.getElementById(key), f = state.fields[key];
+  if (!el) return !!f?.set;
+  if (f && f.value === null) return f.set || !!el.value;
+  const v = el.value || f?.value || "";
+  return !!v && v !== el.placeholder;
+}
+let pickFor = "BOOKSHELF_AUDIOBOOK_WATCH";
+async function findFolders(btn) {
+  const out = $("#folders-" + btn.dataset.folders);
+  btn.disabled = true; out.className = "result"; out.textContent = "Looking…";
+  try {
+    const d = await api("folders");
+    if (!d.roots.length) {
+      out.innerHTML = 'No media folders are mounted in Plexbie yet. In Unraid, edit the Plexbie container and set <b>Media and downloads</b> to your data share (for example <code>/mnt/user/data</code>), then come back.';
+      return;
+    }
+    if (!d.folders.length) { out.textContent = "No audiobooks or ebooks folders under " + d.roots.join(", ") + ". Type the paths instead."; return; }
+    const ids = ["BOOKSHELF_AUDIOBOOK_WATCH", "BOOKSHELF_EBOOK_WATCH", "BOOKSHELF_AUDIOBOOK_LIBRARY", "BOOKSHELF_EBOOK_LIBRARY"];
+    ids.forEach((id) => document.getElementById(id)?.addEventListener("focus", () => { pickFor = id; }));
+    const names = { BOOKSHELF_AUDIOBOOK_WATCH: "Audiobook downloads", BOOKSHELF_EBOOK_WATCH: "Ebook downloads",
+                    BOOKSHELF_AUDIOBOOK_LIBRARY: "Audiobook library", BOOKSHELF_EBOOK_LIBRARY: "Ebook library" };
+    const guess = Object.entries(d.suggested || {});
+    out.innerHTML = (guess.length ? '<div class="small">' + guess.map(([k, v]) => `${names[k]}: <code>${esc(v)}</code>`).join("<br>") +
+        '</div><div class="row"><button type="button" class="primary" id="folders-fill">Fill these in for me</button></div>' : "") +
+      '<span class="muted small">Or click a box above, then the folder for it:</span><div class="chips">' +
+      d.folders.map((f) => `<button type="button" class="chip" data-path="${esc(f)}">${esc(f)}</button>`).join("") + "</div>";
+    const fill = document.getElementById("folders-fill");
+    if (fill) fill.onclick = () => { guess.forEach(([k, v]) => { const box = document.getElementById(k); if (box) box.value = v; }); countMore();
+      say(out, "Filled in. Press Check these to make sure Plexbie can use them.", "ok"); };
+    out.querySelectorAll("[data-path]").forEach((c) => c.onclick = () => {
+      const box = document.getElementById(pickFor); box.value = c.dataset.path; box.focus(); countMore();
+    });
+  } catch (e) { say(out, e.message, "bad"); }
+  finally { btn.disabled = false; }
+}
+async function checkSection(btn) {
+  const i = btn.dataset.check, out = $("#check-" + i);
+  const keys = [...document.querySelectorAll(`[data-section="${i}"]`)].map((el) => el.id);
+  btn.disabled = true; out.className = "result"; out.textContent = "Checking…";
+  try {
+    const d = await api("check", { keys, values: values() });
+    out.innerHTML = d.results.length
+      ? d.results.map((r) => `<div class="${r.ok ? "ok" : "bad"}" style="color:var(--${r.ok ? "good" : "tally"})">${r.ok ? "✓" : "✗"} <b>${esc(r.name)}</b>: ${esc(r.message)}</div>`).join("")
+      : "Nothing filled in here to check yet.";
+    if (d.results.some((r) => r.ok)) await save();
+  } catch (e) { say(out, e.message, "bad"); }
+  finally { btn.disabled = false; }
+}
+function countMore() {
+  document.querySelectorAll("[data-count]").forEach((tag) => {
+    const i = tag.dataset.count;
+    const n = [...document.querySelectorAll(`[data-section="${i}"]`)].filter((el) => changed(el.id)).length;
+    tag.textContent = n ? `${n} changed` : "default"; tag.className = "tag" + (n ? " ok" : "");
+  });
+}
+$("#import-file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  say("#import-result", "Reading…");
+  try {
+    const d = await api("import", { text: await file.text() });
+    state = await api("state"); fill();
+    say("#import-result", `Brought in ${d.imported} settings.` + (d.skipped.length
+      ? ` Left out ${d.skipped.length} that belong to the old install or aren't used any more: ${d.skipped.join(", ")}.` : ""), "ok");
+    if (state.fields.DISCORD_BOT_TOKEN?.set) checkDiscord($("#discord-check"));
+    if (state.fields.PLEX_TOKEN?.set) api("plex/servers").then((p) => p.ok && plexServers(p)).catch(() => {});
+  } catch (err) { say("#import-result", err.message, "bad"); }
+  e.target.value = "";
+};
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-test]"); if (t) test(t);
+  const c = e.target.closest("[data-connect]"); if (c) connect(c);
+});
+async function connect(btn) {
+  const id = btn.dataset.connect, out = $("#connect-" + id);
+  btn.disabled = true; say(out, "Connecting…");
+  try {
+    const d = await api("connect", { service: id, values: values() });
+    say(out, d.ok ? d.message : d.error, d.ok ? "ok" : "bad");
+    if (d.ok) { state = await api("state"); fill(); }
+  } catch (e) { say(out, e.message, "bad"); }
+  finally { btn.disabled = false; }
+}
+$("#discord-check").onclick = (e) => checkDiscord(e.currentTarget);
+$("#discord-refresh").onclick = () => checkDiscord($("#discord-check"));
+$("#GUILD_ID").onchange = () => pickGuild().catch((e) => say("#guild-result", e.message, "bad"));
+$("#discord-build-go").onclick = async (e) => {
+  const btn = e.currentTarget; btn.disabled = true; say("#build-result", "Setting up your server…");
+  try {
+    const d = await api("discord/build", { guild: $("#GUILD_ID").value });
+    if (!d.ok) return say("#build-result", d.error, "bad");
+    state = await api("state");
+    await pickGuild();
+    const parts = [d.made.length ? "Made " + d.made.join(", ") + "." : "", d.kept.length ? "Kept " + d.kept.join(", ") + "." : ""];
+    say("#build-result", "Done. " + parts.filter(Boolean).join(" ") + (d.reorder ? " " + d.reorder : ""), d.reorder ? "warn" : "ok");
+  } catch (err) { say("#build-result", err.message, "bad"); }
+  finally { btn.disabled = false; }
+};
+$("#STATS_CHANNEL_ID").onchange = () => loadBoards().catch((e) => say("#stats-result", e.message, "bad"));
+$("#stats-create").onclick = async (e) => {
+  const btn = e.currentTarget; btn.disabled = true;
+  try { await loadBoards(true); } catch (err) { say("#stats-result", err.message, "bad"); } finally { btn.disabled = false; }
+};
+$("#plex-signin").onclick = (e) => plexSignIn(e.currentTarget);
+
+// Your domain -> plexbie.<domain>, the usual address; "Use a different address" for the rest.
+function bareDomain(text) {
+  return text.trim().toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/[\/?#].*$/, "").replace(/^www\./, "").replace(/\.$/, "");
+}
+$("#web-port").textContent = location.port || (location.protocol === "https:" ? "443" : "80");
+$("#domain").addEventListener("input", () => {
+  const d = bareDomain($("#domain").value);
+  if (!d || $("#other-address").open) return;
+  $("#WEB_PUBLIC_URL").value = "https://" + (d.startsWith("plexbie.") ? d : "plexbie." + d);
+  say("#address-result", "");
+});
+function domainFromAddress() {
+  const host = bareDomain($("#WEB_PUBLIC_URL").value);
+  if (host.startsWith("plexbie.") && !$("#domain").value) $("#domain").value = host.slice(8);
+  else if (host && !host.startsWith("plexbie.")) $("#other-address").open = true;
+}
+$("#check-address").onclick = async (e) => {
+  const btn = e.currentTarget, url = $("#WEB_PUBLIC_URL").value.trim();
+  if (!url) { say("#address-result", "Type your domain or an address first.", "bad"); return; }
+  btn.disabled = true; say("#address-result", "Checking from the outside…");
+  try {
+    const d = await api("address", { url });
+    say("#address-result", d.message || (d.ok ? "It works." : "That didn't work."), d.ok ? (d.warn ? "warn" : "ok") : "bad");
+  } catch (err) {
+    say("#address-result", String(err.message || err), "bad");
+  } finally { btn.disabled = false; }
+};
+$("#back").onclick = () => show(step - 1);
+$("#next").onclick = async (e) => {
+  const btn = e.currentTarget;
+  if (step === STEPS.length - 1) return finish(btn);
+  btn.disabled = true;
+  try { await save(); show(step + 1); } catch (err) { alert(err.message); } finally { btn.disabled = false; }
+};
+STEPS.forEach((s) => s.querySelector("h1").setAttribute("tabindex", "-1"));
+api("state").then((s) => {
+  document.body.classList.remove("locked");
+  state = s; fill();
+  renderMore().catch(() => {});
+  // Pick up where a previous visit left off.
+  if (state.fields.DISCORD_BOT_TOKEN?.set) checkDiscord($("#discord-check"));
+  if (state.fields.PLEX_TOKEN?.set && !state.problem) api("plex/servers").then((d) => d.ok && plexServers(d)).catch(() => {});
+  show(state.fields.DISCORD_BOT_TOKEN?.set && !state.problem ? 1 : 0);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+# path: tests/test_message_log.py
+"""Every message Plexbie sends a person is logged once, with how it got there."""
+import asyncio
+import pathlib
+import tempfile
+from datetime import datetime, timedelta, timezone
+
+import conftest  # noqa: F401
+import discord
+
+from core import message_log
+
+
+async def _init():
+    import database.session as session_module
+    session_module._LEGACY_REQUESTS_FILE = pathlib.Path(tempfile.mkdtemp()) / "none.json"
+    if session_module.engine is not None:
+        await session_module.engine.dispose()
+    await session_module.init_database(f"sqlite:///{pathlib.Path(tempfile.mkdtemp()) / 'm.db'}")
+
+
+class _User:
+    def __init__(self, uid, name, closed=False):
+        self.id, self.name, self.display_name, self.closed = uid, name, name, closed
+
+    async def send(self, content=None, embed=None):
+        if self.closed:
+            class R:
+                status, reason = 403, "Forbidden"
+            raise discord.Forbidden(R(), "Cannot send messages to this user")
+
+
+def test_dms_and_website_messages_are_kept_per_person():
+    from core.admin_mirror import send_user_dm
+
+    async def scenario():
+        await _init()
+        alex, marcus = _User(1, "Alex"), _User(2, "Marcus", closed=True)
+        embed = discord.Embed(title="Request Approved!", description="**Dune** is on its way")
+        embed.add_field(name="Next", value="Check <@1> your email")
+        await send_user_dm(None, None, alex, context="approved", embed=embed)
+        try:
+            await send_user_dm(None, None, marcus, context="declined", content="Sorry")
+        except discord.Forbidden:
+            pass
+        await message_log.record(channel="web", plex_name="grandpa_j", title="Ready", text="On Plex now")
+        return await message_log.people(), await message_log.conversation("d1"), await message_log.conversation("d2")
+
+    people, alex, marcus = asyncio.run(scenario())
+    assert {p["name"]: (p["count"], p["failed"], p["via"]) for p in people} == {
+        "Alex": (1, 0, ["discord"]), "Marcus": (1, 1, ["discord"]), "grandpa_j": (1, 0, ["web"])}
+    assert alex[0]["title"] == "Request Approved!" and "Dune is on its way" in alex[0]["text"] and "<@" not in alex[0]["text"]
+    assert marcus[0]["delivered"] is False and "closed" in marcus[0]["error"]
+
+
+def test_old_messages_are_trimmed():
+    async def scenario():
+        await _init()
+        await message_log.record(channel="discord", discord_id=1, text="new")
+        later = datetime.now(timezone.utc) + timedelta(days=message_log.KEEP_DAYS + 1)
+        dropped = await message_log.trim(now=later)
+        return dropped, await message_log.people()
+
+    dropped, people = asyncio.run(scenario())
+    assert dropped == 1 and people == []
