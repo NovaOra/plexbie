@@ -639,18 +639,35 @@ html, body { overflow-x: clip; }
 @media (min-width: 860px) { .sample-switch { bottom: 12px; } }
 
 .boot { min-height: 100dvh; background: var(--field); }
+/* A code-drawn cover, for titles without artwork (and the demo). Everything inside is sized
+   by the cover's own width (cqi), so a 40px thumbnail and a 300px poster both look composed:
+   the title on anything big enough to read it, the title's initials below that. */
 .art-fallback {
-  width: 100%; height: 100%; display: grid; align-content: end; justify-items: start; gap: 6px;
-  padding: 12px; text-align: left; background: var(--panel-raised); color: var(--ink);
-  font-weight: 860; font-stretch: 78%; font-size: clamp(0.85rem, 0.6rem + 1.4cqi, 1.35rem); line-height: 1.02;
+  width: 100%; height: 100%; display: grid; align-content: start; justify-items: start; gap: 4%;
+  padding: 9%; text-align: left; background: var(--panel-raised); color: var(--ink);
+  font-weight: 860; font-stretch: 78%; line-height: 1.02;
   container-type: inline-size; overflow: hidden; position: relative;
 }
-.art-fallback::before { content: ""; position: absolute; inset: auto -20% 55% auto; width: 90%; aspect-ratio: 1; border-radius: 50%; background: rgb(255 255 255 / 0.08); }
-.art-fallback span { position: relative; text-wrap: balance; text-shadow: 0 2px 10px rgb(3 6 18 / 0.35); }
-.art-fallback svg { position: relative; width: 22px; height: 22px; color: var(--ink); opacity: 0.85; }
+/* The title sits at the top, clear of the badges posters carry along their bottom edge. */
+.art-fallback::before { content: ""; position: absolute; inset: auto -22% -12% auto; width: 90%; aspect-ratio: 1; border-radius: 50%; background: rgb(255 255 255 / 0.08); }
+.art-fallback__title {
+  position: relative; max-width: 100%; text-wrap: balance; overflow-wrap: break-word; hyphens: auto;
+  font-size: clamp(0.6rem, 13cqi, 1.5rem); text-shadow: 0 2px 10px rgb(3 6 18 / 0.35);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+}
+.art-fallback__initials { display: none; }
+.art-fallback svg { position: relative; width: clamp(12px, 16cqi, 24px); height: auto; aspect-ratio: 1; color: var(--ink); opacity: 0.85; }
+@container (max-width: 84px) {
+  .art-fallback__title, .art-fallback svg { display: none; }
+  .art-fallback__initials {
+    display: block; position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 38cqi; letter-spacing: -0.02em; text-shadow: 0 2px 8px rgb(3 6 18 / 0.3);
+  }
+}
 .art-fallback--0 { background: linear-gradient(160deg, #ff5c93, #3b2a6b); }
 .art-fallback--1 { background: linear-gradient(160deg, #8e9cc6, #1d2747); }
 .art-fallback--2 { background: linear-gradient(160deg, #ffd1e4, #b04a7c); color: #1a0710; }
+.art-fallback--2 .art-fallback__title, .art-fallback--2 .art-fallback__initials { text-shadow: 0 1px 8px rgb(255 255 255 / 0.3); }
 .art-fallback--3 { background: linear-gradient(160deg, #e5a00d, #6b2f1d); }
 .art-fallback--4 { background: linear-gradient(160deg, #5fc4b8, #17345a); }
 .art-fallback--5 { background: linear-gradient(160deg, #c48bff, #2b1d4f); }

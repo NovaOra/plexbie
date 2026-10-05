@@ -267,10 +267,14 @@ export function Art({ title, size = "w342", eager = false }: { title: Pick<Title
     // No artwork: a cover drawn in code, its colours picked from the title so it stays the same everywhere.
     let h = 0;
     for (const ch of title.title) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    // Two-letter initials for covers too small to hold the title (the CSS picks which shows).
+    const initials = title.title.replace(/^(the|a|an)\s+/i, "").split(/[\s:&-]+/).filter(Boolean)
+      .slice(0, 2).map((w) => [...w][0]).join("").toUpperCase();
     return (
       <div className={`art-fallback art-fallback--${h % 6}`} aria-hidden>
         {Icon ? <Icon /> : null}
-        <span>{title.title}</span>
+        <span className="art-fallback__title">{title.title}</span>
+        <b className="art-fallback__initials">{initials}</b>
       </div>
     );
   }
