@@ -64,7 +64,8 @@ async def all_help() -> List[dict]:
 
 
 async def create(*, request_key: str, slot: int, title: str, kind: str, seasons: Any, user: dict,
-                 reason: str, note: str, status_now: str, offer: Optional[str] = None) -> dict:
+                 reason: str, note: str, status_now: str, offer: Optional[str] = None,
+                 opened_by: Optional[str] = None, quiet: bool = False) -> dict:
     hid = secrets.token_hex(6)
     rec = {
         "request": request_key, "slot": slot, "title": title, "kind": kind, "seasons": seasons,
@@ -75,6 +76,10 @@ async def create(*, request_key: str, slot: int, title: str, kind: str, seasons:
     }
     if offer:
         rec["offer"] = offer          # "name": Plexbie asks whether to search by name
+    if opened_by:
+        rec["opened_by"] = opened_by  # an admin opened it from Manage → All requests
+    if quiet:
+        rec["quiet"] = True           # ...without telling the person who asked
     await kv_set(NAMESPACE, hid, rec)
     logger.info(f"Help request {hid} on No. {slot} ({title}) from {rec['who']}: {reason}")
     return {**rec, "id": hid}

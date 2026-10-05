@@ -314,6 +314,8 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         if section == "messages":
             from core import message_log
             return web.json_response(await message_log.people())
+        if section == "all":
+            return web.json_response(await admin.all_requests(request.query.get("q", "")))
         loaders = {"requests": admin.requests, "joins": admin.joins, "people": admin.people,
                    "cleanup": admin.cleanup, "health": admin.health}
         if invites is not None:
@@ -321,6 +323,11 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         if section not in loaders:
             return _err(404, "Not found.")
         return web.json_response(await loaders[section]())
+
+    async def admin_request(request):
+        await admin_only(request)
+        found = await admin.request_detail(request.match_info["key"])
+        return web.json_response(found) if found else _err(404, "No such request.")
 
     async def refuse(request):
         if readonly:
@@ -353,6 +360,7 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return _err(404, "Not found.")
         return web.json_response(await message_log.conversation(who))
     r.add_get("/api/admin/messages/{who}", safe(admin_conversation))
+    r.add_get("/api/admin/request/{key:\\d+}", safe(admin_request))
 
     async def push_key(request):
         from core import notify
@@ -479,6 +487,19 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         r.add_post("/api/admin/help/{id}/episodes", safe(post_help_episodes))
         r.add_post("/api/admin/help/{id}/name", safe(post_help_name))
         r.add_post("/api/admin/help/{id}/resolve", safe(post_help_resolve))
+
+        async def post_admin_ticket(request):
+            payload = await body(request)
+            result = await actions.admin_ticket(await admin_only(request), request.match_info["key"], payload)
+            return web.json_response(result, status=201)
+
+        async def post_request_search(request):
+            await body(request)
+            result = await actions.request_search(await admin_only(request), request.match_info["key"], request.match_info["how"])
+            return web.json_response(result, status=200 if result.get("ok") else 409)
+
+        r.add_post("/api/admin/request/{key:\\d+}/ticket", safe(post_admin_ticket))
+        r.add_post("/api/admin/request/{key:\\d+}/search/{how:again|episodes|name}", safe(post_request_search))
         r.add_post("/api/push/subscribe", safe(push_subscribe))
         r.add_post("/api/push/unsubscribe", safe(push_unsubscribe))
         r.add_post("/api/push/test", safe(push_test))

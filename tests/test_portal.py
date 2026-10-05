@@ -887,6 +887,148 @@ def test_help_can_only_be_asked_on_your_own_request_once_and_reaches_the_admins(
     assert resolved["ok"] and not again["ok"] and dms == ["🛠️ About your request for The Simpsons: Kicked the search"]
 
 
+# ------------------------------------------------- all requests (Manage)
+def test_the_new_admin_request_endpoints_are_admins_only():
+    assert _run(MEMBER, "GET", "/api/admin/all")[0] == 403
+    assert _run(MEMBER, "GET", "/api/admin/request/123")[0] == 403
+    for path, body in (("/api/admin/request/123/ticket", {"note": "x"}), ("/api/admin/request/123/search/again", {})):
+        assert _run(MEMBER, "POST", path, headers=OK_HEADERS, body=body)[0] == 403, path
+
+
+def _all_requests_data():
+    from portal.data import Data
+    data = Data(FakeServices(Config()))
+    live = {
+        1: {"stage": "searching", "detail": "Looking for a copy"},
+        2: {"stage": "downloading", "percent": 40, "detail": "2 min left"},
+        3: {"stage": "available"},
+        4: {"stage": "available"},
+        5: {"stage": "downloading", "percent": 12},
+        6: {"stage": "downloading", "percent": 0, "problem": "The download failed. Ask an admin in Discord."},
+    }
+
+    async def video(media, seasons):
+        return live[media["id"]]
+    data.progress.video = video
+    return data
+
+
+def test_all_requests_shows_everyones_live_stage_and_says_what_looks_stuck():
+    from datetime import datetime, timedelta, timezone
+    from database.kv_store import kv_set
+    from database.request_store import mark_resolved, save_request, set_fields
+    from portal.admin import STAGE_NAMESPACE, Admin
+
+    data = _all_requests_data()
+    ago = lambda **kw: (datetime.now(timezone.utc) - timedelta(**kw)).isoformat()   # noqa: E731
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        for key, uid, mid, title in ((101, 7, 1, "Searching Forever"), (102, 8, 2, "Coming Along"),
+                                     (103, 7, 3, "Long Done"), (104, 8, 4, "Just Done"),
+                                     (105, 7, 5, "Frozen Download"), (106, 8, 6, "Failed One")):
+            await save_request(key, user_id=uid, media={"id": mid, "media_type": "movie", "title": title})
+            await mark_resolved(key, "approved", "Sam")
+        await set_fields(101, resolved_at=ago(hours=30))          # approved over a day ago, still searching
+        await set_fields(103, available_at=ago(days=40))          # finished too long ago to list
+        await set_fields(104, available_at=ago(days=3))
+        await kv_set(STAGE_NAMESPACE, "105", {"stage": "downloading", "since": ago(hours=9), "percent": 12, "moved": ago(hours=7)})
+        await save_request(107, user_id=7, media={"id": 2, "media_type": "movie", "title": "Still Waiting"})   # pending: not here
+        await save_request(108, user_id=7, media={"id": 2, "media_type": "movie", "title": "Said No"})
+        await mark_resolved(108, "declined", "Sam")
+        admin = Admin(data)
+        listed = await admin.all_requests()
+        found_old = await admin.all_requests("long done")
+        found_number = await admin.all_requests("#4")   # Just Done is the 4th request
+        detail = await admin.request_detail("102")
+        return listed, found_old, found_number, detail
+
+    listed, found_old, found_number, detail = asyncio.run(scenario())
+    rows = {r["title"]["title"]: r for r in listed["rows"]}
+    assert set(rows) == {"Searching Forever", "Coming Along", "Just Done", "Frozen Download", "Failed One"}
+    assert rows["Searching Forever"]["stuck"] == ["Nothing found for over a day"]
+    assert rows["Frozen Download"]["stuck"] == ["Download hasn't moved in 6 hours"]
+    assert rows["Failed One"]["stuck"] == ["The download failed. Ask an admin in Discord."]
+    assert rows["Coming Along"]["stuck"] == [] and rows["Coming Along"]["progress"]["percent"] == 40
+    assert rows["Just Done"]["stage"] == "available" and rows["Just Done"]["finishedAt"]
+    assert rows["Coming Along"]["approvedBy"] == "Sam" and rows["Coming Along"]["requester"]
+    assert listed["counts"] == {"active": 4, "stuck": 3, "finished": 1}
+    # stuck ones first, finished last
+    order = [r["title"]["title"] for r in listed["rows"]]
+    assert order[-1] == "Just Done" and set(order[:3]) == {"Searching Forever", "Frozen Download", "Failed One"}
+    # a search reaches anything, however old, and by number
+    assert [r["title"]["title"] for r in found_old["rows"]] == ["Long Done"] and found_old["counts"] is None
+    assert [r["title"]["title"] for r in found_number["rows"]] == ["Just Done"]
+    assert detail["via"] == "Discord" and detail["tickets"] == [] and detail["activity"] == []
+
+
+def test_an_admin_ticket_goes_on_needs_help_and_tells_the_member_only_when_asked():
+    from database.request_store import mark_resolved, save_request
+    posted, dms = [], []
+
+    class Channel:
+        async def send(self, content=None, embed=None, **kw):
+            posted.append(embed or content)
+
+    class Bot:
+        def get_channel(self, cid):
+            return Channel()
+
+        def get_guild(self, gid):
+            return None
+
+        def get_user(self, uid):
+            return None
+
+        async def fetch_user(self, uid):
+            class U:
+                id, name, display_name = uid, "Jordan", "Jordan"
+
+                async def send(self, content=None, embed=None):
+                    dms.append(content)
+            return U()
+
+    actions = _Actions(FakeServices(Config()))
+    actions.bot = Bot()
+    actions.config.admin_channel_id = 9
+    actions.data = _all_requests_data()
+
+    async def scenario():
+        from portal import help as helpdesk
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(201, user_id=7, media={"id": 1, "media_type": "movie", "title": "Searching Forever"})
+        await mark_resolved(201, "approved", "Sam")
+        refused = []
+        for body in ({"note": ""}, ):
+            try:
+                await actions.admin_ticket(ADMIN, "201", body)
+            except Exception as e:
+                refused.append(getattr(e, "status", None))
+        quiet = await actions.admin_ticket(ADMIN, "201", {"note": "Indexer was down"})
+        try:
+            await actions.admin_ticket(ADMIN, "201", {"note": "again"})
+        except Exception as e:
+            refused.append(getattr(e, "status", None))
+        ticket = (await helpdesk.open_for({"201"}))["201"]
+        dms_before_resolve = list(dms)
+        resolved_quietly = await actions.help_resolve(ADMIN, quiet["help"]["id"], {"reply": "Fixed"})
+        told = await actions.admin_ticket(ADMIN, "201", {"note": "Trying another release", "tell": True})
+        resolved_loudly = await actions.help_resolve(ADMIN, told["help"]["id"], {"reply": "On Plex now"})
+        detail = await __import__("portal.admin", fromlist=["Admin"]).Admin(actions.data).request_detail("201")
+        return refused, quiet, ticket, dms_before_resolve, resolved_quietly, told, resolved_loudly, detail
+
+    refused, quiet, ticket, dms_before, resolved_quietly, told, resolved_loudly, detail = asyncio.run(scenario())
+    assert refused == [400, 409] and quiet["ok"] and told["ok"]
+    assert ticket["opened_by"] and ticket["quiet"] and ticket["reason"] == "Opened by an admin"
+    assert ticket["note"] == "Indexer was down" and "Searching" in ticket["status_then"]
+    assert posted[0].title.startswith("🛠️ Ticket opened on No.")
+    assert dms_before == [] and resolved_quietly == {"ok": True, "message": "Resolved."}
+    assert dms == ["🛠️ An admin is looking into your request for Searching Forever. You'll hear back here when it's sorted.",
+                   "🛠️ About your request for Searching Forever: On Plex now"]
+    assert resolved_loudly["ok"] and len(detail["tickets"]) == 2 and detail["activity"] == []
+    assert [t["opened_by"] for t in detail["tickets"]] == [ticket["opened_by"]] * 2
+
+
 # ------------------------------------------------------- works out of the box
 def test_the_website_is_on_by_default_with_no_borrowed_address():
     import os

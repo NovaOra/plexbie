@@ -493,76 +493,80 @@ class Data:
         from portal import help as helpdesk
         records = await self._slots()
         open_help = await helpdesk.open_for()
-        shelf_titles = None
+        books: Dict[str, Any] = {}
         out = []
         for key, rec in records.items():
             mine = (user_id is not None and rec.get("user_id") == user_id) or (
                 plex_account_id is not None and rec.get("plex_account_id") == plex_account_id)
-            if not mine:
-                continue
-            media = rec.get("media") or {}
-            is_book = rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media
-            if is_book:
-                fmt = media.get("request_format") or rec.get("media_type") or "ebook"
-                title = {
-                    "kind": "audiobook" if fmt == "audiobook" else "ebook",
-                    "id": (media.get("open_library_key") or "").rsplit("/", 1)[-1] or f"req-{key}",
-                    "title": media.get("title") or "Untitled",
-                    "author": media.get("author") or "",
-                    "year": str(media.get("year") or ""),
-                    "poster": None,
-                    "availability": "requested",
-                }
-            else:
-                kind = "movie" if media.get("media_type") == "movie" else "tv"
-                title = {
-                    "kind": kind,
-                    "id": str(media.get("id")),
-                    "title": media.get("title") or media.get("name") or "Untitled",
-                    "year": (media.get("release_date") or media.get("first_air_date") or "")[:4],
-                    "poster": tmdb_art(media.get("poster_path")),
-                    "availability": "requested",
-                }
-            status = rec.get("status", "pending")
-            legacy = status == "pending" and predates_outcomes(rec)
-            live: Dict[str, Any] = {}
-            if status == "pending" and not legacy:
-                stage = "requested"
-            elif status == "declined":
-                stage = "declined"
-            elif is_book:
-                if shelf_titles is None:
-                    shelf_titles = shelf.shelf_titles(await self._shelf())
-                live = await self.progress.book(media, shelf_titles)
-                stage = live.get("stage", "approved")
-            else:
-                live = await self.progress.video(media, rec.get("seasons"))
-                stage = live.get("stage", "approved")
-            if status == "closed" and stage in ("approved", "searching", "upcoming", "requested"):
-                # Cleared in bulk on 2026-10-02: old, unrecorded, and not pending in
-                # Seerr. Unless it actually reached Plex, it's simply over.
-                stage, live = "closed", {"detail": "Closed with the old backlog. Ask again if you still want it."}
-            if legacy and stage in ("approved", "searching", "upcoming"):
-                # Nothing downstream knows it: we can't tell approved-and-lost from
-                # never decided, so say so rather than claim it is waiting.
-                stage, live = "requested", {"detail": "Older request; its outcome wasn't recorded"}
-            seasons = rec.get("seasons")
-            if rec.get("monitor") and isinstance(seasons, list) and len(seasons) == 1:
-                seasons = "latest"
-            out.append({
-                "id": key,
-                "slot": rec["_slot"],
-                "help": {"id": open_help[key]["id"], "reason": open_help[key]["reason"]} if key in open_help else None,
-                "title": title,
-                "stage": stage,
-                "progress": {k: v for k, v in live.items() if k != "stage"} or None,
-                "requestedAt": _iso(rec.get("timestamp")),
-                "updatedAt": _iso(rec.get("resolved_at") or rec.get("timestamp")),
-                "seasons": seasons if not is_book else None,
-                "format": (media.get("request_format") or rec.get("media_type")) if is_book else None,
-            })
+            if mine:
+                out.append(await self.request_row(key, rec, open_help, books))
         out.sort(key=lambda r: r["slot"], reverse=True)
         return out
+
+    async def request_row(self, key: str, rec: dict, open_help: Dict[str, dict], books: Dict[str, Any]) -> dict:
+        """One request as members see it: its title, live stage and progress. Shared by
+        My requests and the admins' All requests. `books` caches the shelf between rows."""
+        media = rec.get("media") or {}
+        is_book = rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media
+        if is_book:
+            fmt = media.get("request_format") or rec.get("media_type") or "ebook"
+            title = {
+                "kind": "audiobook" if fmt == "audiobook" else "ebook",
+                "id": (media.get("open_library_key") or "").rsplit("/", 1)[-1] or f"req-{key}",
+                "title": media.get("title") or "Untitled",
+                "author": media.get("author") or "",
+                "year": str(media.get("year") or ""),
+                "poster": None,
+                "availability": "requested",
+            }
+        else:
+            kind = "movie" if media.get("media_type") == "movie" else "tv"
+            title = {
+                "kind": kind,
+                "id": str(media.get("id")),
+                "title": media.get("title") or media.get("name") or "Untitled",
+                "year": (media.get("release_date") or media.get("first_air_date") or "")[:4],
+                "poster": tmdb_art(media.get("poster_path")),
+                "availability": "requested",
+            }
+        status = rec.get("status", "pending")
+        legacy = status == "pending" and predates_outcomes(rec)
+        live: Dict[str, Any] = {}
+        if status == "pending" and not legacy:
+            stage = "requested"
+        elif status == "declined":
+            stage = "declined"
+        elif is_book:
+            if "titles" not in books:
+                books["titles"] = shelf.shelf_titles(await self._shelf())
+            live = await self.progress.book(media, books["titles"])
+            stage = live.get("stage", "approved")
+        else:
+            live = await self.progress.video(media, rec.get("seasons"))
+            stage = live.get("stage", "approved")
+        if status == "closed" and stage in ("approved", "searching", "upcoming", "requested"):
+            # Cleared in bulk on 2026-10-02: old, unrecorded, and not pending in
+            # Seerr. Unless it actually reached Plex, it's simply over.
+            stage, live = "closed", {"detail": "Closed with the old backlog. Ask again if you still want it."}
+        if legacy and stage in ("approved", "searching", "upcoming"):
+            # Nothing downstream knows it: we can't tell approved-and-lost from
+            # never decided, so say so rather than claim it is waiting.
+            stage, live = "requested", {"detail": "Older request; its outcome wasn't recorded"}
+        seasons = rec.get("seasons")
+        if rec.get("monitor") and isinstance(seasons, list) and len(seasons) == 1:
+            seasons = "latest"
+        return {
+            "id": key,
+            "slot": rec["_slot"],
+            "help": {"id": open_help[key]["id"], "reason": open_help[key]["reason"]} if key in open_help else None,
+            "title": title,
+            "stage": stage,
+            "progress": {k: v for k, v in live.items() if k != "stage"} or None,
+            "requestedAt": _iso(rec.get("timestamp")),
+            "updatedAt": _iso(rec.get("resolved_at") or rec.get("timestamp")),
+            "seasons": seasons if not is_book else None,
+            "format": (media.get("request_format") or rec.get("media_type")) if is_book else None,
+        }
 
     # --------------------------------------------------------- community
     async def _credits(self) -> Dict[str, int]:

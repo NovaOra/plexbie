@@ -283,6 +283,39 @@ export interface LoggedMessage {
   title: string | null; text: string; context: string; error: string | null;
 }
 
+/* ------------------------------------------------- all requests (Manage) */
+
+/** A request as an admin sees it on Manage → All requests: the member's view plus who and why. */
+export interface AdminRequestRow extends MediaRequest {
+  requester: string;
+  status: string;
+  approvedBy?: string | null;
+  approvedAt?: string | null;
+  /** When it reached the stage it's at (as far as Plexbie has seen). */
+  stageSince?: string | null;
+  finishedAt?: string | null;
+  /** Why it looks stuck, in words; empty when it doesn't. */
+  stuck: string[];
+}
+export interface AdminAllRequests {
+  rows: AdminRequestRow[];
+  /** Without a search: how many are on their way, stuck, and finished (last 30 days). */
+  counts: { active: number; stuck: number; finished: number } | null;
+  query: string | null;
+}
+export interface AdminTicket {
+  id: string; status: "open" | "resolved"; reason: string; note?: string; who?: string; opened_by?: string | null;
+  created_at?: string; resolved_by?: string | null; resolved_at?: string | null; reply?: string | null;
+  status_then?: string; actions?: { at: string; by: string; did: string }[] | null;
+}
+export interface AdminRequestDetail extends AdminRequestRow {
+  via: string;
+  seerrId?: number | null;
+  discordUrl?: string | null;
+  tickets: AdminTicket[];
+  activity: { at: string; by: string; did: string }[];
+}
+
 /* ---------------------------------------------------------- help requests */
 
 export type HelpReason = "stuck" | "notfound" | "quality" | "episodes" | "playback" | "other";

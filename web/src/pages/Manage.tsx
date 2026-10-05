@@ -12,27 +12,29 @@ import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { api, type Ack } from "../api/client";
-import type { AdminCleanup, AdminCleanupRow, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
+import type { AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminCleanup, AdminCleanupRow, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
-import { Art, KIND_LABEL, formatSlot, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle, PageHead } from "../components/ui";
+import { Journey, LiveProgress } from "../components/motion";
+import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle, PageHead } from "../components/ui";
 import { useBackToClose } from "../components/overlay";
 import { BottomSheet } from "../components/BottomSheet";
 import { EASE_OUT } from "../components/motion";
 
 /* ================================================================== store */
 
-type Section = "requests" | "joins" | "invites" | "plexinvites" | "people" | "cleanup" | "discord" | "messages" | "health" | "help";
+type Section = "requests" | "all" | "joins" | "invites" | "plexinvites" | "people" | "cleanup" | "discord" | "messages" | "health" | "help";
 type Store = {
-  requests?: AdminRequests; joins?: AdminJoin[]; invites?: AdminInvite[]; plexinvites?: PlexInvite[]; people?: AdminPerson[]; cleanup?: AdminCleanup;
+  requests?: AdminRequests; all?: AdminAllRequests; joins?: AdminJoin[]; invites?: AdminInvite[]; plexinvites?: PlexInvite[]; people?: AdminPerson[]; cleanup?: AdminCleanup;
   discord?: DiscordOverview; messages?: MessagePerson[]; health?: HealthCheck[]; help?: AdminHelp[];
 };
 type ToastIn = { tone?: "ok" | "error"; text: string; detail?: string; undo?: () => void };
 type Toast = ToastIn & { id: number };
 
-const SECTIONS: Section[] = ["requests", "joins", "invites", "plexinvites", "people", "cleanup", "discord", "messages", "health", "help"];
+const SECTIONS: Section[] = ["requests", "all", "joins", "invites", "plexinvites", "people", "cleanup", "discord", "messages", "health", "help"];
 const TABS: { id: Section; label: string }[] = [
   { id: "requests", label: "Requests" },
+  { id: "all", label: "All requests" },
   { id: "joins", label: "Join requests" },
   { id: "invites", label: "Invites" },
   { id: "people", label: "People" },
@@ -1716,6 +1718,223 @@ function NeedsHelp() {
   );
 }
 
+/* ========================================================= all requests */
+
+type Show = "progress" | "stuck" | "finished" | "everything";
+const SHOW: { id: Show; label: string }[] = [
+  { id: "progress", label: "In progress" }, { id: "stuck", label: "Looks stuck" },
+  { id: "finished", label: "Finished (30 days)" }, { id: "everything", label: "Everything" },
+];
+
+/**
+ * Every approved request from everyone, where it is now, and which look stuck. Without a
+ * search it's what's on its way plus the last 30 days of finished; a search reaches any
+ * request ever. A row opens the request in full, with the fixes and "Open a ticket".
+ */
+function AllRequestsTab() {
+  const { data, failed } = useManage();
+  const [show, setShow] = useState<Show>(() => ((data.all?.counts?.stuck ?? 0) > 0 ? "stuck" : "progress"));
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState<AdminAllRequests | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
+
+  // Searching asks the bot (it reaches every request ever, not only the ones listed).
+  const words = q.trim();
+  useEffect(() => {
+    if (!words) return;
+    const t = window.setTimeout(() => {
+      void api.adminAll(words).then(setFound).catch(() => setFound({ rows: [], counts: null, query: words })).finally(() => setSearching(false));
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [words]);
+  const typed = (value: string) => { setQ(value); setSearching(!!value.trim()); };
+
+  const all = data.all;
+  if (!all) return failed.all ? null : <p className="muted">Loading…</p>;
+  const counts = all.counts ?? { active: 0, stuck: 0, finished: 0 };
+  const results = words ? found : null;
+  const shown = results ? results.rows : words ? [] : all.rows.filter((r) =>
+    show === "progress" ? r.stage !== "available" : show === "stuck" ? r.stuck.length > 0 : show === "finished" ? r.stage === "available" : true);
+
+  return (
+    <section className="section m-all">
+      <h2>All requests</h2>
+      <p className="muted m-all__lede">Everyone’s approved requests and where each one is now. Open one to see it in full, search again, or open a ticket.</p>
+      <div className="request-bar m-all__bar">
+        <label className="finder__field m-all__search">
+          <Search size={18} aria-hidden />
+          <span className="visually-hidden">Search every request</span>
+          <input type="search" value={q} onChange={(e) => typed(e.target.value)} placeholder="Search every request: a title, a name or a number"
+            autoComplete="off" enterKeyHint="search" />
+        </label>
+        {!words ? (
+          <select className="select" value={show} aria-label="Show" onChange={(e) => setShow(e.target.value as Show)}>
+            {SHOW.map((s) => {
+              const n = s.id === "progress" ? counts.active : s.id === "stuck" ? counts.stuck : s.id === "finished" ? counts.finished : all.rows.length;
+              return <option key={s.id} value={s.id}>{`${s.label} · ${n}`}</option>;
+            })}
+          </select>
+        ) : null}
+      </div>
+      {words ? (
+        <p className="muted m-all__count" role="status">
+          {searching || !results ? "Searching…" : `${results.rows.length === 0 ? "Nothing" : results.rows.length === 1 ? "1 request" : `${results.rows.length} requests`} found`}
+        </p>
+      ) : null}
+      {shown.length ? (
+        <ul className="m-rows m-all__rows">
+          {shown.map((r) => <li key={r.id}><AllRequestRow r={r} onOpen={() => setOpen(r.id!)} /></li>)}
+        </ul>
+      ) : !words ? (
+        <p className="muted">{show === "stuck" ? "Nothing looks stuck right now." : show === "finished" ? "Nothing finished in the last 30 days." : "Nothing on its way right now."}</p>
+      ) : null}
+      {/* Outside the page, like every sheet: the page goes inert while it's open. */}
+      {createPortal(<AnimatePresence>{open ? <RequestSheet key={open} id={open} onClose={() => setOpen(null)} /> : null}</AnimatePresence>, document.body)}
+    </section>
+  );
+}
+
+function rowLine(r: AdminRequestRow) {
+  const p = r.progress;
+  if (r.stage === "downloading" && typeof p?.percent === "number") return `${p.percent}%${p.detail ? `, ${p.detail}` : ""}`;
+  if (r.stage === "available") return r.finishedAt ? `On Plex since ${since(r.finishedAt)}` : "On Plex";
+  return p?.detail ?? null;
+}
+
+function AllRequestRow({ r, onOpen }: { r: AdminRequestRow; onOpen: () => void }) {
+  const line = rowLine(r);
+  return (
+    <button type="button" className={`slot slot--journey slot--button${r.stuck.length ? " is-stuck" : ""}`} onClick={onOpen}>
+      <span className="slot__no">No.<b>{formatSlot(r.slot)}</b></span>
+      <span className="slot__poster"><Art title={r.title} size="w185" /></span>
+      <span className="slot__body">
+        <span className="slot__title">{r.title.title}{seasonsLabel(r.seasons) ? <span className="muted"> · {seasonsLabel(r.seasons)}</span> : null}</span>
+        <span className="m-card__who"><Initial name={r.requester} /><span>{r.requester} · <b>{stageLabel(r.stage, r.title.kind)}</b></span></span>
+        <Journey stage={r.stage} kind={r.title.kind} compact />
+        {r.stuck.length ? (
+          <span className="m-stuck"><CircleAlert size={15} aria-hidden /><span>{r.stuck.map((s) => <span key={s} className="m-stuck__item">{s}</span>)}</span></span>
+        ) : line ? <span className="muted m-all__line">{line}</span> : null}
+      </span>
+    </button>
+  );
+}
+
+/** A ticket in a request's history, in a sentence. */
+function ticketLine(t: AdminTicket) {
+  const head = t.opened_by ? `${t.opened_by} opened a ticket` : `${t.who ?? "They"} asked for help: ${t.reason}`;
+  const note = t.note ? ` (“${t.note}”)` : "";
+  const end = t.status === "resolved" ? `. Resolved by ${t.resolved_by ?? "an admin"}${t.reply ? `: ${t.reply}` : ""}` : ". Still open";
+  return head + note + end;
+}
+
+/** One request in full, for an admin: where it is, who asked, its tickets, and the fixes. */
+function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
+  const { refresh, toast, readOnly } = useManage();
+  const { busy, act } = useAct();
+  const [r, setR] = useState<AdminRequestDetail | null>(null);
+  const [gone, setGone] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [note, setNote] = useState("");
+  const [tell, setTell] = useState(false);
+  const titleId = useId();
+  const load = useCallback(() => api.adminRequest(id).then(setR).catch(() => setGone(true)), [id]);
+  useEffect(() => { void load(); }, [load]);
+
+  const after = () => { window.setTimeout(() => { void load(); void refresh("all"); void refresh("help"); }, 900); };
+  const search = async (how: "again" | "episodes" | "name") => {
+    const out = await act(how, () => api.requestSearch(id, how), { failText: "Couldn’t search" });
+    if (!out) return;
+    toast({ text: { again: "Searching again", episodes: "Searching episode by episode", name: "Searching by name" }[how], detail: out.message });
+    after();
+  };
+  const ticket = async () => {
+    const out = await act("ticket", () => api.requestTicket(id, note.trim(), tell), { failText: "Couldn’t open the ticket" });
+    if (!out) return;
+    buzz(12);
+    toast({ text: "Ticket opened", detail: out.message });
+    setWriting(false);
+    setNote("");
+    after();
+  };
+
+  const openTicket = r?.tickets.find((t) => t.status === "open");
+  const video = r && ["tv", "movie"].includes(r.title.kind);
+  return (
+    <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet"
+      title={r ? <>{r.title.title}{seasonsLabel(r.seasons) ? <span className="muted"> · {seasonsLabel(r.seasons)}</span> : null}</> : "Request"}>
+      {gone ? <p className="field__error">Couldn’t load this request.</p> : !r ? <p className="muted">Loading…</p> : (
+        <div className="m-reqsheet__body">
+          <p className="m-card__eyebrow">No. {formatSlot(r.slot)} · {KIND_LABEL[r.title.kind] ?? r.title.kind} · asked {since(r.requestedAt)} by {r.requester} · via {r.via}</p>
+          <Journey stage={r.stage} kind={r.title.kind} />
+          <LiveProgress stage={r.stage} progress={r.progress} />
+          {r.stuck.length ? (
+            <ul className="m-stuck m-stuck--list">{r.stuck.map((s) => <li key={s}><CircleAlert size={15} aria-hidden /> {s}</li>)}</ul>
+          ) : null}
+          <dl className="m-facts">
+            {r.approvedAt ? <><dt>Approved</dt><dd>{since(r.approvedAt)}{r.approvedBy ? ` by ${r.approvedBy}` : ""}</dd></> : null}
+            {r.stageSince && r.stage !== "available" ? <><dt>{stageLabel(r.stage, r.title.kind)}</dt><dd>since {since(r.stageSince)}</dd></> : null}
+            {r.finishedAt ? <><dt>On Plex</dt><dd>since {since(r.finishedAt)}</dd></> : null}
+            {r.seerrId ? <><dt>Seerr</dt><dd>request #{r.seerrId}</dd></> : null}
+          </dl>
+
+          {video ? (
+            <div className="m-reqsheet__fixes">
+              <button type="button" className="btn m-btn" disabled={readOnly || !!busy} onClick={() => void search("again")}>
+                <RefreshCw size={16} aria-hidden className={busy === "again" ? "m-spin" : undefined} /> Search again
+              </button>
+              {r.title.kind === "tv" ? (
+                <button type="button" className="btn btn--quiet m-btn" disabled={readOnly || !!busy} onClick={() => void search("episodes")}>
+                  <ListOrdered size={16} aria-hidden /> Episode by episode
+                </button>
+              ) : null}
+              <button type="button" className="btn btn--quiet m-btn" disabled={readOnly || !!busy} onClick={() => void search("name")}>
+                <Search size={16} aria-hidden /> Search by name
+              </button>
+            </div>
+          ) : null}
+
+          {openTicket ? (
+            <p className="m-reqsheet__ticket"><LifeBuoy size={16} aria-hidden /><span>There’s an open ticket on this: <b>{openTicket.reason}</b>. Resolve it from Needs help on the Requests section.</span></p>
+          ) : writing ? (
+            <div className="m-help__reply">
+              <label className="field__label" htmlFor={`${titleId}-note`}>What’s wrong, or what you’ve found</label>
+              <textarea id={`${titleId}-note`} className="m-textarea" rows={3} maxLength={600} value={note} onChange={(e) => setNote(e.target.value)}
+                placeholder="For example: the indexer had nothing, trying another release" />
+              <label className="m-check">
+                <input type="checkbox" checked={tell} onChange={(e) => setTell(e.target.checked)} />
+                <span>Let {r.requester} know an admin is looking into it</span>
+              </label>
+              <div className="m-person__actions m-person__actions--two">
+                <button type="button" className="btn m-btn" onClick={() => { setWriting(false); setNote(""); }}>Back</button>
+                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy === "ticket" || !note.trim()} onClick={() => void ticket()}>
+                  <LifeBuoy size={16} aria-hidden /> {busy === "ticket" ? "Opening…" : "Open the ticket"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="btn btn--primary m-btn m-reqsheet__open" disabled={readOnly} onClick={() => setWriting(true)}>
+              <LifeBuoy size={16} aria-hidden /> Open a ticket
+            </button>
+          )}
+
+          {r.tickets.length || r.activity.length ? (
+            <div className="m-reqsheet__history">
+              <h3>History</h3>
+              <ul>
+                {[...r.tickets.map((t) => ({ at: t.created_at ?? "", text: ticketLine(t) })),
+                  ...r.activity.map((a) => ({ at: a.at, text: `${a.by}: ${a.did}` }))]
+                  .sort((a, b) => b.at.localeCompare(a.at))
+                  .map((e, n) => <li key={n}><span className="muted">{since(e.at)}</span> {e.text}</li>)}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </BottomSheet>
+  );
+}
+
 /* ============================================================== overview */
 
 /** What's waiting on an admin: the overview tiles and the tab badges both count from this. */
@@ -1870,8 +2089,11 @@ export function Manage() {
   };
   const w = waiting(data);
   const counts: Partial<Record<Section, number>> = {
-    requests: (w.requests ?? 0) + w.helpOpen || undefined, joins: w.joins, cleanup: w.leaving, health: w.down,
+    requests: (w.requests ?? 0) + w.helpOpen || undefined, all: data.all?.counts?.stuck || undefined,
+    joins: w.joins, cleanup: w.leaving, health: w.down,
   };
+  /** "All requests · 2 stuck"; everything else counts what's waiting. */
+  const word = (t: Section) => (t === "all" ? "stuck" : "waiting");
   const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed };
 
   return (
@@ -1886,7 +2108,7 @@ export function Manage() {
         <div className="m-tabbar request-bar" ref={panel} role="group" aria-label="Manage">
           <select className="select" value={tab} aria-label="Section" onChange={(e) => go(e.target.value as Section)}>
             {TABS.map((t) => (
-              <option key={t.id} value={t.id}>{counts[t.id] ? `${t.label} · ${counts[t.id]} waiting` : t.label}</option>
+              <option key={t.id} value={t.id}>{counts[t.id] ? `${t.label} · ${counts[t.id]} ${word(t.id)}` : t.label}</option>
             ))}
           </select>
           {TABS.filter((t) => t.id !== tab && counts[t.id]).map((t) => (
@@ -1910,7 +2132,7 @@ export function Manage() {
               animate={reduced ? { opacity: 1 } : { opacity: 1, transform: "translateY(0px)" }}
               transition={{ duration: 0.2, ease: EASE_OUT }}
             >
-              {tab === "requests" ? <RequestsTab /> : tab === "joins" ? <JoinsTab /> : tab === "invites" ? <InvitesTab /> : tab === "people" ? <PeopleTab /> : tab === "cleanup" ? <CleanupTab /> : tab === "discord" ? <DiscordTab /> : tab === "messages" ? <MessagesTab /> : <HealthTab />}
+              {tab === "requests" ? <RequestsTab /> : tab === "all" ? <AllRequestsTab /> : tab === "joins" ? <JoinsTab /> : tab === "invites" ? <InvitesTab /> : tab === "people" ? <PeopleTab /> : tab === "cleanup" ? <CleanupTab /> : tab === "discord" ? <DiscordTab /> : tab === "messages" ? <MessagesTab /> : <HealthTab />}
             </motion.div>
           )}
         </div>

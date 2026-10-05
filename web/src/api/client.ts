@@ -1,4 +1,4 @@
-import type { AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine } from "./types";
+import type { AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail } from "./types";
 import * as sample from "./sample";
 export { DEMO } from "./sample";
 
@@ -146,7 +146,15 @@ export const api = {
     SAMPLE ? sample.wait({ ok: true, message: `Plex invite to ${email} cancelled.` }, 500) : post("/admin/plex-invites/cancel", { email }),
   plexInviteChange: (email: string, next: string): Promise<Ack> =>
     SAMPLE ? sample.wait({ ok: true, message: `Invite sent to ${next}.` }, 700) : post("/admin/plex-invites/change", { email, new: next }),
-  admin: <T,>(section: "requests" | "joins" | "people" | "cleanup" | "health" | "invites" | "plexinvites" | "discord" | "messages" | "help"): Promise<T> =>
+  adminAll: (q: string): Promise<AdminAllRequests> =>
+    SAMPLE ? sample.adminAll(q) : call(`/admin/all?q=${enc(q)}`),
+  adminRequest: (key: string): Promise<AdminRequestDetail> =>
+    SAMPLE ? sample.adminRequest(key) : call(`/admin/request/${enc(key)}`),
+  requestTicket: (key: string, note: string, tell: boolean): Promise<Ack & { help: { id: string; reason: string } }> =>
+    SAMPLE ? sample.requestTicket(key, note, tell) : post(`/admin/request/${enc(key)}/ticket`, { note, tell }),
+  requestSearch: (key: string, how: "again" | "episodes" | "name"): Promise<Ack> =>
+    SAMPLE ? sample.requestSearch(key, how) : post(`/admin/request/${enc(key)}/search/${how}`),
+  admin: <T,>(section: "requests" | "all" | "joins" | "people" | "cleanup" | "health" | "invites" | "plexinvites" | "discord" | "messages" | "help"): Promise<T> =>
     SAMPLE ? (sample.admin(section) as Promise<T>) : call<T>(`/admin/${section}`),
   logout: (): Promise<void> => (SAMPLE ? sample.logout() : call("/logout", { method: "POST" })),
 };

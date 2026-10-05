@@ -21,7 +21,7 @@ from aiohttp import web
 
 from core.blocking import run_blocking
 from core.logging import get_logger
-from database.kv_store import kv_get_all
+from database.kv_store import kv_get, kv_get_all, kv_set
 from database.request_store import get_request
 from portal.data import Data
 from core.discord_lookup import admin_channel, home_guild
@@ -570,9 +570,14 @@ class Actions:
         number = f"No. {int(h['slot']):04d}" if h.get("slot") else "A request"
         channel = admin_channel(self.bot, self.config)
         if channel:
-            embed = discord.Embed(title=f"🆘 Help asked on {number}: {what}", color=discord.Color.orange(),
+            opened = h.get("opened_by")
+            embed = discord.Embed(title=f"{'🛠️ Ticket opened' if opened else '🆘 Help asked'} on {number}: {what}", color=discord.Color.orange(),
                                   description=f"**{h['reason']}**" + (f"\n> {h['note']}" if h.get("note") else ""))
-            embed.add_field(name="From", value=h["who"] + (f" (<@{h['discord_id']}>)" if h.get("discord_id") else " (Plex sign-in)"), inline=True)
+            if opened:
+                embed.add_field(name="Opened by", value=opened, inline=True)
+                embed.add_field(name="Requested by", value=h["who"], inline=True)
+            else:
+                embed.add_field(name="From", value=h["who"] + (f" (<@{h['discord_id']}>)" if h.get("discord_id") else " (Plex sign-in)"), inline=True)
             embed.add_field(name="Plexbie sees", value=h.get("status_then") or "Unknown", inline=True)
             view = None
             if h.get("offer") == "name":
@@ -596,7 +601,8 @@ class Actions:
         from portal.auth import OWNER_ID
         owner_id = await kv_get(*OWNER_ID)                # the Plex owner's account, as plex.tv said
         await notify.push_to_admins(discord_ids=ids, plex_account_ids={owner_id} if owner_id else set(),
-                                    title=f"Help asked on {number}", body=f"{h['who']}: {h['reason']}. {what}",
+                                    title=f"{'Ticket opened' if h.get('opened_by') else 'Help asked'} on {number}",
+                                    body=f"{h.get('opened_by') or h['who']}: {h['reason']}. {what}",
                                     url="/app/manage?tab=requests", tag=f"help-{h['id']}")
 
     async def help_search(self, user: dict, hid: str, by_episode: bool = False) -> dict:
@@ -656,6 +662,9 @@ class Actions:
             raise web.HTTPNotFound(text='{"error":"No such help request."}', content_type="application/json")
         if h.get("already"):
             return {"ok": False, "message": "Someone already resolved this one."}
+        if h.get("quiet"):
+            logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']} (an admin's own ticket; nobody told)")
+            return {"ok": True, "message": "Resolved."}
         text = (f"About your request for {h['title']}: {reply}" if reply
                 else f"An admin looked into your request for {h['title']} and it should be sorted now.")
         if h.get("discord_id") and self.bot:
@@ -668,6 +677,105 @@ class Actions:
                                 context=f"help resolved for {h['title']}")
         logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']}")
         return {"ok": True, "message": f"Resolved, and {h['who']} has been told."}
+
+    # ------------------------------------------------- all requests (admin)
+    async def _request_for_admin(self, key: str) -> dict:
+        if not str(key).isdigit():
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        rec = await get_request(int(key))
+        if not rec:
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        return rec
+
+    async def _note_activity(self, key: str, by: str, did: str) -> None:
+        from portal.admin import ACTIVITY_NAMESPACE
+        log = (await kv_get(ACTIVITY_NAMESPACE, str(key))) or []
+        log = (log if isinstance(log, list) else [])[-29:] + [{"at": datetime.now(timezone.utc).isoformat(), "by": by, "did": did}]
+        await kv_set(ACTIVITY_NAMESPACE, str(key), log)
+
+    async def admin_ticket(self, user: dict, key: str, body: dict) -> dict:
+        """An admin opens a ticket on someone's request (Manage → All requests). It goes on
+        Needs help like any other; the person who asked hears about it only if body.tell."""
+        from portal import help as helpdesk
+        from portal.admin import Admin
+        self.limit(user["user"]["id"], "admin")
+        rec = await self._request_for_admin(key)
+        note = str(body.get("note") or "").strip()
+        if not note:
+            raise web.HTTPBadRequest(text='{"error":"Write what you found, so the ticket says what\'s wrong."}', content_type="application/json")
+        if await helpdesk.open_for({str(key)}):
+            raise web.HTTPConflict(text='{"error":"There\'s already an open ticket on this request. Add to it from Needs help."}', content_type="application/json")
+        records = await self.data._slots()
+        admin = Admin(self.data, self.bot)
+        who = Admin._who(await admin._names(), rec)
+        row = await self.data.request_row(str(key), records.get(str(key)) or {**rec, "_slot": 0}, {}, {})
+        progress = row.get("progress") or {}
+        status_now = ", ".join(x for x in (row.get("stage", "").capitalize(), progress.get("detail"),
+                                            f"{progress['percent']}%" if progress.get("percent") is not None else None) if x)
+        person = {"user": {"name": who}, "discordId": str(rec["user_id"]) if rec.get("user_id") else None,
+                  "plexAccountId": rec.get("plex_account_id"), "plexName": rec.get("requester_name")}
+        tell = bool(body.get("tell"))
+        media = rec.get("media") or {}
+        title = media.get("title") or media.get("name") or "Untitled"
+        h = await helpdesk.create(request_key=str(key), slot=row.get("slot") or 0, title=title,
+                                  kind=row.get("title", {}).get("kind") or media.get("media_type") or "",
+                                  seasons=rec.get("seasons"), user=person, reason="Opened by an admin", note=note[:600],
+                                  status_now=status_now or "Unknown", opened_by=self.actor(user), quiet=not tell)
+        try:
+            await self._tell_admins_about_help(h)
+        except Exception as e:
+            logger.warning(f"Ticket {h['id']} saved, but telling the admins failed: {type(e).__name__}: {e}")
+        if tell:
+            text = f"An admin is looking into your request for {title}. You'll hear back here when it's sorted."
+            if person["discordId"] and self.bot:
+                from core.admin_mirror import dm_user_id
+                await dm_user_id(self.bot, self.services, person["discordId"], context=f"ticket opened on {title}", content=f"🛠️ {text}")
+            else:
+                from core.notify import notify_member
+                await notify_member(self.services, title=f"Update on {title}", body=text, url="/schedule",
+                                    plex_account_id=person["plexAccountId"], plex_name=person["plexName"],
+                                    context=f"ticket opened on {title}")
+        logger.info(f"{self.actor(user)} opened ticket {h['id']} on No. {row.get('slot')} ({title}), told: {tell}")
+        return {"ok": True, "message": f"Ticket opened{f', and {who} has been told' if tell else ''}. It's on Needs help.",
+                "help": {"id": h["id"], "reason": h["reason"]}}
+
+    async def request_search(self, user: dict, key: str, how: str) -> dict:
+        """Search again (whole, episode by episode, or by name) straight from a request.
+        Noted on the request, and on its open ticket if it has one."""
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        rec = await self._request_for_admin(key)
+        title = (rec.get("media") or {}).get("title") or (rec.get("media") or {}).get("name") or "A request"
+        actor = self.actor(user)
+        ticket = (await helpdesk.open_for({str(key)})).get(str(key))
+        channel = admin_channel(self.bot, self.config)
+
+        async def note(by: str, text: str) -> None:
+            await self._note_activity(key, by, text)
+            if ticket:
+                await helpdesk.note_search(ticket["id"], by, text)
+        try:
+            if how == "name":
+                async def done(text: str, found: bool) -> None:
+                    await note("Plexbie", text)
+                    if found and ticket:
+                        await helpdesk.resolve(ticket["id"], "Plexbie", text)
+                    if channel:
+                        try:
+                            await channel.send(f"{'✅' if found else '🔎'} **{title}**: {text}")
+                        except Exception as e:
+                            logger.warning(f"Could not report a name search: {e}")
+                message = await helpdesk.search_by_name(self.services, str(key), done)
+            elif how == "episodes":
+                message = await helpdesk.search_episodes(self.services, str(key))
+            else:
+                message = await helpdesk.search_again(self.services, str(key))
+        except LookupError as e:
+            return {"ok": False, "message": str(e)}
+        await note(actor, message)
+        self.data.cache.drop("sonarr:queue")
+        self.data.cache.drop("radarr:queue")
+        return {"ok": True, "message": message}
 
     # ---------------------------------------------------- discord tools
     def _guild(self):

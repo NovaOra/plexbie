@@ -12,12 +12,81 @@ from sqlalchemy import select
 
 from core.clients import ServiceError
 from core.logging import get_logger
-from database.kv_store import kv_get_all
+from database.kv_store import kv_get_all, kv_set
 from database.session import get_session
 from portal.data import Data, _iso, predates_outcomes, tmdb_art
 from core.discord_lookup import home_guild
 
 logger = get_logger(__name__)
+
+#: When each request last changed stage (and its download last moved), so Manage can
+#: say how long something has sat where it is. Updated whenever requests are looked at.
+STAGE_NAMESPACE = "request_stage"
+#: What admins did straight from a request (Manage → All requests), newest last.
+ACTIVITY_NAMESPACE = "request_activity"
+#: How long requests that reached Plex stay in the All requests list.
+FINISHED_DAYS = 30
+SEARCH_LIMIT = 60
+#: Looks stuck when... (hours)
+STUCK_SEARCHING = 24       # approved this long ago, and still nothing found
+STUCK_STILL = 6            # a download whose percentage hasn't moved
+STUCK_ADDING = 2           # unpacking or being added to Plex
+
+
+def _parse(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, timezone.utc)
+    try:
+        t = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _ts(value: Any) -> float:
+    t = _parse(value)
+    return t.timestamp() if t else 0.0
+
+
+def _within(value: Any, now: datetime, days: int) -> bool:
+    t = _parse(value)
+    return bool(t) and (now - t).total_seconds() <= days * 86400
+
+
+def _hours_since(value: Any, now: datetime) -> float:
+    t = _parse(value)
+    return (now - t).total_seconds() / 3600 if t else 0.0
+
+
+async def _remember_stage(key: str, stage: str, percent: Any, before: Optional[dict], now: datetime) -> dict:
+    """The request's stage with when it got there, and when its download last moved."""
+    stamp = now.isoformat()
+    if not isinstance(before, dict) or before.get("stage") != stage:
+        mark = {"stage": stage, "since": stamp, "percent": percent, "moved": stamp}
+    elif before.get("percent") != percent:
+        mark = {**before, "percent": percent, "moved": stamp}
+    else:
+        return before
+    await kv_set(STAGE_NAMESPACE, key, mark)
+    return mark
+
+
+def stuck_reasons(row: dict, approved_at: Any, mark: dict, now: datetime) -> List[str]:
+    """Why a request looks stuck, as an admin would put it (empty when it doesn't)."""
+    stage, progress, out = row.get("stage"), row.get("progress") or {}, []
+    if row.get("help"):
+        out.append(f"Help asked: {row['help'].get('reason')}")
+    if progress.get("problem"):
+        out.append(progress["problem"])
+    if stage in ("approved", "searching") and _hours_since(approved_at, now) >= STUCK_SEARCHING:
+        out.append("Nothing found for over a day" if stage == "searching" else "Not picked up for over a day")
+    if stage == "downloading" and _hours_since(mark.get("moved"), now) >= STUCK_STILL:
+        out.append(f"Download hasn't moved in {STUCK_STILL} hours")
+    if stage in ("unpacking", "importing") and _hours_since(mark.get("since"), now) >= STUCK_ADDING:
+        out.append("Unpacking for over 2 hours" if stage == "unpacking" else "Not on Plex 2 hours after downloading")
+    return out
 
 
 class Admin:
@@ -94,6 +163,89 @@ class Admin:
         older.sort(key=lambda r: r["slot"], reverse=True)
         decided = sorted((d for d in decided if d["resolvedAt"]), key=lambda r: r["resolvedAt"], reverse=True)[:20]
         return {"pending": pending, "older": older, "recent": decided}
+
+    # ------------------------------------------------------ all requests
+    async def all_requests(self, q: str = "") -> dict:
+        """Manage → All requests: every approved request with its live stage, as the
+        person who asked sees it, plus who asked and whether it looks stuck. Without a
+        search: everything still on its way, and what reached Plex in the last 30 days.
+        With one: any request ever, by title, who asked or its number."""
+        from portal import help as helpdesk
+        query = " ".join(str(q or "").lower().split())[:80]
+        number = query.removeprefix("no.").removeprefix("#").strip().lstrip("0")
+        records = await self.data._slots()
+        names = await self._names()
+        open_help = await helpdesk.open_for()
+        seen = await kv_get_all(STAGE_NAMESPACE)
+        books: Dict[str, Any] = {}
+        now = datetime.now(timezone.utc)
+        rows = []
+        for key, rec in records.items():
+            who = self._who(names, rec)
+            if query:
+                media = rec.get("media") or {}
+                title = (media.get("title") or media.get("name") or "").lower()
+                if not (query in title or query in who.lower() or (number.isdigit() and number == str(rec["_slot"]))):
+                    continue
+            elif rec.get("status") != "approved":
+                continue
+            row = await self._admin_row(key, rec, who, open_help, seen, books, now)
+            if not query and row["stage"] == "available" and not _within(row.get("finishedAt"), now, FINISHED_DAYS):
+                continue
+            rows.append(row)
+        if query:
+            rows.sort(key=lambda r: r["slot"], reverse=True)
+            rows = rows[:SEARCH_LIMIT]
+        else:
+            rows.sort(key=lambda r: (r["stage"] == "available", not r["stuck"],
+                                     -(_ts(r.get("finishedAt")) if r["stage"] == "available" else r["slot"])))
+        counts = {"active": sum(r["stage"] != "available" for r in rows), "stuck": sum(bool(r["stuck"]) for r in rows),
+                  "finished": sum(r["stage"] == "available" for r in rows)}
+        return {"rows": rows, "counts": counts if not query else None, "query": query or None}
+
+    async def request_detail(self, key: str) -> Optional[dict]:
+        """One request in full for an admin: the row, where it came from, and every ticket on it."""
+        from portal import help as helpdesk
+        records = await self.data._slots()
+        rec = records.get(str(key))
+        if not rec:
+            return None
+        names = await self._names()
+        row = await self._admin_row(str(key), rec, self._who(names, rec), await helpdesk.open_for({str(key)}),
+                                    await kv_get_all(STAGE_NAMESPACE), {}, datetime.now(timezone.utc))
+        tickets = [{**h, "id": hid} for hid, h in (await kv_get_all(helpdesk.NAMESPACE)).items()
+                   if isinstance(h, dict) and h.get("request") == str(key)]
+        tickets.sort(key=lambda h: h.get("created_at") or "", reverse=True)
+        source = rec.get("source")
+        guild, channel = self.config.guild_id, self.config.admin_channel_id
+        return {
+            **row,
+            "via": "Seerr" if source in ("seerr", "overseerr") else "the website" if rec.get("via") == "website" else "Discord",
+            "seerrId": rec.get("overseerr_request_id"),
+            "discordUrl": f"https://discord.com/channels/{guild}/{channel}/{key}" if guild and channel and str(key).isdigit() else None,
+            "tickets": [{k: h.get(k) for k in ("id", "status", "reason", "note", "who", "opened_by", "created_at",
+                                                   "resolved_by", "resolved_at", "reply", "actions", "status_then")}
+                        for h in tickets],
+            "activity": (await kv_get_all(ACTIVITY_NAMESPACE)).get(str(key)) or [],
+        }
+
+    async def _admin_row(self, key: str, rec: dict, who: str, open_help: Dict[str, dict], seen: Dict[str, Any],
+                         books: Dict[str, Any], now: datetime) -> dict:
+        row = await self.data.request_row(key, rec, open_help, books)
+        progress = row.get("progress") or {}
+        mark = await _remember_stage(key, row["stage"], progress.get("percent"), seen.get(key), now)
+        approved_at = rec.get("resolved_at") if rec.get("status") == "approved" else None
+        finished = rec.get("available_at") or (mark["since"] if row["stage"] == "available" else None)
+        return {
+            **row,
+            "requester": who,
+            "status": rec.get("status", "pending"),
+            "approvedBy": rec.get("resolved_by") if approved_at else None,
+            "approvedAt": _iso(approved_at) if approved_at else None,
+            "stageSince": mark["since"],
+            "finishedAt": _iso(finished) if finished else None,
+            "stuck": stuck_reasons(row, approved_at, mark, now),
+        }
 
     # ------------------------------------------------------------- joins
     async def joins(self) -> List[dict]:

@@ -308,6 +308,7 @@ export const admin = (section: string): Promise<unknown> => {
     ],
   };
   data.invites = invites.map((i) => ({ ...i }));
+  data.all = allRequests("");
   data.help = helps.map((h) => ({ ...h }));
   data.messages = Object.entries(conversations).map(([id, list]) => {
     const last = list[list.length - 1];
@@ -405,4 +406,76 @@ export const helpResolve = (id: string) => {
   const h = helps.find((x) => x.id === id);
   if (h) { h.status = "resolved"; h.resolved_by = "Sam Rivera"; h.resolved_at = new Date().toISOString(); }
   return wait({ ok: true, message: `Resolved, and ${h?.who ?? "they"} has been told.` });
+};
+
+/* ------------------------------------------------- all requests (Manage) */
+
+type Row = import("./types").AdminRequestRow;
+const simpsons: Title = { kind: "tv", id: "456", title: "The Simpsons", year: "1989", poster: null, availability: "requested" };
+/** Everyone's requests as an admin sees them: two stuck, some on their way, one finished. */
+const everyone: Row[] = [
+  { id: "6001", slot: 212, title: simpsons, stage: "downloading", seasons: [2], requester: "Jordan Lee", status: "approved",
+    progress: { percent: 0, detail: "Season pack, 22 episodes" }, help: { id: "h1", reason: "Stuck downloading" },
+    requestedAt: ago(60 * 30), updatedAt: ago(60 * 20), approvedBy: "Sam Rivera", approvedAt: ago(60 * 29), stageSince: ago(60 * 9),
+    stuck: ["Help asked: Stuck downloading", "Download hasn't moved in 6 hours"] },
+  { id: "6002", slot: 214, title: byTitle("Arrival"), stage: "searching", requester: "Alex Kim", status: "approved",
+    progress: { detail: "Looking for a copy" }, help: { id: "h2", reason: "Can't be found" },
+    requestedAt: ago(60 * 50), updatedAt: ago(60 * 48), approvedBy: "Sam Rivera", approvedAt: ago(60 * 48), stageSince: ago(60 * 48),
+    stuck: ["Help asked: Can't be found", "Nothing found for over a day"] },
+  { id: "5001", slot: 213, title: byTitle("Severance"), stage: "downloading", seasons: [2], requester: "Jordan Lee", status: "approved",
+    progress: { percent: 62, detail: "Season pack, 9 episodes, about 4 min left" },
+    requestedAt: ago(60 * 26), updatedAt: ago(14), approvedBy: "Sam Rivera", approvedAt: ago(60 * 25), stageSince: ago(50), stuck: [] },
+  { id: "5002", slot: 211, title: byTitle("Project Hail Mary"), stage: "unpacking", format: "audiobook", requester: "Sam Ortiz", status: "approved",
+    progress: { percent: null, detail: "Unpacking in SABnzbd" },
+    requestedAt: ago(60 * 49), updatedAt: ago(60 * 3), approvedBy: "Alex Kim", approvedAt: ago(60 * 47), stageSince: ago(20), stuck: [] },
+  { id: "5003", slot: 210, title: byTitle("Dune: Part Two"), stage: "importing", requester: "Priya N.", status: "approved",
+    progress: { percent: 100, detail: "Downloaded, moving it onto Plex" },
+    requestedAt: ago(60 * 8), updatedAt: ago(30), approvedBy: "Sam Rivera", approvedAt: ago(60 * 7), stageSince: ago(6), stuck: [] },
+  { id: "5004", slot: 205, title: byTitle("Paddington 2"), stage: "upcoming", requester: "Priya N.", status: "approved",
+    progress: { releaseDate: new Date(Date.now() + 23 * 864e5).toISOString().slice(0, 10), releaseKind: "digital", detail: "Out to stream in 23 days. Plexbie gets it then." },
+    requestedAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 3), stageSince: ago(60 * 24 * 3), stuck: [] },
+  { id: "4990", slot: 197, title: byTitle("The Wild Robot"), stage: "available", requester: "Alex Kim", status: "approved",
+    requestedAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 4), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 6),
+    stageSince: ago(60 * 24 * 4), finishedAt: ago(60 * 24 * 4), stuck: [] },
+];
+/** Older ones, only found by searching (like anything over 30 days done). */
+const archive: Row[] = [
+  { id: "4100", slot: 120, title: byTitle("Slow Horses"), stage: "available", seasons: [3], requester: "Marcus T.", status: "approved",
+    requestedAt: ago(60 * 24 * 70), updatedAt: ago(60 * 24 * 66), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 70),
+    stageSince: ago(60 * 24 * 66), finishedAt: ago(60 * 24 * 66), stuck: [] },
+];
+const activity: Record<string, { at: string; by: string; did: string }[]> = {};
+
+function allRequests(q: string) {
+  const query = q.trim().toLowerCase().replace(/^(no\.|#)\s*/, "").replace(/^0+/, "");
+  const open = new Set(helps.filter((h) => h.status === "open").map((h) => h.request));
+  const live = everyone.map((r) => (r.help && !open.has(r.id!) ? { ...r, help: null, stuck: r.stuck.filter((s) => !s.startsWith("Help asked")) } : r));
+  if (query) {
+    const words = (r: Row) => `${r.title.title} ${r.requester}`.toLowerCase();
+    const found = [...live, ...archive].filter((r) => words(r).includes(query) || String(r.slot) === query).sort((a, b) => b.slot - a.slot);
+    return { rows: found, counts: null, query };
+  }
+  const rows = [...live].sort((a, b) => Number(a.stage === "available") - Number(b.stage === "available") || Number(!a.stuck.length) - Number(!b.stuck.length) || b.slot - a.slot);
+  return { rows, counts: { active: rows.filter((r) => r.stage !== "available").length, stuck: rows.filter((r) => r.stuck.length).length,
+    finished: rows.filter((r) => r.stage === "available").length }, query: null };
+}
+export const adminAll = (q: string) => wait(allRequests(q), 300);
+export const adminRequest = (key: string) => {
+  const r = [...allRequests("").rows, ...archive].find((x) => x.id === key) ?? everyone[0];
+  const tickets = helps.filter((h) => h.request === key).map((h) => ({ ...h }));
+  return wait({ ...r, via: key === "5002" ? "the website" : "Discord", seerrId: null, discordUrl: null, tickets, activity: activity[key] ?? [] }, 250);
+};
+export const requestTicket = (key: string, note: string, tell: boolean) => {
+  const r = everyone.find((x) => x.id === key);
+  const help = { id: `h${Date.now()}`, reason: "Opened by an admin" };
+  helps.unshift({ id: help.id, request: key, slot: r?.slot ?? 0, title: r?.title.title ?? "", kind: r?.title.kind ?? "movie", seasons: null,
+    who: r?.requester ?? "Someone", reason: help.reason, note, status_then: r ? r.stage : "", status: "open", created_at: new Date().toISOString(),
+    ...({ opened_by: "Sam Rivera" } as object) });
+  if (r) { r.help = help; r.stuck = [`Help asked: ${help.reason}`, ...r.stuck]; }
+  return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told` : ""}. It's on Needs help.`, help }, 450);
+};
+export const requestSearch = (key: string, how: "again" | "episodes" | "name") => {
+  const said = { again: "Searching again.", episodes: "Searching one episode at a time.", name: "Plexbie is searching NZBHydra by name. It reports back in the admin channel." }[how];
+  (activity[key] ??= []).push({ at: new Date().toISOString(), by: "Sam Rivera", did: said });
+  return wait({ ok: true, message: said }, 500);
 };
