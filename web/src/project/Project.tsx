@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Check, Coffee, Copy, GitFork, Heart, Pause, Play, Star } from "../components/icons";
 import type { RequestStage } from "../api/types";
-import { CONTACT, GITHUB, REPO_PUBLIC, SUPPORT } from "./links";
+import { CONTACT, DEMO_SITE, GITHUB, REPO_PUBLIC, SUPPORT } from "./links";
 import { EASE_OUT, Journey, useAutoAdvance, useRise } from "../components/motion";
 import { stageHelp, Strap, useCopied, useTitle } from "../components/ui";
 import { DragCrawl } from "../components/DragCrawl";
@@ -92,6 +92,9 @@ function Hero({ onWatch }: { onWatch?: () => void }) {
             ) : (
               <a className="btn btn--primary btn--big" href="#self-host">How to set it up</a>
             )}
+            <a className="btn btn--quiet" href={DEMO_SITE} rel="noopener">
+              Try the demo <ArrowUpRight size={18} aria-hidden />
+            </a>
             <a className="btn btn--quiet" href="#channels" onClick={() => onWatch?.()}>
               <Play size={18} aria-hidden /> Watch the tour
             </a>

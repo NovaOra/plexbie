@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { Bell, CalendarClock, House, Library, LogOut, Radio, Search, Settings } from "./icons";
-import { api, SAMPLE } from "../api/client";
+import { api, DEMO, SAMPLE } from "../api/client";
 import type { ServerStatus, Session } from "../api/types";
 import { PROJECT_SITE, SITE } from "../site";
 import { useLoad } from "./ui";
@@ -100,6 +100,7 @@ function SampleSwitch() {
   const options = [["guest", "Logged out"], ["visitor", "Not on Plex"], ["member", "Member"]] as const;
   return (
     <nav className="sample-switch" aria-label="Sample data persona">
+      {DEMO && <span className="sample-switch__label">Demo · see it as</span>}
       {options.map(([id, label]) => (
         <a key={id} href={`/?as=${id}`} aria-current={current === id}>{label}</a>
       ))}

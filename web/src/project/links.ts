@@ -2,6 +2,8 @@
 // never show these: they only credit the project with a "Powered by Plexbie" link.
 
 export const GITHUB = "https://github.com/NovaOra/plexbie";
+/** The household website in demo mode: invented people and titles, nothing behind it. */
+export const DEMO_SITE = "https://demo.plexbie.com";
 /** Who runs the project, and where to write. */
 export const CONTACT = "support@plexbie.com";
 export const OPERATOR = "NovaOra";

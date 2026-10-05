@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "build:preview": "VITE_SAMPLE=1 vite build --outDir dist-preview --emptyOutDir",
+    "build:demo": "VITE_SAMPLE=1 VITE_DEMO=1 vite build --outDir dist-demo --emptyOutDir && printf '/*\\n  X-Robots-Tag: noindex\\n' > dist-demo/_headers",
     "build:project": "tsc -b && vite build --config vite.project.config.ts",
     "dev:project": "vite --config vite.project.config.ts"
   },

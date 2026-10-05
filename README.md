@@ -21,6 +21,7 @@
 <p align="center">
   <a href="#tonights-line-up">Features</a> ·
   <a href="#see-it-in-action">See it in action</a> ·
+  <a href="https://demo.plexbie.com">Demo</a> ·
   <a href="#the-website-built-in">The website</a> ·
   <a href="#in-your-pocket">The app</a> ·
   <a href="#eleven-plugins-keep-the-ones-you-like">Plugins</a> ·
@@ -32,6 +33,8 @@
 https://github.com/user-attachments/assets/b5409525-02c4-48ea-bc10-70a2202e68a6
 
 <p align="center"><sub>A 73-second look, made with invented titles and people. For the full three-minute tour, tune to channel 05 on <a href="https://plexbie.com">plexbie.com</a>.</sub></p>
+
+<p align="center"><b><a href="https://demo.plexbie.com">Try the website yourself at demo.plexbie.com</a></b><br><sub>A pretend household: click around as a member, someone not on Plex yet, or logged out. Nothing you do there goes anywhere.</sub></p>
 
 ---
 
@@ -175,6 +178,7 @@ The details are below.
 - [Operations](#operations)
 - [Security](#security)
 - [Limitations](#limitations)
+- [How Plexbie is built (AI use)](#how-plexbie-is-built-ai-use)
 
 ---
 
@@ -751,7 +755,8 @@ docker run --rm -v "$PWD:/src" -w /src -e PYTHONDONTWRITEBYTECODE=1 \
 The README's GIFs and screenshots come from the website's demo mode (invented
 titles, code-drawn covers). To re-record them, run `npm run dev` in `web/`, then
 `node scripts/demo-gifs.mjs` (prints the ffmpeg command for the GIFs) and
-`node scripts/readme-shots.mjs`.
+`node scripts/readme-shots.mjs`. The same demo mode, built with `npm run build:demo`,
+is what runs at [demo.plexbie.com](https://demo.plexbie.com) (`web/cloudflare/demo/`).
 
 Over 600 tests. A good number are **pattern tests** rather than
 tests of one function: they assert a property of the whole codebase, because
@@ -834,6 +839,24 @@ Worth knowing before you rely on this:
 - **Signing in from outside your home needs a public HTTPS address** of your own
   (a reverse proxy or tunnel), such as `plexbie.<your domain>`, for Discord and
   Plex sign-in to come back to. On your home network the website works as it is.
+
+## How Plexbie is built (AI use)
+
+Plexbie is a one-person project, and most of its code, tests and documentation were
+written with an AI assistant (Anthropic's Claude), working from my direction. I decide
+what Plexbie does and how it should feel, try the changes, and run it on my own Unraid
+server, where it looks after my household's Plex every day. The phone app was built the
+same way.
+
+What keeps that in check:
+
+- **Tests:** over 600 automated tests run on every change, including pattern tests that
+  check the whole codebase for mistakes that came back before.
+- **Security reviews:** before going public the code went through static analysis
+  (Semgrep), dependency audits and a focused review of sign-in, sessions and
+  everything that touches the network. The fixes are in the code.
+
+If something looks wrong, please [open an issue](https://github.com/NovaOra/plexbie/issues).
 
 ---
 

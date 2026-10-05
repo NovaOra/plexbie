@@ -25,6 +25,7 @@ dist-ssr
 dist
 dist-preview
 dist-project
+dist-demo
 node_modules
 
 # wrangler (the project site deploy)

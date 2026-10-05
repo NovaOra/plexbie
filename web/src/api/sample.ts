@@ -1,6 +1,7 @@
 // Sample data for design review. The people are invented; the titles and
-// artwork are real public TMDB / Open Library records. Never shipped: client.ts
-// only reaches this module in a dev build.
+// artwork are real public TMDB / Open Library records. Never in the real site:
+// client.ts only reaches this module in a dev build, the private review build,
+// and the public demo (build:demo), which always runs in demo mode below.
 import type {
   Arrival, BookFormat, Community, LibraryItem, LibraryKind, MediaKind, MediaRequest, ServerStatus, Session, Title,
 } from "./types";
@@ -23,12 +24,12 @@ function persona(): Persona {
  * recordings for the README show nothing that belongs to a studio or publisher.
  * Covers fall back to the code-drawn ones. Remembered for the tab's session.
  */
-export const DEMO = import.meta.env.DEV && (() => {
+export const DEMO = import.meta.env.VITE_DEMO === "1" || (import.meta.env.DEV && (() => {
   try {
     if (new URLSearchParams(location.search).has("demo")) sessionStorage.setItem("plexbie.demo", "1");
     return sessionStorage.getItem("plexbie.demo") === "1";
   } catch { return false; }
-})();
+})());
 const DEMO_NAMES: Record<string, string> = {
   "Severance": "Glass Office", "Dune: Part Two": "Sandsong", "The Bear": "Night Kitchen", "Past Lives": "Two Summers",
   "Shōgun": "Harbor Lords", "Everything Everywhere All at Once": "All the Doors at Once", "Slow Horses": "Back Office Spies",

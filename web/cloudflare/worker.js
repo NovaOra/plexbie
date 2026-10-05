@@ -145,6 +145,7 @@ export default {
       out.headers.delete("set-cookie");
       return out;
     }
+    if (path === "/demo" || path === "/demo/") return Response.redirect("https://demo.plexbie.com/", 302);
     if (REDIRECT.some((r) => r.test(path))) {
       // 308 keeps the method; the household site drops the old /app prefix itself.
       return Response.redirect(home + path + url.search, request.method === "GET" || request.method === "HEAD" ? 301 : 308);
