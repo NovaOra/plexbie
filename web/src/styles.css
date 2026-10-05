@@ -1060,6 +1060,8 @@ html, body { overflow-x: clip; }
   background: var(--panel); border: 1px solid var(--rule);
 }
 .guide__head { display: grid; gap: 10px; }
+.guide__credit { font-size: 0.85rem; }
+.guide__credit a { color: inherit; }
 
 .show-req { display: grid; gap: 18px; }
 .show-watch { display: grid; gap: 14px; }

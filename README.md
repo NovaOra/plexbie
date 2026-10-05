@@ -32,7 +32,7 @@
 
 https://github.com/user-attachments/assets/b5409525-02c4-48ea-bc10-70a2202e68a6
 
-<p align="center"><sub>A 73-second look, made with invented titles and people. For the full three-minute tour, tune to channel 05 on <a href="https://plexbie.com">plexbie.com</a>.</sub></p>
+<p align="center"><sub>A 73-second look, made with invented titles and people. For the full three-minute tour, tune to channel 02 on <a href="https://plexbie.com">plexbie.com</a>.<br>Music: “Dry and High” by <a href="https://freemusicarchive.org/music/Ketsa/cc-by-free-to-use-for-anything">Ketsa</a> (CC BY 4.0). Sound effects: <a href="https://kenney.nl">Kenney</a> (CC0).</sub></p>
 
 <p align="center"><b><a href="https://demo.plexbie.com">Try the website yourself at demo.plexbie.com</a></b><br><sub>A pretend household: click around as a member, someone not on Plex yet, or logged out. Nothing you do there goes anywhere.</sub></p>
 
