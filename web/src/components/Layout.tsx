@@ -218,7 +218,13 @@ export function Layout({ children }: { children?: ReactNode }) {
         <p>
           Plexbie is free, open-source software, not affiliated with or endorsed by Plex, Inc. or Discord Inc.
         </p>
-        {member ? (
+        {SAMPLE ? (
+          // The sample catalog: free films with their real posters, everything else invented.
+          <p className="footer__credit">
+            Sample posters: <a href="https://studio.blender.org/films/" rel="noopener">Blender Foundation</a> open movies (CC BY 3.0 and 4.0)
+            and public-domain films. Every other title, person and household here is made up.
+          </p>
+        ) : member ? (
           <p className="footer__credit">
             Film and TV data and artwork from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.
             Book data and covers from Open Library.

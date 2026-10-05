@@ -20,9 +20,10 @@ function persona(): Persona {
 }
 
 /**
- * Demo mode (?demo): invented titles, authors and blurbs, and no artwork, so screen
- * recordings for the README show nothing that belongs to a studio or publisher.
- * Covers fall back to the code-drawn ones. Remembered for the tab's session.
+ * Demo mode (?demo, and the demo.plexbie.com build): the request journey plays out and visits
+ * are counted. The sample catalog itself is copyright-free in every mode: Blender Foundation
+ * open movies (CC BY) and public-domain films with their real posters, and invented shows and
+ * books with drawn covers (sampleTitles.json). Remembered for the tab's session.
  */
 export const DEMO = import.meta.env.VITE_DEMO === "1" || (import.meta.env.DEV && (() => {
   try {
@@ -30,64 +31,29 @@ export const DEMO = import.meta.env.VITE_DEMO === "1" || (import.meta.env.DEV &&
     return sessionStorage.getItem("plexbie.demo") === "1";
   } catch { return false; }
 })());
-const DEMO_NAMES: Record<string, string> = {
-  "Severance": "Glass Office", "Dune: Part Two": "Sandsong", "The Bear": "Night Kitchen", "Past Lives": "Two Summers",
-  "Shōgun": "Harbor Lords", "Everything Everywhere All at Once": "All the Doors at Once", "Slow Horses": "Back Office Spies",
-  "Spider-Man: Across the Spider-Verse": "Thread Runner", "The Last of Us": "After the Bloom", "Oppenheimer": "The Bright Hour",
-  "Andor": "Quiet Rebels", "The Wild Robot": "Tinker Island", "Blue Eye Samurai": "Indigo Blade", "Arrival": "First Signal",
-  "Abbott Elementary": "Room Twelve", "Paddington 2": "Button & Biscuit", "Project Hail Mary": "Long Way to Tau",
-  "Piranesi": "The House of Tides", "Tomorrow, and Tomorrow, and Tomorrow": "Player Two", "The Hobbit": "Over the Low Hills",
-  "The Simpsons": "Maple Street", "FROM": "The Town That Stays", "The Office": "Paper & Co.",
-  "Andy Weir": "R. Vale", "Susanna Clarke": "M. Ashdown", "Gabrielle Zevin": "J. Okafor", "J.R.R. Tolkien": "E. Thorne",
-};
-const DEMO_BLURBS: Record<string, string> = {
-  "Night Kitchen": "Three roommates open a noodle stand that only trades after midnight, and the regulars start bringing more than appetites.",
-  "Glass Office": "A window cleaner forty floors up keeps finding notes taped to the outside of the glass, all addressed to her.",
-  "Sandsong": "A lighthouse with no sea, a town of kite-makers, and one very stubborn weather balloon.",
-  "Two Summers": "Twin sisters swap summer jobs for a bet and both end up running the wrong family business.",
-  "Long Way to Tau": "A retired delivery drone volunteers for one last parcel, to a moon nobody has mapped.",
-  "Tinker Island": "An inventor's workshop floats away in a flood and washes up somewhere much stranger.",
-};
-let demoRe: RegExp | null = null;
-function demoize<T>(value: T): T {
-  demoRe ??= new RegExp(Object.keys(DEMO_NAMES).sort((a, b) => b.length - a.length).map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
-  if (typeof value === "string") return value.replace(demoRe, (m) => DEMO_NAMES[m]) as T;
-  if (Array.isArray(value)) return value.map(demoize) as T;
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, ["poster", "backdrop"].includes(k) ? null : demoize(v)])) as T;
-  }
-  return value;
-}
-
-export const wait = <T,>(value: T, ms = 260) => new Promise<T>((r) => setTimeout(() => r(DEMO ? demoize(value) : value), ms));
+export const wait = <T,>(value: T, ms = 260) => new Promise<T>((r) => setTimeout(() => r(value), ms));
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 const titles: Title[] = (raw as Omit<Title, "availability">[]).map((t) => ({ ...t, availability: "none" }));
-const byTitle = (name: string) => titles.find((t) => t.title === name || (t as { _orig?: string })._orig === name)!;
+const byTitle = (name: string) => titles.find((t) => t.title === name)!;
 
 // Who already has what, so search results show real-looking availability.
-const onPlex = new Set(["Arrival", "Paddington 2", "Slow Horses", "The Wild Robot", "Andor", "Oppenheimer", "The Hobbit", "Abbott Elementary", "The Bear", "Everything Everywhere All at Once", "Spider-Man: Across the Spider-Verse", "Piranesi", "Tomorrow, and Tomorrow, and Tomorrow"]);
-const requestedByOthers = new Set(["Shōgun", "Past Lives"]);
-if (DEMO) {
-  for (const t of titles) {
-    Object.assign(t, { _orig: t.title, title: DEMO_NAMES[t.title] ?? t.title, author: t.author ? DEMO_NAMES[t.author] ?? t.author : t.author,
-      poster: null, backdrop: null, overview: DEMO_BLURBS[DEMO_NAMES[t.title] ?? ""] ?? "A household favourite, made up for this demo." });
-  }
-}
+const onPlex = new Set(["Elephants Dream", "Big Buck Bunny", "Back Office Spies", "Sintel", "Quiet Rebels", "Charge", "Over the Low Hills", "Room Twelve", "Night Kitchen", "Cosmos Laundromat", "Sprite Fright", "The House of Tides", "Player Two", "Plan 9 from Outer Space", "House on Haunted Hill", "Night of the Living Dead", "Carnival of Souls"]);
+const requestedByOthers = new Set(["Harbor Lords", "Spring"]);
 for (const t of titles) {
-  const name = (t as { _orig?: string })._orig ?? t.title;
+  const name = t.title;
   t.availability = onPlex.has(name) ? "available" : requestedByOthers.has(name) ? "requested" : "none";
 }
 
 let mine: MediaRequest[] = [
-  { id: "5001", slot: 214, title: byTitle("Severance"), stage: "downloading", seasons: [2], requestedAt: ago(60 * 26), updatedAt: ago(14) },
-  { id: "5002", slot: 211, title: byTitle("Project Hail Mary"), stage: "unpacking", progress: { percent: null, detail: "Unpacking in SABnzbd" }, format: "audiobook", requestedAt: ago(60 * 49), updatedAt: ago(60 * 3) },
-  { slot: 209, title: byTitle("Dune: Part Two"), stage: "requested", requestedAt: ago(60 * 5), updatedAt: ago(60 * 5) },
-  { slot: 205, title: byTitle("Paddington 2"), stage: "upcoming", requestedAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3),
+  { id: "5001", slot: 214, title: byTitle("Glass Office"), stage: "downloading", seasons: [2], requestedAt: ago(60 * 26), updatedAt: ago(14) },
+  { id: "5002", slot: 211, title: byTitle("Long Way to Tau"), stage: "unpacking", progress: { percent: null, detail: "Unpacking in SABnzbd" }, format: "audiobook", requestedAt: ago(60 * 49), updatedAt: ago(60 * 3) },
+  { slot: 209, title: byTitle("Tears of Steel"), stage: "requested", requestedAt: ago(60 * 5), updatedAt: ago(60 * 5) },
+  { slot: 205, title: byTitle("Big Buck Bunny"), stage: "upcoming", requestedAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3),
     progress: { releaseDate: new Date(Date.now() + 23 * 864e5).toISOString().slice(0, 10), releaseKind: "digital",
       detail: `Out to stream ${new Date(Date.now() + 23 * 864e5).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. Plexbie gets it then. In cinemas since Sep 30.` } },
-  { slot: 197, title: byTitle("The Wild Robot"), stage: "available", requestedAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 4) },
-  { slot: 188, title: byTitle("Blue Eye Samurai"), stage: "declined", requestedAt: ago(60 * 24 * 12), updatedAt: ago(60 * 24 * 11), note: "Season 2 isn't out yet. Ask again when it airs." },
+  { slot: 197, title: byTitle("Sintel"), stage: "available", requestedAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 4) },
+  { slot: 188, title: byTitle("Indigo Blade"), stage: "declined", requestedAt: ago(60 * 24 * 12), updatedAt: ago(60 * 24 * 11), note: "Season 2 isn't out yet. Ask again when it airs." },
 ];
 let nextSlot = 215;
 
@@ -115,20 +81,20 @@ export const status = (): Promise<ServerStatus> => wait({
 });
 
 export const arrivals = (): Promise<Arrival[]> => wait([
-  { title: { ...byTitle("The Wild Robot"), availability: "available" }, addedAt: ago(40) },
-  { title: { ...byTitle("Slow Horses"), availability: "available" }, addedAt: ago(60 * 3), detail: "Season 4, 6 episodes" },
-  { title: { ...byTitle("Abbott Elementary"), availability: "available" }, addedAt: ago(60 * 9), detail: "S4 E12" },
-  { title: { ...byTitle("Oppenheimer"), availability: "available" }, addedAt: ago(60 * 20) },
-  { title: { ...byTitle("The Hobbit"), availability: "available" }, addedAt: ago(60 * 30), detail: "Audiobook" },
-  { title: { ...byTitle("Andor"), availability: "available" }, addedAt: ago(60 * 44), detail: "Season 2" },
-  { title: { ...byTitle("Arrival"), availability: "available" }, addedAt: ago(60 * 70) },
+  { title: { ...byTitle("Sintel"), availability: "available" }, addedAt: ago(40) },
+  { title: { ...byTitle("Back Office Spies"), availability: "available" }, addedAt: ago(60 * 3), detail: "Season 4, 6 episodes" },
+  { title: { ...byTitle("Room Twelve"), availability: "available" }, addedAt: ago(60 * 9), detail: "S4 E12" },
+  { title: { ...byTitle("Charge"), availability: "available" }, addedAt: ago(60 * 20) },
+  { title: { ...byTitle("Over the Low Hills"), availability: "available" }, addedAt: ago(60 * 30), detail: "Audiobook" },
+  { title: { ...byTitle("Quiet Rebels"), availability: "available" }, addedAt: ago(60 * 44), detail: "Season 2" },
+  { title: { ...byTitle("Elephants Dream"), availability: "available" }, addedAt: ago(60 * 70) },
 ]);
 
 export const community = (): Promise<Community> => wait({
   onAir: [
-    { member: "Alex Kim", title: "Slow Horses", subtitle: "S4 E3, “Hello Goodbye”", poster: byTitle("Slow Horses").poster, progress: 0.62, device: "Living room TV" },
-    { member: "Priya N.", title: "Paddington 2", poster: byTitle("Paddington 2").poster, progress: 0.18, device: "iPad" },
-    { member: "Marcus T.", title: "The Hobbit", subtitle: "Chapter 7", poster: byTitle("The Hobbit").poster, progress: 0.41, device: "Phone" },
+    { member: "Alex Kim", title: "Back Office Spies", subtitle: "S4 E3, “Hello Goodbye”", poster: byTitle("Back Office Spies").poster, progress: 0.62, device: "Living room TV" },
+    { member: "Priya N.", title: "Big Buck Bunny", poster: byTitle("Big Buck Bunny").poster, progress: 0.18, device: "iPad" },
+    { member: "Marcus T.", title: "Over the Low Hills", subtitle: "Chapter 7", poster: byTitle("Over the Low Hills").poster, progress: 0.41, device: "Phone" },
   ],
   leaderboard: [
     { name: "Alex Kim", hours: 1412, streak: 12 },
@@ -177,9 +143,9 @@ export const title = (kind: MediaKind, id: string) => {
   if (!t) return Promise.reject(new Error("Not found"));
   const requested = mine.find((r) => r.title.id === id && r.stage !== "declined");
   const asked = new Set(mine.filter((r) => r.title.id === id && r.stage !== "declined").flatMap((r) => (Array.isArray(r.seasons) ? r.seasons : [])));
-  const onPlex: Record<string, Record<number, number>> = { Severance: { 1: 9 }, "The Bear": { 1: 8, 2: 10, 3: 4 } };
+  const onPlex: Record<string, Record<number, number>> = { Severance: { 1: 9 }, "Night Kitchen": { 1: 8, 2: 10, 3: 4 } };
   const seasons = t.seasons?.map((s) => {
-    const have = onPlex[(t as { _orig?: string })._orig ?? t.title]?.[s.n] ?? 0;
+    const have = onPlex[t.title]?.[s.n] ?? 0;
     const status = s.episodes && have >= s.episodes ? "available" : asked.has(s.n) ? "requested" : have ? "partial" : !s.episodes ? "upcoming" : "none";
     return { ...s, have, status } as const;
   });
@@ -206,7 +172,7 @@ export const logout = () => {
   return wait(undefined, 100);
 };
 
-const libraryOrder = ["The Wild Robot", "Slow Horses", "Abbott Elementary", "Oppenheimer", "The Hobbit", "Andor", "Arrival", "The Bear", "Everything Everywhere All at Once", "Spider-Man: Across the Spider-Verse", "Piranesi", "Tomorrow, and Tomorrow, and Tomorrow", "Paddington 2"];
+const libraryOrder = ["Sintel", "Back Office Spies", "Room Twelve", "Charge", "Over the Low Hills", "Quiet Rebels", "Elephants Dream", "Night Kitchen", "Cosmos Laundromat", "Sprite Fright", "The House of Tides", "Player Two", "Big Buck Bunny", "Plan 9 from Outer Space", "House on Haunted Hill", "Night of the Living Dead", "Carnival of Souls"];
 
 export const library = (kind: LibraryKind): Promise<LibraryItem[]> => wait(
   libraryOrder
@@ -271,12 +237,12 @@ export const admin = (section: string): Promise<unknown> => {
   const data: Record<string, unknown> = {
     requests: {
       pending: [
-        { id: "1", slot: 216, title: "Dune: Part Two", kind: "movie", poster: byTitle("Dune: Part Two").poster, seasons: null, requester: "Alex Kim", requestedAt: ago(90), status: "pending" },
-        { id: "2", slot: 217, title: "Severance", kind: "tv", poster: byTitle("Severance").poster, seasons: "latest", requester: "Jordan Lee", requestedAt: ago(40), status: "pending" },
-        { id: "3", slot: 218, title: "Project Hail Mary", kind: "audiobook", poster: null, seasons: null, requester: "Sam Ortiz", requestedAt: ago(12), status: "pending" },
+        { id: "1", slot: 216, title: "Tears of Steel", kind: "movie", poster: byTitle("Tears of Steel").poster, seasons: null, requester: "Alex Kim", requestedAt: ago(90), status: "pending" },
+        { id: "2", slot: 217, title: "Glass Office", kind: "tv", poster: byTitle("Glass Office").poster, seasons: "latest", requester: "Jordan Lee", requestedAt: ago(40), status: "pending" },
+        { id: "3", slot: 218, title: "Long Way to Tau", kind: "audiobook", poster: null, seasons: null, requester: "Sam Ortiz", requestedAt: ago(12), status: "pending" },
       ],
       older: [],
-      recent: [{ id: "9", slot: 214, title: "Arrival", kind: "movie", poster: null, seasons: null, requester: "Alex Kim", requestedAt: ago(3000), status: "approved", resolvedBy: "you", resolvedAt: ago(2000) }],
+      recent: [{ id: "9", slot: 214, title: "Elephants Dream", kind: "movie", poster: null, seasons: null, requester: "Alex Kim", requestedAt: ago(3000), status: "approved", resolvedBy: "you", resolvedAt: ago(2000) }],
     },
     plexinvites: [
       { email: "jordan@example.com", name: "", sentAt: ago(60 * 3), who: "Jordan Lee" },
@@ -296,11 +262,11 @@ export const admin = (section: string): Promise<unknown> => {
       libraries: ["Movies", "TV Shows", "Music", "Kids"],
       channels: [{ id: "11", name: "plex-updates" }, { id: "12", name: "admin" }],
       warning: [
-        { ratingKey: "1", title: "Arrival", type: "movie", daysLeft: 5, reason: "added", lastActivity: ago(60 * 24 * 85) },
-        { ratingKey: "2", title: "FROM", type: "show", daysLeft: 6, reason: "last watched", lastActivity: ago(60 * 24 * 84) },
+        { ratingKey: "1", title: "Elephants Dream", type: "movie", daysLeft: 5, reason: "added", lastActivity: ago(60 * 24 * 85) },
+        { ratingKey: "2", title: "The Town That Stays", type: "show", daysLeft: 6, reason: "last watched", lastActivity: ago(60 * 24 * 84) },
       ],
-      upcoming: [{ ratingKey: "3", title: "Severance", type: "show", daysLeft: 41, reason: "last watched", lastActivity: ago(60 * 24 * 49) }],
-      exempt: [{ ratingKey: "4", title: "The Office", type: "show" }],
+      upcoming: [{ ratingKey: "3", title: "Glass Office", type: "show", daysLeft: 41, reason: "last watched", lastActivity: ago(60 * 24 * 49) }],
+      exempt: [{ ratingKey: "4", title: "Paper & Co.", type: "show" }],
     },
     health: [
       { name: "Plex", ok: true, ms: 12 }, { name: "Seerr", ok: true, ms: 48 }, { name: "Sonarr", ok: true, ms: 30 },
@@ -316,14 +282,14 @@ export const admin = (section: string): Promise<unknown> => {
     const done = doneBy[id] ?? null;
     return { id, name: names[id], count: list.filter((m) => m.direction === "out").length, received: list.filter((m) => m.direction === "in").length,
       unread: list.filter((m) => m.direction === "in" && !(done && done.at >= m.at)).length, done,
-      ticket: id === "d302" ? { id: "h1", title: "Severance", slot: 213 } : null,
+      ticket: id === "d302" ? { id: "h1", title: "Glass Office", slot: 213 } : null,
       failed: list.filter((m) => !m.delivered).length, via: [...new Set(list.map((m) => m.channel))],
       last: { at: last.at, text: last.title ?? last.text, channel: last.channel, delivered: last.delivered, direction: last.direction } };
   }).sort((a, b) => b.last.at.localeCompare(a.last.at));
   data.discord = {
     channels: [{ id: "10", name: "general" }, { id: "11", name: "plex-updates" }, { id: "12", name: "movie-night" }],
     inbox: { autoreply: true, threadsMissing: null },
-    party: { channel: "Watch Party", streamer: "Alex Kim", title: "Dune: Part Two", startedAt: ago(42), people: ["Alex Kim", "Jordan Lee", "Priya"] },
+    party: { channel: "Watch Party", streamer: "Alex Kim", title: "Tears of Steel", startedAt: ago(42), people: ["Alex Kim", "Jordan Lee", "Priya"] },
     joins: [
       { who: "Grandpa", by: "Sam Rivera", via: "plexbie", code: "Grandpa", at: ago(60 * 24 * 8), role: null },
       { who: "Jordan Lee", by: "Alex Kim", via: "discord", code: "aB3dEf", at: ago(60 * 24 * 40), role: "Smart" },
@@ -382,20 +348,20 @@ const said = (minutes: number, channel: "discord" | "web", text: string, title: 
 const conversations: Record<string, Msg[]> = {
   d302: [
     msg(60 * 24 * 3, "discord", "Your request has been approved! A Plex invitation has been sent to alex@example.com.", "Request Approved!"),
-    msg(60 * 5, "discord", "Good news! Dune: Part Two is now available on Plex."),
-    msg(42, "discord", "Good news! Severance is now ready to start on Plex. Season 2 episode 1 is available."),
-    said(40, "web", "Stuck downloading. It's been at 62% since this morning.", "Something wrong with Severance"),
-    msg(30, "discord", "Found a copy that works. Is the 4K version OK, or would you rather wait for 1080p?", "🛠️ About your request: Severance"),
-    said(22, "discord", "4K is great, thank you!", "Answer about Severance"),
+    msg(60 * 5, "discord", "Good news! Tears of Steel is now available on Plex."),
+    msg(42, "discord", "Good news! Glass Office is now ready to start on Plex. Season 2 episode 1 is available."),
+    said(40, "web", "Stuck downloading. It's been at 62% since this morning.", "Something wrong with Glass Office"),
+    msg(30, "discord", "Found a copy that works. Is the 4K version OK, or would you rather wait for 1080p?", "🛠️ About your request: Glass Office"),
+    said(22, "discord", "4K is great, thank you!", "Answer about Glass Office"),
     said(6, "discord", "oh and the subtitles on episode 3 are out of sync"),
   ],
   d301: [
     msg(60 * 24, "discord", "Hey there! We noticed you haven't watched anything on the Plex server in 25 days.\nWhat happens next?: If you remain inactive for 5 more days you'll be removed.", "Plex Inactivity Warning"),
     said(60 * 23, "discord", "Sorry! Been travelling, I'll watch something this weekend 🙏"),
-    msg(60 * 2, "discord", "Sorry, your request for Blue Eye Samurai was declined.", null, false, "Their Discord DMs are closed"),
+    msg(60 * 2, "discord", "Sorry, your request for Indigo Blade was declined.", null, false, "Their Discord DMs are closed"),
   ],
   pgrandpa_j: [
-    msg(60 * 30, "web", "Season 3 is on its way. You'll hear again when it's ready.", "Request approved: The Bear"),
+    msg(60 * 30, "web", "Season 3 is on its way. You'll hear again when it's ready.", "Request approved: Night Kitchen"),
     msg(60 * 8, "none", "You haven't watched anything on the household Plex in 25 days.", "Watch something to keep your Plex access", false, "No phone alerts turned on and no email to send to"),
   ],
 };
@@ -414,17 +380,17 @@ export const messageDone = (who: string, done: boolean) => {
 export const messageToTicket = (key: string) => {
   const m = Object.values(conversations).flat().find((x) => x.id === key);
   if (m) m.ticket = "h1";
-  return wait({ ok: true, message: "Added to their ticket on Severance." }, 400);
+  return wait({ ok: true, message: "Added to their ticket on Glass Office." }, 400);
 };
 
 /** Help requests made in this dev session. */
 const helps: import("./types").AdminHelp[] = [
-  { id: "h1", request: "6001", slot: 212, title: "The Simpsons", kind: "tv", seasons: [2], who: "Jordan Lee", reason: "Stuck downloading",
+  { id: "h1", request: "6001", slot: 212, title: "Maple Street", kind: "tv", seasons: [2], who: "Jordan Lee", reason: "Stuck downloading",
     note: "It's been at 0% since this morning.", status_then: "Downloading, 0%", status: "open", created_at: ago(35) },
-  { id: "h2", request: "6002", slot: 214, title: "Arrival", kind: "movie", seasons: null, who: "Alex Kim", reason: "Can't be found", offer: "name",
-    note: "Searching by its IDs found nothing Plexbie could grab for Arrival: 212 releases came back. Search by name instead?",
+  { id: "h2", request: "6002", slot: 214, title: "Elephants Dream", kind: "movie", seasons: null, who: "Alex Kim", reason: "Can't be found", offer: "name",
+    note: "Searching by its IDs found nothing Plexbie could grab for Elephants Dream: 212 releases came back. Search by name instead?",
     status_then: "Nothing found", status: "open", created_at: ago(12) },
-  { id: "h0", request: "6000", slot: 205, title: "Arrival", kind: "movie", seasons: null, who: "Alex Kim", reason: "Wrong version or quality",
+  { id: "h0", request: "6000", slot: 205, title: "Elephants Dream", kind: "movie", seasons: null, who: "Alex Kim", reason: "Wrong version or quality",
     note: "Audio is in German", status_then: "On Plex", status: "resolved", created_at: ago(60 * 30), resolved_by: "Sam Rivera", resolved_at: ago(60 * 26), reply: "Swapped it for the English release." },
 ];
 export const askHelp = (requestId: string, reason: string) => {
@@ -443,7 +409,7 @@ export const helpResolve = (id: string) => {
 /* ------------------------------------------------- all requests (Manage) */
 
 type Row = import("./types").AdminRequestRow;
-const simpsons: Title = { kind: "tv", id: "456", title: "The Simpsons", year: "1989", poster: null, availability: "requested" };
+const simpsons: Title = { kind: "tv", id: "456", title: "Maple Street", year: "1989", poster: null, availability: "requested" };
 /** Everyone's requests as an admin sees them: two stuck, some on their way, one finished,
  *  one waiting for a decision and one declined. */
 const everyone: Row[] = [
@@ -451,39 +417,39 @@ const everyone: Row[] = [
     progress: { percent: 0, detail: "Season pack, 22 episodes" }, help: { id: "h1", reason: "Stuck downloading" },
     requestedAt: ago(60 * 30), updatedAt: ago(60 * 20), approvedBy: "Sam Rivera", approvedAt: ago(60 * 29), stageSince: ago(60 * 9),
     stuck: ["Help asked: Stuck downloading", "Download hasn't moved in 6 hours"] },
-  { id: "6002", slot: 214, title: byTitle("Arrival"), stage: "searching", requester: "Alex Kim", status: "approved",
+  { id: "6002", slot: 214, title: byTitle("Elephants Dream"), stage: "searching", requester: "Alex Kim", status: "approved",
     progress: { detail: "Looking for a copy" }, help: { id: "h2", reason: "Can't be found" },
     requestedAt: ago(60 * 50), updatedAt: ago(60 * 48), approvedBy: "Sam Rivera", approvedAt: ago(60 * 48), stageSince: ago(60 * 48),
     stuck: ["Help asked: Can't be found", "Nothing found for over a day"] },
-  { id: "5001", slot: 213, title: byTitle("Severance"), stage: "downloading", seasons: [2], requester: "Jordan Lee", status: "approved",
+  { id: "5001", slot: 213, title: byTitle("Glass Office"), stage: "downloading", seasons: [2], requester: "Jordan Lee", status: "approved",
     progress: { percent: 62, detail: "Season pack, 9 episodes, about 4 min left" },
     requestedAt: ago(60 * 26), updatedAt: ago(14), approvedBy: "Sam Rivera", approvedAt: ago(60 * 25), stageSince: ago(50), stuck: [] },
-  { id: "5002", slot: 211, title: byTitle("Project Hail Mary"), stage: "unpacking", format: "audiobook", requester: "Sam Ortiz", status: "approved",
+  { id: "5002", slot: 211, title: byTitle("Long Way to Tau"), stage: "unpacking", format: "audiobook", requester: "Sam Ortiz", status: "approved",
     progress: { percent: null, detail: "Unpacking in SABnzbd" },
     requestedAt: ago(60 * 49), updatedAt: ago(60 * 3), approvedBy: "Alex Kim", approvedAt: ago(60 * 47), stageSince: ago(20), stuck: [] },
-  { id: "5003", slot: 210, title: byTitle("Dune: Part Two"), stage: "importing", requester: "Priya N.", status: "approved",
+  { id: "5003", slot: 210, title: byTitle("Tears of Steel"), stage: "importing", requester: "Priya N.", status: "approved",
     progress: { percent: 100, detail: "Downloaded, moving it onto Plex" },
     requestedAt: ago(60 * 8), updatedAt: ago(30), approvedBy: "Sam Rivera", approvedAt: ago(60 * 7), stageSince: ago(6), stuck: [] },
-  { id: "5004", slot: 205, title: byTitle("Paddington 2"), stage: "upcoming", requester: "Priya N.", status: "approved",
+  { id: "5004", slot: 205, title: byTitle("Big Buck Bunny"), stage: "upcoming", requester: "Priya N.", status: "approved",
     progress: { releaseDate: new Date(Date.now() + 23 * 864e5).toISOString().slice(0, 10), releaseKind: "digital", detail: "Out to stream in 23 days. Plexbie gets it then." },
     requestedAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 3), stageSince: ago(60 * 24 * 3), stuck: [] },
-  { id: "4990", slot: 197, title: byTitle("The Wild Robot"), stage: "available", requester: "Alex Kim", status: "approved",
+  { id: "4990", slot: 197, title: byTitle("Sintel"), stage: "available", requester: "Alex Kim", status: "approved",
     requestedAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 4), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 6),
     stageSince: ago(60 * 24 * 4), finishedAt: ago(60 * 24 * 4), stuck: [] },
-  { id: "7001", slot: 216, title: byTitle("Dune: Part Two"), stage: "requested", requester: "Alex Kim", status: "pending",
+  { id: "7001", slot: 216, title: byTitle("Tears of Steel"), stage: "requested", requester: "Alex Kim", status: "pending",
     progress: { detail: "Waiting for an admin to approve it" }, requestedAt: ago(90), updatedAt: ago(90), stuck: [] },
-  { id: "4980", slot: 199, title: byTitle("Past Lives"), stage: "declined", requester: "Marcus T.", status: "declined",
+  { id: "4980", slot: 199, title: byTitle("Spring"), stage: "declined", requester: "Marcus T.", status: "declined",
     note: "Already on Plex in 4K", requestedAt: ago(60 * 24 * 9), updatedAt: ago(60 * 24 * 9), stuck: [] },
 ];
 /** Older ones, only found by searching (like anything over 30 days done). */
 const archive: Row[] = [
-  { id: "4100", slot: 120, title: byTitle("Slow Horses"), stage: "available", seasons: [3], requester: "Marcus T.", status: "approved",
+  { id: "4100", slot: 120, title: byTitle("Back Office Spies"), stage: "available", seasons: [3], requester: "Marcus T.", status: "approved",
     requestedAt: ago(60 * 24 * 70), updatedAt: ago(60 * 24 * 66), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 70),
     stageSince: ago(60 * 24 * 66), finishedAt: ago(60 * 24 * 66), stuck: [] },
-  { id: "4020", slot: 64, title: byTitle("Andor"), stage: "available", seasons: [1], requester: "Priya N.", status: "approved",
+  { id: "4020", slot: 64, title: byTitle("Quiet Rebels"), stage: "available", seasons: [1], requester: "Priya N.", status: "approved",
     requestedAt: ago(60 * 24 * 200), updatedAt: ago(60 * 24 * 198), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 200),
     stageSince: ago(60 * 24 * 198), finishedAt: ago(60 * 24 * 198), stuck: [] },
-  { id: "4001", slot: 1, title: byTitle("The Hobbit"), stage: "declined", requester: "Jordan Lee", status: "declined",
+  { id: "4001", slot: 1, title: byTitle("Over the Low Hills"), stage: "declined", requester: "Jordan Lee", status: "declined",
     requestedAt: ago(60 * 24 * 400), updatedAt: ago(60 * 24 * 400), stuck: [] },
 ];
 const activity: Record<string, { at: string; by: string; did: string }[]> = {};
@@ -537,7 +503,7 @@ let nextEntry = 1;
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
 /** The demo member's own ticket: an admin asked them something and waits on the answer. */
-helps.push({ id: "h3", request: "5001", slot: 214, title: "Severance", kind: "tv", seasons: [2], who: "Sam Rivera",
+helps.push({ id: "h3", request: "5001", slot: 214, title: "Glass Office", kind: "tv", seasons: [2], who: "Sam Rivera",
   reason: "Wrong or missing episodes", note: "Episode 4 is missing", status_then: "Downloading, 62%", status: "open", created_at: at(90) });
 threads.h3 = [
   { id: "e1", at: at(90), by: "Sam Rivera", kind: "member", text: "Wrong or missing episodes. Episode 4 is missing" },
