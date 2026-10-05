@@ -3,7 +3,7 @@
 #   ghcr.io/novaora/plexbie:latest    newest main
 #   ghcr.io/novaora/plexbie:1.2.3     a v1.2.3 tag
 #   ghcr.io/novaora/plexbie:sha-...   any published commit
-# The Unraid template (unraid/plexbie.xml) installs :latest.
+# The Unraid template (NovaOra/unraid-templates) installs :latest.
 # Actions are pinned to commits (Dependabot keeps them current), since this job
 # can push the image everyone installs.
 name: publish

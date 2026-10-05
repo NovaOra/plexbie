@@ -282,12 +282,13 @@ network namespace. See [Security](#security) if you change this.
 
 ### Unraid
 
-Plexbie publishes a ready-made image (`ghcr.io/novaora/plexbie`) and an Unraid template.
+Plexbie publishes a ready-made image (`ghcr.io/novaora/plexbie`) and an Unraid template
+([NovaOra/unraid-templates](https://github.com/NovaOra/unraid-templates)).
 There's nothing to edit by hand:
 
 1. In Unraid, **Docker → Template repositories**, add
-   `https://github.com/NovaOra/plexbie` and save. (Once Plexbie is listed in Community
-   Applications, search "Plexbie" in **Apps** instead.)
+   `https://github.com/NovaOra/unraid-templates` and save. (Once Plexbie is listed in
+   Community Applications, search "Plexbie" in **Apps** instead.)
 2. **Add Container → Plexbie**, keep the defaults and **Apply**.
 3. Press **WebUI** (or open `http://<your server>:7979`). The page first asks for the
    **setup code** Plexbie printed in its log (click Plexbie's icon on the Docker tab →

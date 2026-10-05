@@ -43,9 +43,8 @@ web/dist-preview/
 web/dist-project/
 .impeccable/
 
-# Repo-only material: README images, the Unraid template, CI. None of it runs.
+# Repo-only material: README images, CI. None of it runs.
 docs/
-unraid/
 .github/
 web/scripts/
 
