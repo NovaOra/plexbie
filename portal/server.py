@@ -78,6 +78,9 @@ async def start_portal(bot, services) -> Optional[web.AppRunner]:
     if hasattr(bot, "add_view"):
         from portal.help_view import HelpByNameView
         bot.add_view(HelpByNameView())   # "Search by name" on help alerts, across restarts
+    if hasattr(bot, "add_dynamic_items"):
+        from portal.ticket_view import TicketOpenButton, TicketReplyButton
+        bot.add_dynamic_items(TicketOpenButton, TicketReplyButton)   # tickets from members' DMs
     invites = Invites()
     auth.invites = invites
     dist = cfg.web_dist if Path(cfg.web_dist).is_dir() else None

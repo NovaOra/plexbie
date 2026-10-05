@@ -73,6 +73,22 @@ async def _remember_stage(key: str, stage: str, percent: Any, before: Optional[d
     return mark
 
 
+def _ticket_row(hid: str, h: dict) -> dict:
+    """A ticket on the Tickets list."""
+    from portal import help as helpdesk
+    thread = helpdesk.thread_of(h)
+    last = thread[-1] if thread else {}
+    return {
+        "id": hid, "requestKey": h.get("request"), "slot": h.get("slot") or 0, "title": h.get("title") or "",
+        "kind": h.get("kind") or "", "seasons": h.get("seasons"), "who": h.get("who") or "Someone",
+        "reason": h.get("reason") or "", "status": h.get("status") or "open", "waiting": bool(h.get("waiting")),
+        "owner": h.get("owner"), "openedBy": h.get("opened_by"), "offer": h.get("offer"),
+        "createdAt": h.get("created_at"), "updatedAt": last.get("at") or h.get("created_at"),
+        "last": {"by": last.get("by"), "kind": last.get("kind"), "text": str(last.get("text") or "")[:160]} if last else None,
+        "count": len(thread),
+    }
+
+
 def stuck_reasons(row: dict, approved_at: Any, mark: dict, now: datetime) -> List[str]:
     """Why a request looks stuck, as an admin would put it (empty when it doesn't)."""
     stage, progress, out = row.get("stage"), row.get("progress") or {}, []
@@ -246,6 +262,38 @@ class Admin:
             "finishedAt": _iso(finished) if finished else None,
             "stuck": stuck_reasons(row, approved_at, mark, now),
         }
+
+    # ------------------------------------------------------------ tickets
+    async def tickets(self) -> dict:
+        """Manage → Tickets: every ticket, the ones needing an admin first, then those
+        waiting on the member, then the last 50 solved."""
+        from portal import help as helpdesk
+        rows = []
+        for hid, h in (await kv_get_all(helpdesk.NAMESPACE)).items():
+            if isinstance(h, dict):
+                rows.append(_ticket_row(hid, h))
+        newest = lambda rs: sorted(rs, key=lambda r: r["updatedAt"] or "", reverse=True)   # noqa: E731
+        action = newest(r for r in rows if r["status"] == "open" and not r["waiting"])
+        waiting = newest(r for r in rows if r["status"] == "open" and r["waiting"])
+        solved = newest(r for r in rows if r["status"] != "open")[:50]
+        return {"rows": action + waiting + solved,
+                "counts": {"action": len(action), "waiting": len(waiting), "solved": len(solved)}}
+
+    async def ticket(self, hid: str) -> Optional[dict]:
+        """One ticket in full: its timeline, and its request as All requests shows it."""
+        from portal import help as helpdesk
+        h = (await kv_get_all(helpdesk.NAMESPACE)).get(hid)
+        if not isinstance(h, dict):
+            return None
+        out = {**_ticket_row(hid, h), "note": h.get("note"), "statusThen": h.get("status_then"),
+               "quiet": bool(h.get("quiet")), "thread": helpdesk.thread_of(h), "request": None}
+        rec = (await self.data._slots()).get(str(h.get("request")))
+        if rec:
+            names = await self._names()
+            out["request"] = await self._admin_row(str(h["request"]), rec, self._who(names, rec),
+                                                   await helpdesk.open_for({str(h["request"])}),
+                                                   await kv_get_all(STAGE_NAMESPACE), {}, datetime.now(timezone.utc))
+        return out
 
     # ------------------------------------------------------------- joins
     async def joins(self) -> List[dict]:

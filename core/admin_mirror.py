@@ -85,7 +85,7 @@ async def _to_app(user, content: Optional[str], embed) -> None:
 
 
 async def send_user_dm(bot, services, user, *, context: str, content: Optional[str] = None,
-                       embed: Optional[discord.Embed] = None, mirror: bool = True):
+                       embed: Optional[discord.Embed] = None, mirror: bool = True, view=None):
     """DM someone, log it on Manage → Messages, and (with `mirror`) copy it to the
     admin channel. Raises if the DM didn't go; it's logged either way. A copy goes to
     the Plexbie app on their phone either way, which helps most when their DMs are closed."""
@@ -94,7 +94,7 @@ async def send_user_dm(bot, services, user, *, context: str, content: Optional[s
     _app_tasks.add(task)
     task.add_done_callback(_app_tasks.discard)
     try:
-        await user.send(content=content, embed=embed)
+        sent = await user.send(content=content, embed=embed, **({"view": view} if view is not None else {}))
     except Exception as e:
         await _log(user, context=context, content=content, embed=embed, delivered=False,
                    error="Their Discord DMs are closed" if isinstance(e, discord.Forbidden) else str(e))
@@ -110,28 +110,29 @@ async def send_user_dm(bot, services, user, *, context: str, content: Optional[s
         raise
 
     await _log(user, context=context, content=content, embed=embed, delivered=True)
-    if not mirror:
-        return
-    await _send_admin_receipt(
-        bot,
-        services,
-        header=f"📬 Plexbie DM sent → <@{user.id}> ({user}) — {context}",
-        content=content,
-        embed=embed,
-    )
+    if mirror:
+        await _send_admin_receipt(
+            bot,
+            services,
+            header=f"📬 Plexbie DM sent → <@{user.id}> ({user}) — {context}",
+            content=content,
+            embed=embed,
+        )
+    return sent
 
 
 async def dm_user_id(bot, services, user_id, *, context: str, content: Optional[str] = None,
-                     embed: Optional[discord.Embed] = None) -> bool:
-    """DM a Discord account by id: from the cache, else fetched. True if it was sent;
-    a closed DM or any failure is logged (and mirrored, by send_user_dm), never raised."""
+                     embed: Optional[discord.Embed] = None, view=None):
+    """DM a Discord account by id: from the cache, else fetched. The sent message (truthy)
+    if it went, else False; a closed DM or any failure is logged (and mirrored, by
+    send_user_dm), never raised."""
     if not (bot and user_id):
         return False
     try:
         uid = int(user_id)
         user = bot.get_user(uid) or await bot.fetch_user(uid)
-        await send_user_dm(bot, services, user, context=context, content=content, embed=embed)
-        return True
+        sent = await send_user_dm(bot, services, user, context=context, content=content, embed=embed, view=view)
+        return sent or True
     except Exception as e:
         logger.info(f"Couldn't DM {user_id} ({context}): {e}")
         return False

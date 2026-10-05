@@ -316,6 +316,8 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return web.json_response(await message_log.people())
         if section == "all":
             return web.json_response(await admin.all_requests(request.query.get("q", "")))
+        if section == "tickets":
+            return web.json_response(await admin.tickets())
         loaders = {"requests": admin.requests, "joins": admin.joins, "people": admin.people,
                    "cleanup": admin.cleanup, "health": admin.health}
         if invites is not None:
@@ -328,6 +330,11 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         await admin_only(request)
         found = await admin.request_detail(request.match_info["key"])
         return web.json_response(found) if found else _err(404, "No such request.")
+
+    async def admin_ticket_view(request):
+        await admin_only(request)
+        found = await admin.ticket(request.match_info["id"])
+        return web.json_response(found) if found else _err(404, "No such ticket.")
 
     async def refuse(request):
         if readonly:
@@ -361,6 +368,7 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         return web.json_response(await message_log.conversation(who))
     r.add_get("/api/admin/messages/{who}", safe(admin_conversation))
     r.add_get("/api/admin/request/{key:\\d+}", safe(admin_request))
+    r.add_get("/api/admin/ticket/{id:[0-9a-f]{12}}", safe(admin_ticket_view))
 
     async def push_key(request):
         from core import notify
@@ -499,6 +507,28 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return web.json_response(result, status=200 if result.get("ok") else 409)
 
         r.add_post("/api/admin/request/{key:\\d+}/ticket", safe(post_admin_ticket))
+
+        async def post_ticket_comment(request):
+            payload = await body(request)
+            return web.json_response(await actions.ticket_comment(await admin_only(request), request.match_info["id"], payload))
+
+        async def post_ticket_status(request):
+            payload = await body(request)
+            result = await actions.ticket_status(await admin_only(request), request.match_info["id"], payload)
+            return web.json_response(result, status=200 if result.get("ok") else 409)
+
+        async def post_ticket_take(request):
+            await body(request)
+            return web.json_response(await actions.ticket_take(await admin_only(request), request.match_info["id"]))
+
+        async def post_member_reply(request):
+            payload = await body(request)
+            return web.json_response(await actions.member_reply(await member(request), request.match_info["id"], payload))
+
+        r.add_post("/api/admin/ticket/{id:[0-9a-f]{12}}/comment", safe(post_ticket_comment))
+        r.add_post("/api/admin/ticket/{id:[0-9a-f]{12}}/status", safe(post_ticket_status))
+        r.add_post("/api/admin/ticket/{id:[0-9a-f]{12}}/take", safe(post_ticket_take))
+        r.add_post("/api/requests/{id}/help/reply", safe(post_member_reply))
         r.add_post("/api/admin/request/{key:\\d+}/search/{how:again|episodes|name}", safe(post_request_search))
         r.add_post("/api/push/subscribe", safe(push_subscribe))
         r.add_post("/api/push/unsubscribe", safe(push_unsubscribe))

@@ -60,6 +60,7 @@ class Actions:
         self.config = services.config
         origin = urlparse(public_url or "")
         self.origin = f"{origin.scheme}://{origin.netloc}" if origin.netloc else None
+        self.public_url = public_url or ""
         self._hits: Dict[str, Deque[float]] = defaultdict(deque)
 
     # ------------------------------------------------------------- guards
@@ -585,7 +586,9 @@ class Actions:
                 embed.set_footer(text=footer(h["id"]))
                 view = HelpByNameView()
             else:
-                embed.set_footer(text="Search again or mark it resolved on the website: Manage → Requests")
+                embed.set_footer(text="Work on it on the website: Manage → Tickets (the title links there)")
+            if self.public_url:
+                embed.url = self.ticket_link(h["id"])
             try:
                 await channel.send(embed=embed, **({"view": view} if view else {}))
             except Exception as e:
@@ -667,16 +670,27 @@ class Actions:
             return {"ok": True, "message": "Resolved."}
         text = (f"About your request for {h['title']}: {reply}" if reply
                 else f"An admin looked into your request for {h['title']} and it should be sorted now.")
-        if h.get("discord_id") and self.bot:
-            from core.admin_mirror import dm_user_id
-            await dm_user_id(self.bot, self.services, h["discord_id"], context=f"help resolved for {h['title']}", content=f"🛠️ {text}")
-        else:
-            from core.notify import notify_member
-            await notify_member(self.services, title=f"Update on {h['title']}", body=text, url="/app/schedule",
-                                plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"),
-                                context=f"help resolved for {h['title']}")
+        await self.tell_member(h, text, context=f"help resolved for {h['title']}", reply_button=False)
         logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']}")
         return {"ok": True, "message": f"Resolved, and {h['who']} has been told."}
+
+    async def tell_member(self, h: dict, text: str, *, context: str, reply_button: bool = True) -> None:
+        """A message to the member a ticket is about: a Discord DM (with a Reply button, so
+        they can answer on the ticket from Discord), else a phone/browser alert or email."""
+        if h.get("discord_id") and self.bot:
+            from core.admin_mirror import dm_user_id
+            view, embed = None, None
+            if reply_button and h.get("id"):
+                from portal.ticket_view import reply_embed, reply_view
+                view, embed = reply_view(h["id"]), reply_embed(h, text)
+            if embed is not None:
+                await dm_user_id(self.bot, self.services, h["discord_id"], context=context, embed=embed, view=view)
+            else:
+                await dm_user_id(self.bot, self.services, h["discord_id"], context=context, content=f"🛠️ {text}")
+        else:
+            from core.notify import notify_member
+            await notify_member(self.services, title=f"Update on {h['title']}", body=text, url="/schedule",
+                                plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"), context=context)
 
     # ------------------------------------------------- all requests (admin)
     async def _request_for_admin(self, key: str) -> dict:
@@ -726,18 +740,122 @@ class Actions:
         except Exception as e:
             logger.warning(f"Ticket {h['id']} saved, but telling the admins failed: {type(e).__name__}: {e}")
         if tell:
-            text = f"An admin is looking into your request for {title}. You'll hear back here when it's sorted."
-            if person["discordId"] and self.bot:
-                from core.admin_mirror import dm_user_id
-                await dm_user_id(self.bot, self.services, person["discordId"], context=f"ticket opened on {title}", content=f"🛠️ {text}")
-            else:
-                from core.notify import notify_member
-                await notify_member(self.services, title=f"Update on {title}", body=text, url="/schedule",
-                                    plex_account_id=person["plexAccountId"], plex_name=person["plexName"],
-                                    context=f"ticket opened on {title}")
+            message = str(body.get("message") or "").strip()[:600] or \
+                f"An admin is looking into your request for {title}. You'll hear back here when it's sorted."
+            h = await helpdesk.add(h["id"], "reply", self.actor(user), message) or h
+            await self.tell_member(h, message, context=f"ticket opened on {title}")
         logger.info(f"{self.actor(user)} opened ticket {h['id']} on No. {row.get('slot')} ({title}), told: {tell}")
         return {"ok": True, "message": f"Ticket opened{f', and {who} has been told' if tell else ''}. It's on Needs help.",
                 "help": {"id": h["id"], "reason": h["reason"]}}
+
+    # ------------------------------------------------------------ tickets
+    async def _ticket(self, hid: str) -> dict:
+        from database.kv_store import kv_get as get
+        from portal import help as helpdesk
+        rec = await get(helpdesk.NAMESPACE, hid)
+        if not isinstance(rec, dict):
+            raise web.HTTPNotFound(text='{"error":"No such ticket."}', content_type="application/json")
+        return {**rec, "id": hid}
+
+    async def ticket_comment(self, user: dict, hid: str, body: dict) -> dict:
+        """An admin's note (admins only) or a reply to the member (sent to them)."""
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        h = await self._ticket(hid)
+        text = str(body.get("text") or "").strip()[:1200]
+        if not text:
+            raise web.HTTPBadRequest(text='{"error":"Write something first."}', content_type="application/json")
+        if body.get("kind") == "reply":
+            h = await helpdesk.add(hid, "reply", self.actor(user), text, quiet=False)
+            await self.tell_member(h, f"About your request for {h['title']}: {text}", context=f"ticket reply on {h['title']}")
+            return {"ok": True, "message": f"Sent to {h['who']}."}
+        await helpdesk.add(hid, "note", self.actor(user), text)
+        return {"ok": True, "message": "Note added. Only admins see it."}
+
+    async def ticket_status(self, user: dict, hid: str, body: dict) -> dict:
+        """Open (an admin's move), waiting (on the member's answer) or resolved (with an
+        optional last message, which the member gets unless the ticket is a quiet one)."""
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        h = await self._ticket(hid)
+        actor, to = self.actor(user), body.get("status")
+        if to == "resolved":
+            return await self.help_resolve(user, hid, {"reply": body.get("message") or ""})
+        if to == "waiting":
+            if h.get("status") != "open":
+                await helpdesk.reopen(hid, actor)
+            await helpdesk.add(hid, "status", actor, "Waiting on them", waiting=True)
+            return {"ok": True, "message": f"Waiting on {h['who']}'s answer."}
+        if to == "open":
+            if h.get("status") == "resolved":
+                await helpdesk.reopen(hid, actor)
+            elif h.get("waiting"):
+                await helpdesk.add(hid, "status", actor, "Back with the admins", waiting=False)
+            return {"ok": True, "message": "Open."}
+        raise web.HTTPBadRequest(text='{"error":"Unknown status."}', content_type="application/json")
+
+    async def ticket_take(self, user: dict, hid: str) -> dict:
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        await self._ticket(hid)
+        h = await helpdesk.take(hid, self.actor(user), user.get("discordId"), user.get("plexAccountId"))
+        mine = h.get("owner") == self.actor(user)
+        return {"ok": True, "message": "It's yours. You'll get an alert when they answer." if mine else "Let go. Anyone can take it."}
+
+    async def member_reply(self, user: dict, request_key: str, body: dict) -> dict:
+        """The member answers on their ticket (the website, the app, or Discord's Reply):
+        it goes on the ticket, the ticket stops waiting, and its owner (or, with no owner,
+        every admin) gets an alert."""
+        from portal import help as helpdesk
+        if not str(request_key).isdigit():
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        rec = await get_request(int(request_key))
+        if not rec or not helpdesk.owns(rec, user):
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        ticket = (await helpdesk.open_for({str(request_key)})).get(str(request_key))
+        if not ticket:
+            raise web.HTTPConflict(text='{"error":"This ticket is closed. Ask for help again if it\'s still wrong."}', content_type="application/json")
+        text = str(body.get("text") or "").strip()[:1200]
+        if not text:
+            raise web.HTTPBadRequest(text='{"error":"Write your answer first."}', content_type="application/json")
+        self.limit(user.get("discordId") or f"plex:{user.get('plexAccountId')}", "help")
+        h = await helpdesk.add(ticket["id"], "member", ticket["who"], text, waiting=False)
+        await self._tell_admins_about_answer(h, text)
+        return {"ok": True, "message": "Sent. The admins have it."}
+
+    async def _tell_admins_about_answer(self, h: dict, text: str) -> None:
+        from core import notify
+        number = f"No. {int(h['slot']):04d}" if h.get("slot") else "A request"
+        channel = admin_channel(self.bot, self.config)
+        if channel:
+            try:
+                await channel.send(f"💬 **{h['who']}** answered on {number} ({h['title']}): {text[:300]}\n{self.ticket_link(h['id'])}")
+            except Exception as e:
+                logger.warning(f"Could not post a ticket answer to the admin channel: {e}")
+        if h.get("owner_discord_id") or h.get("owner_plex_id"):
+            ids, plex = {h.get("owner_discord_id")}, {h.get("owner_plex_id")}
+        else:
+            ids, plex = self._admin_ids(), set()
+            from database.kv_store import kv_get as get
+            from portal.auth import OWNER_ID
+            owner_id = await get(*OWNER_ID)
+            plex = {owner_id} if owner_id else set()
+        await notify.push_to_admins(discord_ids={i for i in ids if i}, plex_account_ids={p for p in plex if p},
+                                    title=f"{h['who']} answered on {number}", body=text[:140],
+                                    url=f"/manage?tab=tickets&ticket={h['id']}", tag=f"help-{h['id']}")
+
+    def ticket_link(self, hid: str) -> str:
+        return f"{(self.public_url or '').rstrip('/')}/manage?tab=tickets&ticket={hid}"
+
+    def _admin_ids(self) -> set:
+        guild = home_guild(self.bot, self.config)
+        ids = {str(self.config.bot_owner_id)} if self.config.bot_owner_id else set()
+        if guild:
+            for m in guild.members:
+                roles = {r.id for r in m.roles}
+                if m.guild_permissions.administrator or (self.config.admin_role_id and self.config.admin_role_id in roles):
+                    ids.add(str(m.id))
+        return ids
 
     async def request_search(self, user: dict, key: str, how: str) -> dict:
         """Search again (whole, episode by episode, or by name) straight from a request.

@@ -984,8 +984,8 @@ def test_an_admin_ticket_goes_on_needs_help_and_tells_the_member_only_when_asked
             class U:
                 id, name, display_name = uid, "Jordan", "Jordan"
 
-                async def send(self, content=None, embed=None):
-                    dms.append(content)
+                async def send(self, content=None, embed=None, view=None):
+                    dms.append(content or embed.description)
             return U()
 
     actions = _Actions(FakeServices(Config()))
@@ -1023,7 +1023,7 @@ def test_an_admin_ticket_goes_on_needs_help_and_tells_the_member_only_when_asked
     assert ticket["note"] == "Indexer was down" and "Searching" in ticket["status_then"]
     assert posted[0].title.startswith("🛠️ Ticket opened on No.")
     assert dms_before == [] and resolved_quietly == {"ok": True, "message": "Resolved."}
-    assert dms == ["🛠️ An admin is looking into your request for Searching Forever. You'll hear back here when it's sorted.",
+    assert dms == ["An admin is looking into your request for Searching Forever. You'll hear back here when it's sorted.",
                    "🛠️ About your request for Searching Forever: On Plex now"]
     assert resolved_loudly["ok"] and len(detail["tickets"]) == 2 and detail["activity"] == []
     assert [t["opened_by"] for t in detail["tickets"]] == [ticket["opened_by"]] * 2
@@ -1104,6 +1104,167 @@ def test_approving_a_show_with_no_tvdb_entry_says_so_instead_of_sending_it_to_se
     assert asyncio.run(no_tvdb_entry(services, 204999)) is True
     assert asyncio.run(no_tvdb_entry(services, 1396)) is False
     assert asyncio.run(no_tvdb_entry(FakeServices(Config()), 204999)) is False   # no Seerr: don't guess
+
+
+# ------------------------------------------------------------ tickets
+def test_ticket_endpoints_are_for_admins_and_answers_for_members():
+    assert _run(MEMBER, "GET", "/api/admin/tickets")[0] == 403
+    assert _run(MEMBER, "GET", "/api/admin/ticket/abcdefabcdef")[0] == 403
+    for path in ("comment", "status", "take"):
+        assert _run(MEMBER, "POST", f"/api/admin/ticket/abcdefabcdef/{path}", headers=OK_HEADERS, body={"text": "x"})[0] == 403
+    assert _run(OUTSIDER, "POST", "/api/requests/5/help/reply", headers=OK_HEADERS, body={"text": "x"})[0] == 403
+
+
+def _ticket_bot(posted, dms):
+    class Channel:
+        async def send(self, content=None, embed=None, **kw):
+            posted.append(embed or content)
+
+    class Bot:
+        def get_channel(self, cid):
+            return Channel()
+
+        def get_guild(self, gid):
+            return None
+
+        def get_user(self, uid):
+            return None
+
+        async def fetch_user(self, uid):
+            class U:
+                id, name, display_name = uid, "Jordan", "Jordan"
+
+                async def send(self, content=None, embed=None, view=None):
+                    dms.append({"text": content or embed.description, "button": bool(view and view.children)})
+                    return type("Sent", (), {"id": 555, "channel": type("C", (), {"id": 444})()})()
+            return U()
+    return Bot()
+
+
+def test_a_ticket_is_a_conversation_with_an_owner_notes_and_answers():
+    from database.request_store import mark_resolved, save_request
+    from portal import help as helpdesk
+    from portal.admin import Admin
+    posted, dms = [], []
+    actions = _Actions(FakeServices(Config()))
+    actions.bot = _ticket_bot(posted, dms)
+    actions.config.admin_channel_id = 9
+    actions.public_url = "https://plexbie.example"
+    actions.data = _all_requests_data()
+    jordan = {"user": {"id": "7", "name": "Jordan", "via": "discord"}, "member": True, "admin": False, "discordId": "7"}
+    sam = {**ADMIN, "user": {"id": "1", "name": "Sam", "via": "discord"}, "discordId": "1"}
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(301, user_id=7, media={"id": 1, "media_type": "movie", "title": "Searching Forever"})
+        await mark_resolved(301, "approved", "Sam")
+        asked = await actions.ask_help(jordan, "301", {"reason": "stuck", "note": "0% all morning"})
+        hid = asked["help"]["id"]
+        took = await actions.ticket_take(sam, hid)
+        await actions.ticket_comment(sam, hid, {"kind": "note", "text": "Indexer is down, trying another"})
+        await actions.ticket_comment(sam, hid, {"kind": "reply", "text": "Is it the 4K one you wanted?"})
+        await actions.ticket_status(sam, hid, {"status": "waiting"})
+        waiting = await Admin(actions.data).tickets()
+        mine_while_waiting = [r for r in await actions.data.my_requests(7) if r["id"] == "301"][0]["help"]
+        answered = await actions.member_reply(jordan, "301", {"text": "Yes, the 4K one"})
+        after_answer = await Admin(actions.data).ticket(hid)
+        solved = await actions.ticket_status(sam, hid, {"status": "resolved", "message": "Grabbed the 4K release"})
+        again = await actions.member_reply(jordan, "301", {"text": "thanks"}) if False else None
+        refused = None
+        try:
+            await actions.member_reply(jordan, "301", {"text": "one more thing"})
+        except Exception as e:
+            refused = getattr(e, "status", None)
+        final = await Admin(actions.data).ticket(hid)
+        return took, waiting, mine_while_waiting, answered, after_answer, solved, refused, final, again
+
+    took, waiting, mine, answered, after, solved, refused, final, _ = asyncio.run(scenario())
+    assert "yours" in took["message"]
+    row = waiting["rows"][0]
+    assert row["waiting"] and row["owner"] == "Sam" and waiting["counts"] == {"action": 0, "waiting": 1, "solved": 0}
+    # the member sees what was said to them, never the admins' note
+    kinds = [e["kind"] for e in mine["thread"]]
+    assert mine["waiting"] and kinds == ["member", "reply"] and all("Indexer" not in e["text"] for e in mine["thread"])
+    assert answered["ok"] and not after["waiting"]
+    assert [e["kind"] for e in after["thread"]] == ["member", "status", "note", "reply", "status", "member"]
+    assert after["request"]["requester"] and after["request"]["stage"] == "searching"
+    # the reply went to Jordan with a Reply button; the answer reached the admin channel with a link
+    assert {"text": "About your request for Searching Forever: Is it the 4K one you wanted?", "button": True} in dms
+    assert any(isinstance(p, str) and "Jordan** answered" in p and "/manage?tab=tickets&ticket=" in p for p in posted)
+    assert posted[0].url.startswith("https://plexbie.example/manage?tab=tickets&ticket=")
+    assert solved["ok"] and final["status"] == "resolved" and final["thread"][-1]["text"] == "Solved"
+    assert refused == 409                 # a solved ticket takes no more answers
+
+
+def test_an_admin_ticket_can_send_its_own_message_and_old_tickets_get_a_timeline():
+    from database.kv_store import kv_set
+    from database.request_store import mark_resolved, save_request
+    from portal import help as helpdesk
+    posted, dms = [], []
+    actions = _Actions(FakeServices(Config()))
+    actions.bot = _ticket_bot(posted, dms)
+    actions.config.admin_channel_id = 9
+    actions.data = _all_requests_data()
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(401, user_id=7, media={"id": 1, "media_type": "movie", "title": "Searching Forever"})
+        await mark_resolved(401, "approved", "Sam")
+        out = await actions.admin_ticket(ADMIN, "401", {"note": "Not on TheTVDB", "tell": True, "message": "Grabbing it by hand tonight"})
+        made = await helpdesk.all_help()
+        # a ticket from before timelines: built from what it kept
+        await kv_set(helpdesk.NAMESPACE, "aaaaaaaaaaaa", {"request": "9", "slot": 9, "title": "Old", "kind": "tv", "who": "Pat",
+                                                        "reason": "Stuck downloading", "note": "since Monday", "status": "resolved",
+                                                        "created_at": "2026-09-01T00:00:00+00:00", "resolved_by": "Sam",
+                                                        "resolved_at": "2026-09-02T00:00:00+00:00", "reply": "Fixed",
+                                                        "actions": [{"at": "2026-09-01T01:00:00+00:00", "by": "Sam", "did": "Searched again"}]})
+        old = [h for h in await helpdesk.all_help() if h["id"] == "aaaaaaaaaaaa"][0]
+        return out, made, old
+
+    out, made, old = asyncio.run(scenario())
+    t = [h for h in made if h["request"] == "401"][0]
+    assert out["ok"] and [e["kind"] for e in t["thread"]] == ["note", "reply"]
+    assert t["thread"][0]["text"] == "Not on TheTVDB" and t["thread"][1]["text"] == "Grabbing it by hand tonight"
+    assert dms[0] == {"text": "Grabbing it by hand tonight", "button": True}
+    built = helpdesk.thread_of(old)
+    assert [(e["kind"], e["text"]) for e in built] == [("member", "Stuck downloading. since Monday"), ("action", "Searched again"),
+                                                      ("reply", "Fixed"), ("status", "Solved")]
+
+
+def test_the_approval_dm_loses_its_ticket_button_once_it_is_on_plex():
+    from database.request_store import get_request, mark_resolved, save_request, set_fields
+    from portal.ticket_view import mark_arrived
+    edits = []
+
+    class Partial:
+        def __init__(self, mid):
+            self.mid = mid
+
+        async def edit(self, content=None, view="unset"):
+            edits.append((self.mid, content, view))
+
+    class Channel:
+        def get_partial_message(self, mid):
+            return Partial(mid)
+
+    class Bot:
+        def get_channel(self, cid):
+            return Channel()
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(501, user_id=7, media={"id": 42, "media_type": "movie", "title": "Arrival"})
+        await mark_resolved(501, "approved", "Sam")
+        await set_fields(501, approval_dm={"channel": "444", "message": "555", "text": "✅ Approved: Arrival"})
+        await save_request(502, user_id=8, media={"id": 42, "media_type": "movie", "title": "Arrival"})   # someone else's
+        await mark_resolved(502, "approved", "Sam")
+        n = await mark_arrived(Bot(), 42, user_id=7)
+        again = await mark_arrived(Bot(), 42, user_id=7)                   # already marked: nothing
+        return n, again, await get_request(501), await get_request(502)
+
+    n, again, mine, theirs = asyncio.run(scenario())
+    assert n == 1 and again == 0 and mine.get("arrived_at") and not theirs.get("arrived_at")
+    assert edits == [(555, "✅ Approved: Arrival\n🎬 **Arrival** is on Plex now.", None)]
 
 
 # ------------------------------------------------------- works out of the box

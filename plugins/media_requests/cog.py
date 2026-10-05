@@ -236,7 +236,17 @@ async def _after_decision(bot, services, message_id, *, approved: bool, actor: s
     await _notify_web_requester(services, message_id, approved, user_message)
     dm = user_message if approved else f"❌ Sorry, your {'book ' if what == 'book' else ''}request for **{title}** was declined."
     # No user_id: signed in with Plex only, and told above instead.
-    await dm_user_id(bot, services, user_id, context=f"{what} request {'approved' if approved else 'declined'} for {title}", content=dm)
+    view = None
+    if approved and user_id:
+        from portal.ticket_view import open_view
+        view = open_view(str(message_id))      # "Something wrong? Open a ticket", until it's on Plex
+    sent = await dm_user_id(bot, services, user_id, context=f"{what} request {'approved' if approved else 'declined'} for {title}",
+                            content=dm, view=view)
+    if view is not None and getattr(sent, "id", None):
+        try:
+            await set_fields(int(message_id), approval_dm={"channel": str(sent.channel.id), "message": str(sent.id), "text": dm})
+        except Exception as e:
+            logger.info(f"Couldn't remember the approval DM for {title}: {e}")
 
 
 async def _notify_web_requester(services, message_id, approved: bool, detail: str = "") -> None:

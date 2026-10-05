@@ -1102,8 +1102,10 @@ class NewMediaAddedCog(commands.Cog):
                 reason = "requested_season_episode_1_available"
                 receipt_detail = detail or "Episode 1 available"
 
+            from portal.ticket_view import mark_arrived
             if not tracked_media.requester_user_id:
                 await self._notify_website_requester(tracked_media, dm_message, reason, receipt_detail)
+                await mark_arrived(self.bot, tracked_media.tmdb_id, plex_id=tracked_media.requester_plex_id)
                 return
 
             user = await self.bot.fetch_user(tracked_media.requester_user_id)
@@ -1111,6 +1113,8 @@ class NewMediaAddedCog(commands.Cog):
             await send_user_dm(self.bot, self.services, user, context=f"arrival of {tracked_media.title}",
                                content=dm_message, mirror=False)
             tracked_media.mark_requester_notified(reason)
+            # The approval DM's "Open a ticket" comes off now it's here.
+            await mark_arrived(self.bot, tracked_media.tmdb_id, user_id=tracked_media.requester_user_id)
 
             from core.media_tracking import get_media_tracker
             get_media_tracker().save_tracking_data()

@@ -543,6 +543,7 @@ class Data:
     async def request_row(self, key: str, rec: dict, open_help: Dict[str, dict], books: Dict[str, Any]) -> dict:
         """One request as members see it: its title, live stage and progress. Shared by
         My requests and the admins' All requests. `books` caches the shelf between rows."""
+        from portal import help as helpdesk
         media = rec.get("media") or {}
         is_book = rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media
         if is_book:
@@ -599,7 +600,9 @@ class Data:
         return {
             "id": key,
             "slot": rec["_slot"],
-            "help": {"id": open_help[key]["id"], "reason": open_help[key]["reason"]} if key in open_help else None,
+            # The open ticket on it, as its member sees it (no admins' notes), so they can answer.
+            "help": {"id": open_help[key]["id"], "reason": open_help[key]["reason"], **helpdesk.member_view(open_help[key])}
+            if key in open_help else None,
             "title": title,
             "stage": stage,
             "progress": {k: v for k, v in live.items() if k != "stage"} or None,
