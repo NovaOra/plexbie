@@ -3,7 +3,8 @@
 // small POST to /e on this site (cloudflare/worker.js), stored in Cloudflare D1 for the
 // maintainer's dashboard. No cookies and nothing kept on the device. Browsers that send
 // Global Privacy Control or Do Not Track aren't counted at all, and nothing is sent while
-// developing locally.
+// developing locally. The public demo (demo.plexbie.com, npm run build:demo) is counted
+// the same way, into the same place; household installs never include this file.
 
 type Event = "pageview" | "engage" | "click" | "outbound" | "channel" | "video";
 
@@ -11,12 +12,15 @@ const OFF = typeof navigator === "undefined" || import.meta.env.DEV
   || (navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true
   || navigator.doNotTrack === "1";
 
+/** plexbie.com's collector: on the site itself, or across from the demo. */
+const ENDPOINT = import.meta.env.VITE_DEMO === "1" ? "https://plexbie.com/e" : "/e";
+
 export function track(e: Event, fields: { l?: string; v?: number; r?: string; p?: string } = {}) {
   if (OFF) return;
   const body = JSON.stringify({ e, p: location.pathname, ...fields });
   // text/plain keeps the beacon a simple request; it's still JSON inside.
-  const sent = navigator.sendBeacon?.("/e", new Blob([body], { type: "text/plain" }));
-  if (!sent) void fetch("/e", { method: "POST", body, keepalive: true, headers: { "Content-Type": "text/plain" } }).catch(() => undefined);
+  const sent = navigator.sendBeacon?.(ENDPOINT, new Blob([body], { type: "text/plain" }));
+  if (!sent) void fetch(ENDPOINT, { method: "POST", body, keepalive: true, mode: "no-cors", credentials: "include", headers: { "Content-Type": "text/plain" } }).catch(() => undefined);
 }
 
 /** Where this visit came from: a campaign tag (?utm_source=…, ?ref=…) or another site. */

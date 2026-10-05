@@ -58,9 +58,14 @@ function Routed() {
   );
 }
 
+/** demo.plexbie.com only: its visits are counted like plexbie.com's. Never in a household build. */
+// Checked against the build setting itself, so the household build drops it entirely.
+const DemoCounted = import.meta.env.VITE_DEMO === "1" ? lazy(() => import("./DemoCounted")) : null;
+
 export default function App() {
   return (
     <BrowserRouter>
+      {DemoCounted && <Suspense fallback={null}><DemoCounted /></Suspense>}
       <Routed />
     </BrowserRouter>
   );

@@ -45,39 +45,41 @@ async function allowed(request, env) {
 const all = async (env, sql, ...args) => (await env.STATS.prepare(sql).bind(...args).all()).results;
 const one = async (env, sql, ...args) => (await env.STATS.prepare(sql).bind(...args).first()) || {};
 
-async function load(env, days) {
+async function load(env, days, site) {
   const since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
-  const W = "day >= ?";
+  // ?1 is the first day, ?2 the site (rows from before sites were recorded are plexbie.com's).
+  const W = "day >= ?1 AND COALESCE(site, 'plexbie.com') = ?2";
   const [totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, times] =
     await Promise.all([
       one(env, `SELECT SUM(CASE WHEN event='pageview' THEN 1 ELSE 0 END) AS views,
                        COUNT(DISTINCT CASE WHEN event='pageview' THEN day || visitor END) AS visitors,
                        SUM(CASE WHEN event='outbound' AND label LIKE 'github.com%' THEN 1 ELSE 0 END) AS github,
-                       SUM(CASE WHEN event='outbound' AND (label LIKE 'ko-fi.com%' OR label LIKE 'buymeacoffee.com%') THEN 1 ELSE 0 END) AS support
-                FROM events WHERE ${W}`, since),
-      one(env, `SELECT AVG(value) AS seconds, COUNT(*) AS n FROM events WHERE ${W} AND event='engage'`, since),
-      all(env, `SELECT CAST(value AS INTEGER) AS q, COUNT(*) AS n FROM events WHERE ${W} AND event='video' GROUP BY q ORDER BY q`, since),
+                       SUM(CASE WHEN event='outbound' AND (label LIKE 'ko-fi.com%' OR label LIKE 'buymeacoffee.com%') THEN 1 ELSE 0 END) AS support,
+                       SUM(CASE WHEN event='outbound' AND label LIKE 'demo.plexbie.com%' THEN 1 ELSE 0 END) AS demo
+                FROM events WHERE ${W}`, since, site),
+      one(env, `SELECT AVG(value) AS seconds, COUNT(*) AS n FROM events WHERE ${W} AND event='engage'`, since, site),
+      all(env, `SELECT CAST(value AS INTEGER) AS q, COUNT(*) AS n FROM events WHERE ${W} AND event='video' GROUP BY q ORDER BY q`, since, site),
       all(env, `SELECT day, SUM(event='pageview') AS views, COUNT(DISTINCT CASE WHEN event='pageview' THEN visitor END) AS visitors
-                FROM events WHERE ${W} GROUP BY day ORDER BY day`, since),
+                FROM events WHERE ${W} GROUP BY day ORDER BY day`, since, site),
       all(env, `SELECT COALESCE(referrer, 'Direct or unknown') AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='pageview' AND ts IN
-                (SELECT MIN(ts) FROM events WHERE ${W} AND event='pageview' GROUP BY day, visitor) GROUP BY k ORDER BY n DESC LIMIT 15`, since, since),
-      all(env, `SELECT COALESCE(country, '??') AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC LIMIT 15`, since),
-      all(env, `SELECT device AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since),
-      all(env, `SELECT browser AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since),
-      all(env, `SELECT os AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since),
-      all(env, `SELECT path AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC LIMIT 15`, since),
-      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='click' AND label <> '' GROUP BY k ORDER BY n DESC LIMIT 20`, since),
-      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='outbound' GROUP BY k ORDER BY n DESC LIMIT 20`, since),
-      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='channel' GROUP BY k ORDER BY n DESC`, since),
-      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='engage' GROUP BY k ORDER BY k`, since),
-      all(env, `SELECT ts, event, path, label, value, referrer, country, device, browser FROM events ORDER BY ts DESC LIMIT 40`),
-      all(env, `SELECT ts FROM events WHERE ${W} AND event='pageview' LIMIT 50000`, since),
+                (SELECT MIN(ts) FROM events WHERE ${W} AND event='pageview' GROUP BY day, visitor) GROUP BY k ORDER BY n DESC LIMIT 15`, since, site),
+      all(env, `SELECT COALESCE(country, '??') AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC LIMIT 15`, since, site),
+      all(env, `SELECT device AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since, site),
+      all(env, `SELECT browser AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since, site),
+      all(env, `SELECT os AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC`, since, site),
+      all(env, `SELECT path AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='pageview' GROUP BY k ORDER BY n DESC LIMIT 15`, since, site),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='click' AND label <> '' GROUP BY k ORDER BY n DESC LIMIT 20`, since, site),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='outbound' GROUP BY k ORDER BY n DESC LIMIT 20`, since, site),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='channel' GROUP BY k ORDER BY n DESC`, since, site),
+      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='engage' GROUP BY k ORDER BY k`, since, site),
+      all(env, `SELECT ts, event, path, label, value, referrer, country, device, browser FROM events WHERE COALESCE(site, 'plexbie.com') = ?1 ORDER BY ts DESC LIMIT 40`, site),
+      all(env, `SELECT ts FROM events WHERE ${W} AND event='pageview' LIMIT 50000`, since, site),
     ]);
   const hours = Array(24).fill(0);
   const hourOf = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", hourCycle: "h23" });
   for (const r of times) hours[Number(hourOf.format(r.ts)) % 24]++;
   const github = await loadGithub(env, since);
-  return { since, totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, hours, github };
+  return { site, since, totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, hours, github };
 }
 
 // ---- GitHub --------------------------------------------------------------------------
@@ -343,7 +345,12 @@ function page(d, days) {
   const done = (d.video.find((r) => r.q === 100) || {}).n || 0;
   const secs = Math.round(d.engage.seconds || 0);
   const scrollRows = d.scroll.map((r) => ({ k: r.k?.replace("scroll:", "") + "%", n: r.n }));
-  const nav = Object.entries(RANGES).map(([n, label]) => `<a href="?days=${n}"${Number(n) === days ? ' aria-current="page"' : ""}>${label}</a>`).join("");
+  const demo = d.site === "demo";
+  const q = (n, s) => `?days=${n}${s === "demo" ? "&amp;site=demo" : ""}`;
+  const nav = Object.entries(RANGES).map(([n, label]) => `<a href="${q(n, d.site)}"${Number(n) === days ? ' aria-current="page"' : ""}>${label}</a>`).join("");
+  const siteNav = [["plexbie.com", "plexbie.com"], ["demo", "Demo"]].map(([s, label]) =>
+    `<a href="${q(days, s)}"${s === d.site ? ' aria-current="page"' : ""}>${label}</a>`).join("");
+  const name = demo ? "demo.plexbie.com" : "plexbie.com";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow"><meta name="color-scheme" content="dark"><title>Plexbie stats</title>
 <link rel="icon" href="https://plexbie.com/brand/plexbie-96.png">
@@ -351,6 +358,7 @@ function page(d, days) {
 :root { --field:#10172b; --panel:#18213a; --rule:#2d385b; --ink:#f7f1f6; --muted:#aeb8d8; --screen:#ffd1e4; --tally:#ff5c93; }
 * { box-sizing: border-box; } body { margin:0; background:var(--field); color:var(--ink); font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 16px; }
+.navs { display:flex; flex-wrap:wrap; gap:6px 18px; }
 header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
 h1 { margin:0; font-size:1.6rem; letter-spacing:-0.01em; display:flex; align-items:center; gap:10px; } h1 img { border-radius:7px; }
 nav { display:flex; flex-wrap:wrap; gap:6px; } nav a { color:var(--muted); text-decoration:none; padding:8px 12px; border-radius:999px; border:1px solid var(--rule); min-height:40px; display:inline-flex; align-items:center; }
@@ -379,13 +387,15 @@ footer, .small { color:var(--muted); font-size:.82rem; }
 button { font:inherit; color:var(--ink); background:transparent; border:1px solid var(--rule); border-radius:999px; padding:6px 14px; min-height:36px; cursor:pointer; }
 button:hover { border-color:var(--screen); } code { color:var(--screen); }
 </style></head><body><main>
-<header><h1><img src="https://plexbie.com/brand/plexbie-64.png" alt="" width="34" height="34"> Plexbie stats</h1><nav aria-label="Range">${nav}</nav></header>
-<div class="section"><h2>plexbie.com</h2><p class="muted">This browser isn't counted on plexbie.com, and neither is home.</p><a href="#github">GitHub numbers ↓</a></div>
+<header><h1><img src="https://plexbie.com/brand/plexbie-64.png" alt="" width="34" height="34"> Plexbie stats</h1>
+  <div class="navs"><nav aria-label="Site">${siteNav}</nav><nav aria-label="Range">${nav}</nav></div></header>
+<div class="section"><h2>${name}</h2><p class="muted">This browser isn't counted on plexbie.com or the demo, and neither is home.</p><a href="#github">GitHub numbers ↓</a></div>
 <div class="tiles">
   ${tile("Visitors", num(t.visitors), "one per person per day")}
   ${tile("Page views", num(t.views))}
   ${tile("Time on a page", secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`, "average, while on screen")}
-  ${tile("Tour plays", num(plays), plays ? `${Math.round((done / plays) * 100)}% watched to the end` : "")}
+  ${demo ? "" : tile("Tour plays", num(plays), plays ? `${Math.round((done / plays) * 100)}% watched to the end` : "")}
+  ${demo ? "" : tile("Went to the demo", num(t.demo), "from plexbie.com")}
   ${tile("GitHub clicks", num(t.github))}
   ${tile("Support clicks", num(t.support), "Ko-fi and Buy Me a Coffee")}
 </div>
@@ -394,8 +404,8 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
   ${ranked("Came from", d.sources)}
   ${ranked("Countries", d.countries, country)}
   ${ranked("Pages", d.pages)}
-  ${funnel(d.video)}
-  ${ranked("TV channels picked", d.channels)}
+  ${demo ? "" : funnel(d.video)}
+  ${demo ? "" : ranked("TV channels picked", d.channels)}
   ${ranked("Links to other sites", d.outbound)}
   ${ranked("Buttons and links on the page", d.clicks)}
   ${ranked("How far down they read", scrollRows)}
@@ -406,7 +416,7 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
   ${recentTable(d.recent)}
 </div>
 ${githubSection(d.github, d.since, days)}
-<footer>plexbie.com's own counts: no cookies, no IP addresses kept, and browsers sending Do Not Track or Global Privacy Control aren't counted. Visitors are counted once per day each. Raw events are kept about 13 months.</footer>
+<footer>plexbie.com's and the demo's own counts: no cookies, no IP addresses kept, and browsers sending Do Not Track or Global Privacy Control aren't counted. Visitors are counted once per day each. Raw events are kept about 13 months.</footer>
 </main></body></html>`;
 }
 
@@ -433,7 +443,8 @@ export default {
     }
     const asked = url.searchParams.get("days");
     const days = asked && Object.hasOwn(RANGES, asked) ? Number(asked) : 30;
-    const data = await load(env, days);
+    const site = url.searchParams.get("site") === "demo" ? "demo" : "plexbie.com";
+    const data = await load(env, days, site);
     if (url.pathname === "/stats/data.json") return Response.json(data, { headers: { "Cache-Control": "no-store", "Set-Cookie": ME_COOKIE } });
     return new Response(page(data, days), { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Set-Cookie": ME_COOKIE,
       "X-Robots-Tag": "noindex", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src https://plexbie.com; form-action 'self'; frame-ancestors 'none'" } });

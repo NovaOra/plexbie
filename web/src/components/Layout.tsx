@@ -205,8 +205,9 @@ export function Layout({ children }: { children?: ReactNode }) {
 
       <footer className="shell footer">
         <nav className="footer__links" aria-label="Site information">
-          <Link to="/privacy">Privacy</Link>
-          <Link to="/terms">Terms</Link>
+          {/* The demo's pages belong to the Plexbie project, not to a household. */}
+          {DEMO ? <a href="https://plexbie.com/privacy">Privacy</a> : <Link to="/privacy">Privacy</Link>}
+          {DEMO ? <a href="https://plexbie.com/terms">Terms</a> : <Link to="/terms">Terms</Link>}
           {SITE.contact ? <a href={`mailto:${SITE.contact}`}>{SITE.contact}</a> : null}
         </nav>
         <p className="footer__powered">

@@ -43,6 +43,10 @@ export function ProjectPrivacy() {
           how long a page is on screen and how far down it’s read.
         </li>
         <li>
+          <b>The demo too.</b> The demo at demo.plexbie.com is counted the same way, with the same limits below. It’s a
+          pretend household: nothing you do there is sent anywhere else or kept, apart from these counts.
+        </li>
+        <li>
           <b>No IP address is kept.</b> To count each visitor once a day, your IP address and browser are combined with
           the date and a secret, and turned into a number that can’t be turned back and changes every day. The address
           itself is never stored, and you can’t be followed from one day to the next.

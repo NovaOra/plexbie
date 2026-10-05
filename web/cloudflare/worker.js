@@ -24,6 +24,9 @@ const REDIRECT = [/^\/app(\/|$)/, /^\/invite(\/|$)/, /^\/auth\//, /^\/setup(\/|$
 // addresses in the EXCLUDE_IPS secret (comma-separated IPs, or IPv4 ranges like
 // 203.0.113.0/24), for devices at home that never open it.
 
+/** Where an event may come from: this site, or the public demo (demo.plexbie.com), which
+ *  sends its own visits here. Each is stored with its site, so the dashboard can tell them apart. */
+const SITES = { "https://plexbie.com": "plexbie.com", "https://www.plexbie.com": "plexbie.com", "https://demo.plexbie.com": "demo" };
 const EVENTS = new Set(["pageview", "engage", "click", "outbound", "channel", "video"]);
 const BOTS = /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|monitor|curl|wget|python|go-http|java\//i;
 const clip = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
@@ -93,7 +96,8 @@ async function record(request, text, env) {
   // Not counted: no salt (the visitor number could then be turned back into an address),
   // other sites, bots and blank browsers, oversized bodies, anyone asking not to be, and
   // the maintainer.
-  if (!env.STATS || !env.STATS_SALT || !/^https:\/\/(www\.)?plexbie\.com$/.test(origin) || !ua || BOTS.test(ua)
+  const site = Object.hasOwn(SITES, origin) ? SITES[origin] : null;
+  if (!env.STATS || !env.STATS_SALT || !site || !ua || BOTS.test(ua)
       || text.length > 2048 || request.headers.get("Sec-GPC") === "1" || request.headers.get("DNT") === "1"
       || isMaintainer(request, env)) return;
   let e;
@@ -104,11 +108,11 @@ async function record(request, text, env) {
   const day = new Date(now).toISOString().slice(0, 10);
   const ip = request.headers.get("CF-Connecting-IP") || "";
   const { browser, os, device } = agent(ua);
-  await env.STATS.prepare(`INSERT INTO events (ts, day, event, path, label, value, referrer, country, region, browser, os, device, visitor)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
+  await env.STATS.prepare(`INSERT INTO events (ts, day, event, path, label, value, referrer, country, region, browser, os, device, visitor, site)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
     now, day, e.e, clip(e.p, 200), clip(e.l, 120), Number.isFinite(value) && value >= 0 && value <= 86400 ? value : null,
     clip(e.r, 120), request.cf?.country || null, clip(request.cf?.region, 60), browser, os, device,
-    await visitorOf(day, env.STATS_SALT, ip, ua),
+    await visitorOf(day, env.STATS_SALT, ip, ua), site,
   ).run();
 }
 
