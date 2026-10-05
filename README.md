@@ -286,10 +286,11 @@ Plexbie publishes a ready-made image (`ghcr.io/novaora/plexbie`) and an Unraid t
 ([NovaOra/unraid-templates](https://github.com/NovaOra/unraid-templates)).
 There's nothing to edit by hand:
 
-1. In Unraid, **Docker → Template repositories**, add
-   `https://github.com/NovaOra/unraid-templates` and save. (Once Plexbie is listed in
-   Community Applications, search "Plexbie" in **Apps** instead.)
-2. **Add Container → Plexbie**, keep the defaults and **Apply**.
+1. In Unraid's **Apps** tab, search **Plexbie** and press **Install**. (No Apps tab? Or
+   want the template before Community Applications has it? Open Unraid's terminal and run
+   `wget -O /boot/config/plugins/dockerMan/templates-user/my-Plexbie.xml https://raw.githubusercontent.com/NovaOra/unraid-templates/main/templates/plexbie.xml`,
+   then **Docker → Add Container** and pick **Plexbie** under **Template**.)
+2. Keep the defaults and **Apply**.
 3. Press **WebUI** (or open `http://<your server>:7979`). The page first asks for the
    **setup code** Plexbie printed in its log (click Plexbie's icon on the Docker tab →
    **Logs**, the line starting `Setup code:`), so only you can set it up. Then it walks
