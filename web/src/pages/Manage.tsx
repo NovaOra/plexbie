@@ -1638,20 +1638,32 @@ function MessagesTab() {
 
 /* ========================================================= all requests */
 
-type Show = "progress" | "stuck" | "finished" | "everything";
+type Show = "progress" | "stuck" | "waiting" | "finished" | "declined" | "everything";
 const SHOW: { id: Show; label: string }[] = [
-  { id: "progress", label: "In progress" }, { id: "stuck", label: "Looks stuck" },
-  { id: "finished", label: "Finished (30 days)" }, { id: "everything", label: "Everything" },
+  { id: "everything", label: "Every request" }, { id: "progress", label: "On its way" }, { id: "stuck", label: "Looks stuck" },
+  { id: "waiting", label: "Waiting for a decision" }, { id: "finished", label: "On Plex" }, { id: "declined", label: "Declined" },
 ];
+const ENDED = ["declined", "closed"];
+const showing = (show: Show, r: AdminRequestRow) =>
+  show === "progress" ? !["available", "requested", ...ENDED].includes(r.stage) : show === "stuck" ? r.stuck.length > 0
+    : show === "waiting" ? r.stage === "requested" : show === "finished" ? r.stage === "available" : show === "declined" ? ENDED.includes(r.stage) : true;
 
 /**
- * Every approved request from everyone, where it is now, and which look stuck. Without a
- * search it's what's on its way plus the last 30 days of finished; a search reaches any
- * request ever. A row opens the request in full, with the fixes and "Open a ticket".
+ * Every request from everyone (waiting, approved, declined, on Plex), where it is now, and
+ * which look stuck. It opens on the last 30 days (and anything still on its way); "Every
+ * request since No. 0001" loads the lot, and a search reaches any request ever. A row
+ * opens the request in full, with the fixes and "Open a ticket".
  */
 function AllRequestsTab() {
   const { data, failed } = useManage();
-  const [show, setShow] = useState<Show>(() => ((data.all?.counts?.stuck ?? 0) > 0 ? "stuck" : "progress"));
+  const [show, setShow] = useState<Show>(() => ((data.all?.counts?.stuck ?? 0) > 0 ? "stuck" : "everything"));
+  // Every request since No. 0001, loaded when asked for (the list opens on the last 30 days).
+  const [history, setHistory] = useState<AdminAllRequests | null>(null);
+  const [loadingAll, setLoadingAll] = useState(false);
+  const loadAll = () => {
+    setLoadingAll(true);
+    void api.adminAll("", true).then((h) => { setHistory(h); setShow("everything"); }).catch(() => undefined).finally(() => setLoadingAll(false));
+  };
   const [q, setQ] = useState("");
   const [found, setFound] = useState<AdminAllRequests | null>(null);
   const [searching, setSearching] = useState(false);
@@ -1668,17 +1680,22 @@ function AllRequestsTab() {
   }, [words]);
   const typed = (value: string) => { setQ(value); setSearching(!!value.trim()); };
 
-  const all = data.all;
-  if (!all) return failed.all ? null : <p className="muted">Loading…</p>;
+  const recent = data.all;
+  if (!recent) return failed.all ? null : <p className="muted">Loading…</p>;
+  const all = history ?? recent;
   const counts = all.counts ?? { active: 0, stuck: 0, finished: 0 };
+  const count = (id: Show) => id === "progress" ? counts.active : id === "stuck" ? counts.stuck : id === "waiting" ? counts.waiting ?? 0
+    : id === "finished" ? counts.finished : id === "declined" ? counts.declined ?? 0 : all.rows.length;
   const results = words ? found : null;
-  const shown = results ? results.rows : words ? [] : all.rows.filter((r) =>
-    show === "progress" ? r.stage !== "available" : show === "stuck" ? r.stuck.length > 0 : show === "finished" ? r.stage === "available" : true);
+  const shown = results ? results.rows : words ? [] : all.rows.filter((r) => showing(show, r));
 
   return (
     <section className="section m-all">
       <h2>All requests</h2>
-      <p className="muted m-all__lede">Everyone’s approved requests and where each one is now. Open one to see it in full, search again, or open a ticket.</p>
+      <p className="muted m-all__lede">
+        Every request from everyone, waiting, approved or declined, and where each one is now. {history ? "Showing every request since No. 0001." : "Showing the last 30 days, and anything still on its way."}
+        {" "}Open one to see it in full, search again, or open a ticket.
+      </p>
       <div className="request-bar m-all__bar">
         <label className="finder__field m-all__search">
           <Search size={18} aria-hidden />
@@ -1688,10 +1705,7 @@ function AllRequestsTab() {
         </label>
         {!words ? (
           <select className="select" value={show} aria-label="Show" onChange={(e) => setShow(e.target.value as Show)}>
-            {SHOW.map((s) => {
-              const n = s.id === "progress" ? counts.active : s.id === "stuck" ? counts.stuck : s.id === "finished" ? counts.finished : all.rows.length;
-              return <option key={s.id} value={s.id}>{`${s.label} · ${n}`}</option>;
-            })}
+            {SHOW.map((s) => <option key={s.id} value={s.id}>{`${s.label} · ${count(s.id)}`}</option>)}
           </select>
         ) : null}
       </div>
@@ -1705,7 +1719,20 @@ function AllRequestsTab() {
           {shown.map((r) => <li key={r.id}><AllRequestRow r={r} onOpen={() => setOpen(r.id!)} /></li>)}
         </ul>
       ) : !words ? (
-        <p className="muted">{show === "stuck" ? "Nothing looks stuck right now." : show === "finished" ? "Nothing finished in the last 30 days." : "Nothing on its way right now."}</p>
+        <p className="muted">{show === "stuck" ? "Nothing looks stuck right now." : show === "finished" ? `Nothing reached Plex ${history ? "yet" : "in the last 30 days"}.`
+          : show === "waiting" ? "Nothing is waiting for a decision." : show === "declined" ? `Nothing declined${history ? "" : " in the last 30 days"}.`
+          : show === "progress" ? "Nothing on its way right now." : "No requests yet."}</p>
+      ) : null}
+      {!words ? (
+        <div className="m-all__more">
+          {history ? (
+            <button type="button" className="btn btn--quiet m-btn" onClick={() => setHistory(null)}>Back to the last 30 days</button>
+          ) : (
+            <button type="button" className="btn m-btn" disabled={loadingAll} onClick={loadAll}>
+              {loadingAll ? "Loading every request…" : `Every request since No. 0001${recent.total ? ` · ${recent.total}` : ""}`}
+            </button>
+          )}
+        </div>
       ) : null}
       {/* Outside the page, like every sheet: the page goes inert while it's open. */}
       {createPortal(<AnimatePresence>{open ? <RequestSheet key={open} id={open} onClose={() => setOpen(null)} /> : null}</AnimatePresence>, document.body)}
@@ -1779,7 +1806,8 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   };
 
   const openTicket = r?.tickets.find((t) => t.status === "open");
-  const video = r && ["tv", "movie"].includes(r.title.kind);
+  // Only an approved request can be searched for (not one waiting for a decision, or declined).
+  const video = r && ["tv", "movie"].includes(r.title.kind) && !["requested", ...ENDED].includes(r.stage);
   return (
     <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet"
       title={r ? <>{r.title.title}{seasonsLabel(r.seasons) ? <span className="muted"> · {seasonsLabel(r.seasons)}</span> : null}</> : "Request"}>

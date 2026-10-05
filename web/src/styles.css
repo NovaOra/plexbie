@@ -1722,6 +1722,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
   .m-inbox__empty { display: grid; place-items: center; }
   .m-chat__back { display: none; }
 }
+.m-all__more { display: flex; justify-content: center; margin-top: 16px; }
 .m-chat { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
 .m-chat__head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--rule); }
 .m-chat__head h3 { margin: 0; }

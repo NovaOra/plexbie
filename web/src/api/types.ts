@@ -336,9 +336,13 @@ export interface AdminRequestRow extends MediaRequest {
 }
 export interface AdminAllRequests {
   rows: AdminRequestRow[];
-  /** Without a search: how many are on their way, stuck, and finished (last 30 days). */
-  counts: { active: number; stuck: number; finished: number } | null;
+  /** Without a search: on their way, stuck, waiting for a decision, on Plex, declined (or closed). */
+  counts: { active: number; stuck: number; finished: number; waiting?: number; declined?: number } | null;
   query: string | null;
+  /** Every request since No. 0001, not just the last 30 days. */
+  everything?: boolean;
+  /** How many requests there have ever been. */
+  total?: number;
 }
 export interface AdminTicket {
   id: string; status: "open" | "resolved"; reason: string; note?: string; who?: string; opened_by?: string | null;

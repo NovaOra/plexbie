@@ -315,7 +315,7 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             from core import message_log
             return web.json_response(await message_log.people())
         if section == "all":
-            return web.json_response(await admin.all_requests(request.query.get("q", "")))
+            return web.json_response(await admin.all_requests(request.query.get("q", ""), everything=request.query.get("all") == "1"))
         if section == "tickets":
             return web.json_response(await admin.tickets())
         loaders = {"requests": admin.requests, "joins": admin.joins, "people": admin.people,

@@ -872,6 +872,8 @@ class Actions:
         from portal import help as helpdesk
         self.limit(user["user"]["id"], "admin")
         rec = await self._request_for_admin(key)
+        if rec.get("status") != "approved":
+            raise web.HTTPConflict(text='{"error":"Only an approved request can be searched for."}', content_type="application/json")
         title = (rec.get("media") or {}).get("title") or (rec.get("media") or {}).get("name") or "A request"
         actor = self.actor(user)
         ticket = (await helpdesk.open_for({str(key)})).get(str(key))

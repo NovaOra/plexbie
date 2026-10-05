@@ -73,6 +73,19 @@ async def _remember_stage(key: str, stage: str, percent: Any, before: Optional[d
     return mark
 
 
+#: Stages that are over without reaching Plex.
+ENDED = ("declined", "closed")
+
+
+def _all_counts(rows: List[dict]) -> dict:
+    """All requests' filters: on its way, looks stuck, waiting for a decision, on Plex, declined."""
+    return {"active": sum(r["stage"] not in ("available", "requested", *ENDED) for r in rows),
+            "stuck": sum(bool(r["stuck"]) for r in rows),
+            "waiting": sum(r["stage"] == "requested" for r in rows),
+            "finished": sum(r["stage"] == "available" for r in rows),
+            "declined": sum(r["stage"] in ENDED for r in rows)}
+
+
 def _ticket_row(hid: str, h: dict) -> dict:
     """A ticket on the Tickets list."""
     from portal import help as helpdesk
@@ -181,11 +194,13 @@ class Admin:
         return {"pending": pending, "older": older, "recent": decided}
 
     # ------------------------------------------------------ all requests
-    async def all_requests(self, q: str = "") -> dict:
-        """Manage → All requests: every approved request with its live stage, as the
-        person who asked sees it, plus who asked and whether it looks stuck. Without a
-        search: everything still on its way, and what reached Plex in the last 30 days.
-        With one: any request ever, by title, who asked or its number."""
+    async def all_requests(self, q: str = "", everything: bool = False) -> dict:
+        """Manage → All requests: every request from everyone (waiting, approved, declined,
+        on Plex) with its live stage as the person who asked sees it, plus who asked and
+        whether it looks stuck. Without a search: what was asked for in the last 30 days,
+        what's still on its way however old, and what reached Plex in the last 30 days.
+        With `everything`: every request since No. 0001. With a search: any request ever,
+        by title, who asked or its number."""
         from portal import help as helpdesk
         query = " ".join(str(q or "").lower().split())[:80]
         number = query.removeprefix("no.").removeprefix("#").strip().lstrip("0")
@@ -203,21 +218,25 @@ class Admin:
                 title = (media.get("title") or media.get("name") or "").lower()
                 if not (query in title or query in who.lower() or (number.isdigit() and number == str(rec["_slot"]))):
                     continue
-            elif rec.get("status") != "approved":
+            elif not everything and not (
+                    _within(rec.get("timestamp"), now, FINISHED_DAYS)            # asked for lately
+                    or _within(rec.get("available_at"), now, FINISHED_DAYS)      # reached Plex lately
+                    or (rec.get("status") == "approved" and not rec.get("available_at"))  # maybe still on its way
+                    or str(key) in open_help):
                 continue
             row = await self._admin_row(key, rec, who, open_help, seen, books, now)
-            if not query and row["stage"] == "available" and not _within(row.get("finishedAt"), now, FINISHED_DAYS):
-                continue
+            if not query and not everything and row["stage"] in ("available", "declined", "closed") \
+                    and not _within(rec.get("timestamp"), now, FINISHED_DAYS) \
+                    and not _within(rec.get("available_at"), now, FINISHED_DAYS) and not row["stuck"]:
+                continue                       # an old approved request that turned out to be finished (or over)
             rows.append(row)
         if query:
             rows.sort(key=lambda r: r["slot"], reverse=True)
             rows = rows[:SEARCH_LIMIT]
         else:
-            rows.sort(key=lambda r: (r["stage"] == "available", not r["stuck"],
-                                     -(_ts(r.get("finishedAt")) if r["stage"] == "available" else r["slot"])))
-        counts = {"active": sum(r["stage"] != "available" for r in rows), "stuck": sum(bool(r["stuck"]) for r in rows),
-                  "finished": sum(r["stage"] == "available" for r in rows)}
-        return {"rows": rows, "counts": counts if not query else None, "query": query or None}
+            rows.sort(key=lambda r: (not r["stuck"], -r["slot"]))
+        return {"rows": rows, "counts": None if query else _all_counts(rows), "query": query or None,
+                "everything": bool(everything and not query), "total": len(records)}
 
     async def request_detail(self, key: str) -> Optional[dict]:
         """One request in full for an admin: the row, where it came from, and every ticket on it."""

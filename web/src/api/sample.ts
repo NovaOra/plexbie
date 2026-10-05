@@ -420,7 +420,8 @@ export const helpResolve = (id: string) => {
 
 type Row = import("./types").AdminRequestRow;
 const simpsons: Title = { kind: "tv", id: "456", title: "The Simpsons", year: "1989", poster: null, availability: "requested" };
-/** Everyone's requests as an admin sees them: two stuck, some on their way, one finished. */
+/** Everyone's requests as an admin sees them: two stuck, some on their way, one finished,
+ *  one waiting for a decision and one declined. */
 const everyone: Row[] = [
   { id: "6001", slot: 212, title: simpsons, stage: "downloading", seasons: [2], requester: "Jordan Lee", status: "approved",
     progress: { percent: 0, detail: "Season pack, 22 episodes" }, help: { id: "h1", reason: "Stuck downloading" },
@@ -445,16 +446,25 @@ const everyone: Row[] = [
   { id: "4990", slot: 197, title: byTitle("The Wild Robot"), stage: "available", requester: "Alex Kim", status: "approved",
     requestedAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 4), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 6),
     stageSince: ago(60 * 24 * 4), finishedAt: ago(60 * 24 * 4), stuck: [] },
+  { id: "7001", slot: 216, title: byTitle("Dune: Part Two"), stage: "requested", requester: "Alex Kim", status: "pending",
+    progress: { detail: "Waiting for an admin to approve it" }, requestedAt: ago(90), updatedAt: ago(90), stuck: [] },
+  { id: "4980", slot: 199, title: byTitle("Past Lives"), stage: "declined", requester: "Marcus T.", status: "declined",
+    note: "Already on Plex in 4K", requestedAt: ago(60 * 24 * 9), updatedAt: ago(60 * 24 * 9), stuck: [] },
 ];
 /** Older ones, only found by searching (like anything over 30 days done). */
 const archive: Row[] = [
   { id: "4100", slot: 120, title: byTitle("Slow Horses"), stage: "available", seasons: [3], requester: "Marcus T.", status: "approved",
     requestedAt: ago(60 * 24 * 70), updatedAt: ago(60 * 24 * 66), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 70),
     stageSince: ago(60 * 24 * 66), finishedAt: ago(60 * 24 * 66), stuck: [] },
+  { id: "4020", slot: 64, title: byTitle("Andor"), stage: "available", seasons: [1], requester: "Priya N.", status: "approved",
+    requestedAt: ago(60 * 24 * 200), updatedAt: ago(60 * 24 * 198), approvedBy: "Sam Rivera", approvedAt: ago(60 * 24 * 200),
+    stageSince: ago(60 * 24 * 198), finishedAt: ago(60 * 24 * 198), stuck: [] },
+  { id: "4001", slot: 1, title: byTitle("The Hobbit"), stage: "declined", requester: "Jordan Lee", status: "declined",
+    requestedAt: ago(60 * 24 * 400), updatedAt: ago(60 * 24 * 400), stuck: [] },
 ];
 const activity: Record<string, { at: string; by: string; did: string }[]> = {};
 
-function allRequests(q: string) {
+function allRequests(q: string, everything = false) {
   const query = q.trim().toLowerCase().replace(/^(no\.|#)\s*/, "").replace(/^0+/, "");
   const open = new Set(helps.filter((h) => h.status === "open").map((h) => h.request));
   const live = everyone.map((r) => (r.help && !open.has(r.id!) ? { ...r, help: null, stuck: r.stuck.filter((s) => !s.startsWith("Help asked")) } : r));
@@ -463,11 +473,13 @@ function allRequests(q: string) {
     const found = [...live, ...archive].filter((r) => words(r).includes(query) || String(r.slot) === query).sort((a, b) => b.slot - a.slot);
     return { rows: found, counts: null, query };
   }
-  const rows = [...live].sort((a, b) => Number(a.stage === "available") - Number(b.stage === "available") || Number(!a.stuck.length) - Number(!b.stuck.length) || b.slot - a.slot);
-  return { rows, counts: { active: rows.filter((r) => r.stage !== "available").length, stuck: rows.filter((r) => r.stuck.length).length,
-    finished: rows.filter((r) => r.stage === "available").length }, query: null };
+  const ended = (r: Row) => r.stage === "declined" || r.stage === "closed";
+  const rows = [...live, ...(everything ? archive : [])].sort((a, b) => Number(!a.stuck.length) - Number(!b.stuck.length) || b.slot - a.slot);
+  return { rows, counts: { active: rows.filter((r) => !["available", "requested"].includes(r.stage) && !ended(r)).length, stuck: rows.filter((r) => r.stuck.length).length,
+    waiting: rows.filter((r) => r.stage === "requested").length, finished: rows.filter((r) => r.stage === "available").length,
+    declined: rows.filter(ended).length }, query: null, everything, total: everyone.length + archive.length };
 }
-export const adminAll = (q: string) => wait(allRequests(q), 300);
+export const adminAll = (q: string, everything = false) => wait(allRequests(q, everything), 300);
 export const adminRequest = (key: string) => {
   const r = [...allRequests("").rows, ...archive].find((x) => x.id === key) ?? everyone[0];
   const tickets = helps.filter((h) => h.request === key).map((h) => ({ ...h }));

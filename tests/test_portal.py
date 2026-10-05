@@ -930,32 +930,39 @@ def test_all_requests_shows_everyones_live_stage_and_says_what_looks_stuck():
             await save_request(key, user_id=uid, media={"id": mid, "media_type": "movie", "title": title})
             await mark_resolved(key, "approved", "Sam")
         await set_fields(101, resolved_at=ago(hours=30))          # approved over a day ago, still searching
-        await set_fields(103, available_at=ago(days=40))          # finished too long ago to list
+        await set_fields(103, timestamp=ago(days=60), available_at=ago(days=40))   # asked and finished too long ago to list
         await set_fields(104, available_at=ago(days=3))
         await kv_set(STAGE_NAMESPACE, "105", {"stage": "downloading", "since": ago(hours=9), "percent": 12, "moved": ago(hours=7)})
-        await save_request(107, user_id=7, media={"id": 2, "media_type": "movie", "title": "Still Waiting"})   # pending: not here
+        await save_request(107, user_id=7, media={"id": 2, "media_type": "movie", "title": "Still Waiting"})   # waiting: listed too
         await save_request(108, user_id=7, media={"id": 2, "media_type": "movie", "title": "Said No"})
         await mark_resolved(108, "declined", "Sam")
+        await save_request(109, user_id=8, media={"id": 2, "media_type": "movie", "title": "Old No"})
+        await mark_resolved(109, "declined", "Sam")
+        await set_fields(109, timestamp=ago(days=90))             # declined long ago: only with "everything"
         admin = Admin(data)
         listed = await admin.all_requests()
+        every = await admin.all_requests(everything=True)
         found_old = await admin.all_requests("long done")
         found_number = await admin.all_requests("#4")   # Just Done is the 4th request
         detail = await admin.request_detail("102")
-        return listed, found_old, found_number, detail
+        return listed, every, found_old, found_number, detail
 
-    listed, found_old, found_number, detail = asyncio.run(scenario())
+    listed, every, found_old, found_number, detail = asyncio.run(scenario())
     rows = {r["title"]["title"]: r for r in listed["rows"]}
-    assert set(rows) == {"Searching Forever", "Coming Along", "Just Done", "Frozen Download", "Failed One"}
+    assert set(rows) == {"Searching Forever", "Coming Along", "Just Done", "Frozen Download", "Failed One", "Still Waiting", "Said No"}
+    assert rows["Still Waiting"]["stage"] == "requested" and rows["Said No"]["stage"] == "declined"
+    assert {r["title"]["title"] for r in every["rows"]} == set(rows) | {"Long Done", "Old No"} and every["everything"]
+    assert listed["total"] == 9 and not listed["everything"]
     assert rows["Searching Forever"]["stuck"] == ["Nothing found for over a day"]
     assert rows["Frozen Download"]["stuck"] == ["Download hasn't moved in 6 hours"]
     assert rows["Failed One"]["stuck"] == ["The download failed. Ask an admin in Discord."]
     assert rows["Coming Along"]["stuck"] == [] and rows["Coming Along"]["progress"]["percent"] == 40
     assert rows["Just Done"]["stage"] == "available" and rows["Just Done"]["finishedAt"]
     assert rows["Coming Along"]["approvedBy"] == "Sam" and rows["Coming Along"]["requester"]
-    assert listed["counts"] == {"active": 4, "stuck": 3, "finished": 1}
-    # stuck ones first, finished last
+    assert listed["counts"] == {"active": 4, "stuck": 3, "waiting": 1, "finished": 1, "declined": 1}
+    # stuck ones first, then newest first
     order = [r["title"]["title"] for r in listed["rows"]]
-    assert order[-1] == "Just Done" and set(order[:3]) == {"Searching Forever", "Frozen Download", "Failed One"}
+    assert set(order[:3]) == {"Searching Forever", "Frozen Download", "Failed One"} and order[3:] == ["Said No", "Still Waiting", "Just Done", "Coming Along"]
     # a search reaches anything, however old, and by number
     assert [r["title"]["title"] for r in found_old["rows"]] == ["Long Done"] and found_old["counts"] is None
     assert [r["title"]["title"] for r in found_number["rows"]] == ["Just Done"]

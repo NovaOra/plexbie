@@ -146,8 +146,9 @@ export const api = {
     SAMPLE ? sample.wait({ ok: true, message: `Plex invite to ${email} cancelled.` }, 500) : post("/admin/plex-invites/cancel", { email }),
   plexInviteChange: (email: string, next: string): Promise<Ack> =>
     SAMPLE ? sample.wait({ ok: true, message: `Invite sent to ${next}.` }, 700) : post("/admin/plex-invites/change", { email, new: next }),
-  adminAll: (q: string): Promise<AdminAllRequests> =>
-    SAMPLE ? sample.adminAll(q) : call(`/admin/all?q=${enc(q)}`),
+  /** With `everything`, every request since No. 0001 rather than the last 30 days. */
+  adminAll: (q: string, everything = false): Promise<AdminAllRequests> =>
+    SAMPLE ? sample.adminAll(q, everything) : call(`/admin/all?q=${enc(q)}${everything ? "&all=1" : ""}`),
   adminRequest: (key: string): Promise<AdminRequestDetail> =>
     SAMPLE ? sample.adminRequest(key) : call(`/admin/request/${enc(key)}`),
   requestTicket: (key: string, note: string, tell: boolean, message = ""): Promise<Ack & { help: { id: string; reason: string } }> =>
