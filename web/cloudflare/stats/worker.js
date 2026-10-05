@@ -106,7 +106,10 @@ const short = (repo) => repo.split("/")[1];
 async function gh(env, path, accept = "application/vnd.github+json") {
   const res = await fetch(`https://api.github.com${path}`, { headers: {
     Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "plexbie-stats" } });
-  if (!res.ok) throw new Error(`${path.split("?")[0]} answered ${res.status}`);
+  if (!res.ok) {
+    const why = await res.json().then((b) => b?.message, () => null);
+    throw new Error(`${path.split("?")[0]} answered ${res.status}${why ? ` (${String(why).slice(0, 120)})` : ""}`);
+  }
   return res.json();
 }
 
@@ -135,31 +138,37 @@ async function collectGithub(env) {
   for (const repo of repos(env)) {
     try {
       const base = `/repos/${repo}`;
+      // Each part on its own: one GitHub refuses (the stargazer list is admins-only since
+      // July 2026) mustn't cost the rest. A refused part is reported and left out.
+      const part = (p, quiet403 = false) => p.catch((err) => {
+        if (!(quiet403 && / answered 403/.test(err.message))) problems.push(`${short(repo)}: ${err.message}`);
+        return null;
+      });
       const [info, views, clones, referrers, paths, releases, stars, forks] = await Promise.all([
-        gh(env, base), gh(env, `${base}/traffic/views?per=day`), gh(env, `${base}/traffic/clones?per=day`),
-        gh(env, `${base}/traffic/popular/referrers`), gh(env, `${base}/traffic/popular/paths`),
-        everyPage(env, `${base}/releases`), everyPage(env, `${base}/stargazers`, "application/vnd.github.star+json"),
-        everyPage(env, `${base}/forks?sort=newest`),
+        gh(env, base), part(gh(env, `${base}/traffic/views?per=day`)), part(gh(env, `${base}/traffic/clones?per=day`)),
+        part(gh(env, `${base}/traffic/popular/referrers`)), part(gh(env, `${base}/traffic/popular/paths`)),
+        part(everyPage(env, `${base}/releases`)), part(everyPage(env, `${base}/stargazers`, "application/vnd.github.star+json"), true),
+        part(everyPage(env, `${base}/forks?sort=newest`)),
       ]);
       writes.push(db.prepare(`INSERT INTO gh_repo (day, repo, stars, forks, watchers, issues) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT (day, repo) DO UPDATE SET stars = excluded.stars, forks = excluded.forks, watchers = excluded.watchers, issues = excluded.issues`)
         .bind(day, repo, info.stargazers_count, info.forks_count, info.subscribers_count, info.open_issues_count));
-      for (const v of views.views || []) {
+      for (const v of views?.views || []) {
         writes.push(db.prepare(`INSERT INTO gh_traffic (day, repo, views, view_uniques, clones, clone_uniques) VALUES (?, ?, ?, ?, 0, 0)
           ON CONFLICT (day, repo) DO UPDATE SET views = excluded.views, view_uniques = excluded.view_uniques`).bind(v.timestamp.slice(0, 10), repo, v.count, v.uniques));
       }
-      for (const c of clones.clones || []) {
+      for (const c of clones?.clones || []) {
         writes.push(db.prepare(`INSERT INTO gh_traffic (day, repo, views, view_uniques, clones, clone_uniques) VALUES (?, ?, 0, 0, ?, ?)
           ON CONFLICT (day, repo) DO UPDATE SET clones = excluded.clones, clone_uniques = excluded.clone_uniques`).bind(c.timestamp.slice(0, 10), repo, c.count, c.uniques));
       }
-      writes.push(db.prepare("DELETE FROM gh_popular WHERE day = ? AND repo = ?").bind(day, repo));
-      for (const r of referrers) writes.push(db.prepare("INSERT OR REPLACE INTO gh_popular VALUES (?, ?, 'referrer', ?, NULL, ?, ?)").bind(day, repo, r.referrer, r.count, r.uniques));
-      for (const p of paths) writes.push(db.prepare("INSERT OR REPLACE INTO gh_popular VALUES (?, ?, 'path', ?, ?, ?, ?)").bind(day, repo, p.path, p.title, p.count, p.uniques));
-      for (const rel of releases) for (const a of rel.assets || []) {
+      if (referrers && paths) writes.push(db.prepare("DELETE FROM gh_popular WHERE day = ? AND repo = ?").bind(day, repo));
+      for (const r of referrers || []) writes.push(db.prepare("INSERT OR REPLACE INTO gh_popular VALUES (?, ?, 'referrer', ?, NULL, ?, ?)").bind(day, repo, r.referrer, r.count, r.uniques));
+      for (const p of paths || []) writes.push(db.prepare("INSERT OR REPLACE INTO gh_popular VALUES (?, ?, 'path', ?, ?, ?, ?)").bind(day, repo, p.path, p.title, p.count, p.uniques));
+      for (const rel of releases || []) for (const a of rel.assets || []) {
         writes.push(db.prepare("INSERT OR REPLACE INTO gh_downloads VALUES (?, ?, ?, ?, ?)").bind(day, repo, rel.tag_name, a.name, a.download_count));
       }
-      for (const st of stars) if (st.user) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'star', ?, ?)").bind(repo, st.user.login, st.starred_at));
-      for (const f of forks) if (f.owner) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'fork', ?, ?)").bind(repo, f.owner.login, f.created_at));
+      for (const st of stars || []) if (st.user) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'star', ?, ?)").bind(repo, st.user.login, st.starred_at));
+      for (const f of forks || []) if (f.owner) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'fork', ?, ?)").bind(repo, f.owner.login, f.created_at));
     } catch (err) {
       problems.push(`${short(repo)}: ${err.message}`);
     }
@@ -304,7 +313,8 @@ function githubSection(g, since, days) {
   const day = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", year: "numeric" });
   const people = `<section class="card"><h2>Newest stars and forks</h2><div class="scroll"><table><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${
     g.people.map((p) => `<tr><td>${e(day.format(Date.parse(p.at)))}</td><td><a href="https://github.com/${e(p.login)}">${e(p.login)}</a></td>
-      <td>${p.kind === "star" ? "Starred" : "Forked"} ${e(short(p.repo))}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">Nobody yet.</td></tr>`}</tbody></table></div></section>`;
+      <td>${p.kind === "star" ? "Starred" : "Forked"} ${e(short(p.repo))}</td></tr>`).join("") || `<tr><td colspan="3" class="muted">Nobody yet.</td></tr>`}</tbody></table></div>
+    <p class="muted small">Since July 2026 GitHub only lists who starred to a repo's admins, and may refuse it to a token; the star count above still counts them.</p></section>`;
   return `${head}
 <div class="tiles">
   ${tile("Stars", num(sum(g.now, "stars")), [plus(starsNew), perRepo].filter(Boolean).join(" · "))}
