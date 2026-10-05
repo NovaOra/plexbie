@@ -94,6 +94,7 @@ const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS gh_people (repo TEXT, kind TEXT, login TEXT, at TEXT, PRIMARY KEY (repo, kind, login))",
   "CREATE TABLE IF NOT EXISTS gh_account (day TEXT, login TEXT, followers INTEGER, public_repos INTEGER, PRIMARY KEY (day, login))",
   "CREATE TABLE IF NOT EXISTS gh_runs (ts INTEGER PRIMARY KEY, ok INTEGER, note TEXT)",
+  "CREATE TABLE IF NOT EXISTS gh_images (day TEXT, image TEXT, downloads INTEGER, PRIMARY KEY (day, image))",
 ];
 let schemaReady = false;
 async function ensure(env) {
@@ -124,6 +125,21 @@ async function everyPage(env, path, accept) {
     if (got.length < 100) break;
   }
   return rows;
+}
+
+/** A container image's total downloads (every pull: Unraid, docker run, Compose, updates,
+ *  CI). GitHub's API doesn't give it, but the package's public page shows the exact count. */
+async function imagePulls(owner, name) {
+  for (const kind of ["users", "orgs"]) {
+    const res = await fetch(`https://github.com/${kind}/${owner}/packages/container/package/${name}`, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; plexbie-stats)" } });
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`${name} package page answered ${res.status}`);
+    const found = /Total downloads<\/span>\s*<h3 title="(\d+)"/.exec(await res.text());
+    if (!found) throw new Error(`${name} package page has no download count any more`);
+    return Number(found[1]);
+  }
+  throw new Error(`${name} package page not found`);
 }
 
 /** One collection: today's snapshot of each repo, and GitHub's last 14 days of traffic. */
@@ -175,6 +191,14 @@ async function collectGithub(env) {
       problems.push(`${short(repo)}: ${err.message}`);
     }
   }
+  for (const image of (env.IMAGES || "").split(",").map((i) => i.trim()).filter((i) => /^[\w.-]+\/[\w.-]+$/.test(i))) {
+    try {
+      const [o, name] = image.split("/");
+      writes.push(db.prepare("INSERT OR REPLACE INTO gh_images VALUES (?, ?, ?)").bind(day, image, await imagePulls(o, name)));
+    } catch (err) {
+      problems.push(err.message);
+    }
+  }
   const owner = repos(env)[0]?.split("/")[0];
   if (owner) {
     try {
@@ -191,7 +215,7 @@ async function collectGithub(env) {
 async function loadGithub(env, since) {
   await ensure(env);
   const latestOf = (table) => `day = (SELECT MAX(day) FROM ${table} x WHERE x.repo = t.repo)`;
-  const [now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen] = await Promise.all([
+  const [now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen, pulls, pullsThen] = await Promise.all([
     all(env, `SELECT repo, stars, forks, watchers, issues FROM gh_repo t WHERE ${latestOf("gh_repo")}`),
     all(env, `SELECT repo, stars, forks FROM gh_repo t WHERE day = (SELECT MIN(day) FROM gh_repo x WHERE x.repo = t.repo AND day >= ?)`, since),
     all(env, `SELECT day, SUM(views) AS views, SUM(view_uniques) AS uniques, SUM(clones) AS clones FROM gh_traffic WHERE day >= ? GROUP BY day ORDER BY day`, since),
@@ -203,8 +227,10 @@ async function loadGithub(env, since) {
     one(env, "SELECT ts, ok, note FROM gh_runs ORDER BY ts DESC LIMIT 1"),
     one(env, "SELECT login, followers, public_repos FROM gh_account ORDER BY day DESC LIMIT 1"),
     one(env, "SELECT followers FROM gh_account WHERE day >= ? ORDER BY day LIMIT 1", since),
+    one(env, "SELECT SUM(downloads) AS n FROM gh_images t WHERE day = (SELECT MAX(day) FROM gh_images x WHERE x.image = t.image)"),
+    one(env, "SELECT SUM(downloads) AS n FROM gh_images t WHERE day = (SELECT MIN(day) FROM gh_images x WHERE x.image = t.image AND day >= ?)", since),
   ]);
-  return { now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen };
+  return { now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen, pulls, pullsThen };
 }
 
 // ---- page ----------------------------------------------------------------------------
@@ -326,6 +352,7 @@ function githubSection(g, since, days) {
   ${tile("Repo views", num(t.views), `${num(t.uniques)} unique a day, added up`)}
   ${tile("Clones", num(t.clones), "GitHub Actions' own checkouts count too")}
   ${tile("Release downloads", num(downloads), [appFiles.length ? `APK ${kind(".apk")} · IPA ${kind(".ipa")}` : "", plus(downloads - (g.dlThen.n ?? downloads))].filter(Boolean).join(" · "))}
+  ${g.pulls.n == null ? "" : tile("Image pulls", num(g.pulls.n), ["every install and update, Unraid and docker alike", plus(g.pulls.n - (g.pullsThen.n ?? g.pulls.n))].filter(Boolean).join(" · "))}
   ${tile("Open issues and PRs", num(sum(g.now, "issues")))}
 </div>
 <div class="grid">

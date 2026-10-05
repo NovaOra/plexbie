@@ -12,7 +12,7 @@
   "routes": [{ "pattern": "home.plexbie.com/stats*", "zone_name": "plexbie.com" }],
   "d1_databases": [{ "binding": "STATS", "database_name": "plexbie-stats", "database_id": "6119b409-4f85-4450-aff9-eee46eda0f36" }],
   "vars": { "TEAM": "https://novaora.cloudflareaccess.com", "AUD": "9d706740af3a36e73734a87f063b642d0c38d1bd11c25d49add2d0b101296df9",
-    "REPOS": "NovaOra/plexbie,NovaOra/plexbie-app" },
+    "REPOS": "NovaOra/plexbie,NovaOra/plexbie-app", "IMAGES": "NovaOra/plexbie" },
   // GitHub's numbers, every three hours. Needs the GITHUB_TOKEN secret (see worker.js).
   "triggers": { "crons": ["41 */3 * * *"] }
 }
