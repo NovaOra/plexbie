@@ -11,8 +11,8 @@ const MEDIA = "https://media.plexbie.com/video";
 
 export type Film = "teaser" | "tour";
 export const FILMS: Record<Film, { channel: string; name: string; file: string; length: string }> = {
-  // 16:9 for now, letterboxed on the TV; becomes "plexbie-teaser-4x3" once that cut is on R2.
-  teaser: { channel: "Teaser", name: "The Plexbie teaser", file: "plexbie-teaser", length: "1:13" },
+  // The 4:3 cut, made for the TV's screen (plexbie-trailer's 4:3 teaser).
+  teaser: { channel: "Teaser", name: "The Plexbie teaser", file: "plexbie-teaser-4x3", length: "1:13" },
   // The 4:3 cut, made for the TV's screen (plexbie-trailer's Trailer43 composition).
   tour: { channel: "Full tour", name: "The three-minute tour of Plexbie", file: "plexbie-tour-4x3", length: "3:02" },
 };
