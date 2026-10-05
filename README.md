@@ -99,8 +99,12 @@ The bot serves its own website from the same container, on port 7979 out of the 
 - **Requests that tell you what’s happening:** live SABnzbd progress, an *Unpacking* step, and season-by-season
   status so people can ask for the seasons that are still missing.
 - **Trending right now:** the top 15 films and shows this week, with *On Plex* on anything you already have.
-- **Something wrong? Ask for help:** a member flags a stuck request and the admins get the details, plus
-  *Search again* and *Resolve*, on Discord and the website.
+- **Something wrong? Open a ticket:** a member flags a stuck request on the website, in the app, or with the
+  button on Plexbie's approval DM. Admins work it on Manage → Tickets: take it, add notes only admins see,
+  reply (the member answers from Discord, the website or the app), search again, and solve it.
+- **Plexbie's DMs, shared by the admins:** a DM to Plexbie alerts the admins, lands on Manage → Messages and
+  in its own thread under the admin channel. Answer as Plexbie, signed with your name, from the website, the
+  app or Discord.
 - **No Discord? No problem:** invite links, Sign in with Plex, and phone alerts (or email) for everything Discord
   members are DMed, including the heads-up before an account would lapse.
 - **Phone first:** installable, tactile (swipe to approve, hold to confirm), and checked for accessibility.
@@ -569,7 +573,7 @@ After you pick your server on the setup page, one button sets it up:
 - A **Plexbie** category with these channels:
   - **#new-on-plex**: read-only arrivals, with a "🔔 Ping me for new arrivals" button.
   - **#plex-stats**: read-only, with the three stats boards.
-  - **#plexbie-admin**: private, for join requests, approvals, help requests and health alerts.
+  - **#plexbie-admin**: private, for join requests, approvals, tickets, DM threads and health alerts.
   - A **Watch Party** voice channel.
 - The **Plexbie Admin**, **Plex Member** and **New on Plex** roles.
 
@@ -589,7 +593,7 @@ route a secret and opens the listener to your network (`WEBHOOK_BIND=0.0.0.0`).
   - Requests made in Seerr's own site or app become Plexbie requests, with live progress,
     the help button and arrival DMs.
   - Decisions made there reach the requester.
-  - A failed download opens a help request for the admins.
+  - A failed download opens a ticket for the admins.
 - **Tautulli:**
   - Now Watching updates the moment someone presses play.
   - The leaderboard and streaks refresh after a stop.
@@ -606,8 +610,8 @@ route a secret and opens the listener to your network (`WEBHOOK_BIND=0.0.0.0`).
 A season is searched as one release first. When nothing turns up, Plexbie searches the first two
 missing episodes on their own. If those are found, it searches the rest episode by episode;
 plenty of seasons only exist that way. If even single episodes turn up nothing, a "Can't be
-found" help request tells the admins. On the website, **Search episode by episode** on a TV help
-request skips straight to that.
+found" ticket tells the admins. On the website, **Search episode by episode** on a TV ticket
+skips straight to that.
 
 
 An `aiohttp` listener serves these routes:
