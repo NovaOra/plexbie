@@ -41,7 +41,8 @@ class StatusCog(commands.Cog):
 
         try:
             # Send the message to the specified channel
-            await channel.send(message)
+            # An administrator's own words: their pings work, as typed.
+            await channel.send(message, allowed_mentions=discord.AllowedMentions.all())
 
             # Confirm to the user (privately)
             await interaction.response.send_message(

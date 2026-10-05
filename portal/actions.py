@@ -830,12 +830,15 @@ class Actions:
         return {"ok": True, "message": "Sent. The admins have it."}
 
     async def _tell_admins_about_answer(self, h: dict, text: str) -> None:
+        import discord
         from core import notify
         number = f"No. {int(h['slot']):04d}" if h.get("slot") else "A request"
         channel = admin_channel(self.bot, self.config)
         if channel:
             try:
-                await channel.send(f"💬 **{h['who']}** answered on {number} ({h['title']}): {text[:300]}\n{self.ticket_link(h['id'])}")
+                # A member's words: never a ping, whatever the bot's defaults (and no link previews).
+                await channel.send(f"💬 **{discord.utils.escape_markdown(h['who'])}** answered on {number} ({h['title']}): {text[:300]}\n"
+                                   f"{self.ticket_link(h['id'])}", allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
             except Exception as e:
                 logger.warning(f"Could not post a ticket answer to the admin channel: {e}")
         if h.get("owner_discord_id") or h.get("owner_plex_id"):

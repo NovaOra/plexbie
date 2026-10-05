@@ -91,3 +91,13 @@ def test_what_people_send_plexbie_sits_in_the_same_conversation():
     assert (by["Alex"]["count"], by["Alex"]["received"]) == (1, 1) and by["Alex"]["last"]["direction"] == "in"
     assert [m["direction"] for m in alex] == ["out", "in"] and alex[1]["text"] == "4K is great\nAttached: shot.png"
     assert grandpa[0]["direction"] == "in" and grandpa[0]["channel"] == "web" and by["grandpa_j"]["received"] == 1
+
+
+def test_nothing_plexbie_posts_pings_unless_it_says_so():
+    """A member's ticket answer lands in the admin channel; '@everyone' in it mustn't ping."""
+    import inspect
+    import bot
+    from portal import actions
+    assert "allowed_mentions=discord.AllowedMentions.none()" in inspect.getsource(bot.Plexbie.__init__)
+    src = inspect.getsource(actions.Actions._tell_admins_about_answer)
+    assert "allowed_mentions=discord.AllowedMentions.none()" in src

@@ -42,7 +42,11 @@ class Plexbie(commands.Bot):
             # that text commands need the Message Content intent.
             command_prefix=commands.when_mentioned,
             intents=intents,
-            help_command=None
+            help_command=None,
+            # Nothing Plexbie posts pings anyone unless that send says so: text from members
+            # (a ticket answer in the admin channel) or from Plex, Seerr and TMDB can't
+            # @everyone or ping a role. /say, Manage's "say" and the arrivals role ping opt in.
+            allowed_mentions=discord.AllowedMentions.none(),
         )
         
         self.config = config
