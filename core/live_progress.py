@@ -1,0 +1,188 @@
+# path: core/live_progress.py
+"""Live progress in the Plexbie app (Android): while a request downloads, its requester's
+phone keeps one notification for it, with a progress bar that updates itself. On
+Android 16 it's also a Live Update (a chip in the status bar). The app draws it; this
+sends the updates, as silent data-only pushes, to phones that turned it on.
+
+Only what's actually moving is shown: a request appears once it's downloading (never
+while it's waiting for a release or a copy), and goes when it's on Plex. So nothing
+holds the notification bar:
+  - a download that hasn't moved for STALL is taken down (and comes back if it moves);
+  - each update tells the phone to drop it by itself after the app's timeout unless
+    another update comes, so a bot that goes quiet can't leave one behind.
+"""
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
+from core.logging import get_logger
+from database.kv_store import kv_delete_many, kv_get_all, kv_set_many
+
+logger = get_logger(__name__)
+
+NAMESPACE = "live_progress"
+#: The stages a live notification is up for.
+SHOWN = ("downloading", "unpacking", "importing")
+#: Stages that end a request's live notification for good.
+FINISHED = ("available", "declined", "closed")
+#: An update at least this often while it's up, so the phone's own timeout (the app's
+#: LIVE_TIMEOUT, 30 minutes) never takes down one that's still going.
+KEEPALIVE = timedelta(minutes=10)
+#: A smaller move than this (percent) waits for the keepalive.
+STEP = 5
+#: Not moved for this long: down, until it moves again.
+STALL = timedelta(hours=2)
+#: Requests older than this aren't followed.
+WATCH_DAYS = 60
+
+_shelf_cache: Dict[str, Any] = {}
+
+
+def _owner(rec: dict) -> Tuple[Optional[str], Optional[str]]:
+    uid = rec.get("user_id")
+    return (str(uid) if uid else None, str(rec["plex_account_id"]) if rec.get("plex_account_id") else None)
+
+
+def _title(rec: dict) -> str:
+    media = rec.get("media") or {}
+    title = media.get("title") or media.get("name") or "Your request"
+    seasons = rec.get("seasons")
+    if isinstance(seasons, list) and len(seasons) == 1:
+        return f"{title} · Season {seasons[0]}"
+    return title
+
+
+def _text(live: dict) -> str:
+    stage = live.get("stage")
+    if stage == "importing":
+        return "Downloaded. Adding it to Plex"
+    if stage == "unpacking":
+        return (live.get("detail") or "Unpacking").replace(" in SABnzbd", "")
+    pct = live.get("percent")
+    lead = f"Downloading, {pct}%" if isinstance(pct, int) else "Downloading"
+    return f"{lead}. {live['detail']}" if live.get("detail") else lead
+
+
+def _when(value: Any) -> Optional[datetime]:
+    try:
+        when = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+async def _live_apps() -> Dict[str, List[tuple]]:
+    """Phones with live progress on, by owner ("d<discord id>" / "p<plex account>")."""
+    from core import notify
+    out: Dict[str, List[tuple]] = {}
+    for k, r in (await kv_get_all(notify.APP_NAMESPACE)).items():
+        if not (isinstance(r, dict) and r.get("token") and r.get("live") and r.get("platform") == "android"):
+            continue
+        if r.get("discord_id"):
+            out.setdefault(f"d{r['discord_id']}", []).append((k, r))
+        if r.get("plex_account_id"):
+            out.setdefault(f"p{r['plex_account_id']}", []).append((k, r))
+    return out
+
+
+async def _shelf_titles(config) -> List[str]:
+    from portal import books as shelf
+    from core.blocking import run_blocking
+    now = datetime.now(timezone.utc)
+    if _shelf_cache.get("at") and now - _shelf_cache["at"] < timedelta(minutes=15):
+        return _shelf_cache["titles"]
+    found = await run_blocking(shelf.scan, config.bookshelf_audiobook_library, config.bookshelf_ebook_library)
+    _shelf_cache.update(at=now, titles=shelf.shelf_titles(found))
+    return _shelf_cache["titles"]
+
+
+async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
+    """One pass: send what changed. Returns how many updates went out."""
+    from core import notify
+    from database.request_store import all_requests
+    if not notify.app_push_on():
+        return 0
+    now = now or datetime.now(timezone.utc)
+    phones = await _live_apps()
+    states = await kv_get_all(NAMESPACE)
+    if not phones and not states:
+        return 0
+    sent, gone, keep = 0, [], {}
+
+    def phones_of(owners) -> List[tuple]:
+        seen, out = set(), []
+        for o in owners or []:
+            for k, r in phones.get(o) or []:
+                if k not in seen:
+                    seen.add(k)
+                    out.append((k, r))
+        return out
+    # Numbered as everywhere else (No. 0214): by the request's key, oldest first.
+    ordered = sorted((await all_requests()).items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0)
+    records = {key: {**rec, "_slot": n + 1} for n, (key, rec) in enumerate(ordered)}
+    for key in [k for k in states if k not in records]:
+        # Deleted: take its notification down on the phones it was on.
+        state = states[key] if isinstance(states[key], dict) else {}
+        if state.get("shown") and phones_of(state.get("owners")):
+            sent += await notify.push_app_live(phones_of(state.get("owners")), {"op": "end", "id": key})
+        gone.append(key)
+    for key, rec in records.items():
+        state = states.get(key) if isinstance(states.get(key), dict) else None
+        did, pid = _owner(rec or {})
+        owners = [o for o in (f"d{did}" if did else None, f"p{pid}" if pid else None) if o]
+        apps = phones_of(owners)
+        if rec.get("status") != "approved":
+            if state:
+                if state.get("shown") and apps:
+                    sent += await notify.push_app_live(apps, {"op": "end", "id": key})
+                gone.append(key)
+            continue
+        if not apps and not state:
+            continue
+        asked = _when(rec.get("timestamp"))
+        if asked and now - asked > timedelta(days=WATCH_DAYS):
+            continue
+        media = rec.get("media") or {}
+        try:
+            if rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media:
+                live = await progress.book(media, await _shelf_titles(services.config))
+            else:
+                live = await progress.video(media, rec.get("seasons"))
+        except Exception as e:
+            logger.info(f"Live progress: couldn't check {_title(rec)}: {e}")
+            continue
+        stage, pct = live.get("stage"), live.get("percent")
+        if stage in FINISHED:
+            if state and state.get("shown") and apps:
+                sent += await notify.push_app_live(apps, {"op": "end", "id": key})
+            if state:
+                gone.append(key)
+            continue
+        if stage not in SHOWN and not state:
+            continue
+        state = dict(state or {}, owners=owners)
+        moved = stage != state.get("stage") or pct != state.get("percent")
+        if moved:
+            state.update(stage=stage, percent=pct, moved=now.isoformat())
+        stalled = now - (_when(state.get("moved")) or now) > STALL
+        if stage in SHOWN and not stalled and apps:
+            last = _when(state.get("sent"))
+            due = (not state.get("shown") or stage != state.get("sentStage")
+                   or (isinstance(pct, int) and abs(pct - (state.get("sentPercent") or 0)) >= STEP)
+                   or not last or now - last >= KEEPALIVE)
+            if due:
+                sent += await notify.push_app_live(apps, {
+                    "op": "show", "id": key, "slot": rec.get("_slot"), "title": _title(rec), "text": _text(live),
+                    "stage": stage, "percent": pct if isinstance(pct, int) else None,
+                })
+                state.update(shown=True, sent=now.isoformat(), sentStage=stage, sentPercent=pct)
+        elif state.get("shown"):
+            # Stalled, gone back to searching, or nobody's phone wants it any more.
+            if apps:
+                sent += await notify.push_app_live(apps, {"op": "end", "id": key})
+            state["shown"] = False
+        keep[key] = state
+    if keep:
+        await kv_set_many(NAMESPACE, keep)
+    if gone:
+        await kv_delete_many(NAMESPACE, gone)
+    return sent

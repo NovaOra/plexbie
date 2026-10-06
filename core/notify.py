@@ -281,7 +281,8 @@ APP_CHANNELS = ("alerts", "alerts-quiet", "default")
 
 
 async def register_app(token: Any, platform: Any, *, plex_account_id: Optional[str], plex_name: Optional[str],
-                       discord_id: Optional[str], session: Optional[str] = None, channel: Any = None) -> bool:
+                       discord_id: Optional[str], session: Optional[str] = None, channel: Any = None,
+                       live: Any = None) -> bool:
     """Alerts on in the Plexbie app on one phone, tied to the app sign-in (`session`)
     that asked, so they stop when that sign-in ends.
 
@@ -306,6 +307,8 @@ async def register_app(token: Any, platform: Any, *, plex_account_id: Optional[s
         "discord_id": str(discord_id) if discord_id else None,
         "session": session,
         "channel": channel if channel in APP_CHANNELS else None,
+        # Live progress (Android): its requests' downloads kept in the notification shade.
+        "live": live is True,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return True
@@ -352,7 +355,7 @@ def app_push_on() -> bool:
     return (os.getenv("APP_PUSH") or "").strip().lower() == "expo"
 
 
-async def _push_app(apps: List[tuple], payload: Dict[str, Any]) -> int:
+async def _push_app(apps: List[tuple], payload: Dict[str, Any], live: Optional[Dict[str, Any]] = None) -> int:
     """Send to the app on each phone through Expo's push service. A phone that no
     longer has the app (DeviceNotRegistered) is forgotten. Returns how many accepted."""
     if not app_push_on():
@@ -365,10 +368,15 @@ async def _push_app(apps: List[tuple], payload: Dict[str, Any]) -> int:
     if not apps:
         return 0
     import aiohttp
-    messages = [{
-        "to": r["token"], "title": str(payload.get("title") or "Plexbie")[:120], "body": str(payload.get("body") or "")[:400],
-        "data": {"url": str(payload.get("url") or "/app")}, "sound": "default", "channelId": r.get("channel") or "default", "priority": "high",
-    } for _, r in apps]
+    if live is not None:
+        # Data only: no title, so nothing shows by itself; the app draws (or clears) the
+        # live notification from it, in the background if need be.
+        messages = [{"to": r["token"], "data": {"plexbie": "live", **live}, "priority": "high"} for _, r in apps]
+    else:
+        messages = [{
+            "to": r["token"], "title": str(payload.get("title") or "Plexbie")[:120], "body": str(payload.get("body") or "")[:400],
+            "data": {"url": str(payload.get("url") or "/app")}, "sound": "default", "channelId": r.get("channel") or "default", "priority": "high",
+        } for _, r in apps]
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
             headers = {"Accept": "application/json"}
@@ -399,6 +407,15 @@ async def _push_app(apps: List[tuple], payload: Dict[str, Any]) -> int:
     if gone:
         await kv_delete_many(APP_NAMESPACE, gone)
     return sent
+
+
+async def push_app_live(apps: List[tuple], data: Dict[str, Any]) -> int:
+    """A live-progress update ({"op": "show" | "end", "id", ...}) to these phones. Best-effort."""
+    try:
+        return await _push_app(apps, {}, live=data)
+    except Exception as e:
+        logger.info(f"Live progress push failed: {type(e).__name__}")
+        return 0
 
 
 async def push_app_to_discord(discord_id: Any, *, title: str, body: str, url: str = "/app") -> int:

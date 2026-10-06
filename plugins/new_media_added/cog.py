@@ -226,6 +226,7 @@ class NewMediaAddedCog(commands.Cog):
         self._grabs_checked: set = set()       # Radarr downloads already checked (check_movie_grabs)
         self.cleanup_old_batches.start()
         self.sweep_recently_added.start()
+        self.live_progress.start()
 
     async def cog_load(self):
         self.bot.add_view(ArrivalsRoleView(self.services))
@@ -495,6 +496,23 @@ class NewMediaAddedCog(commands.Cog):
                 await self._arrivals(batch.show_title, batch.season, more, batch.tmdb_id, batch.tvdb_id, {},
                                      show_key=batch.show_key)
 
+    @tasks.loop(minutes=1)
+    async def live_progress(self):
+        """Downloads kept live on requesters' phones (core/live_progress)."""
+        from core import live_progress
+        from portal.cache import TTLCache
+        from portal.progress import Progress
+        if self._progress is None:
+            self._progress = Progress(self.services, TTLCache())
+        try:
+            await live_progress.tick(self.services, self._progress)
+        except Exception as e:
+            logger.warning(f"Live progress pass failed: {type(e).__name__}: {e}")
+
+    @live_progress.before_loop
+    async def _before_live(self):
+        await self.bot.wait_until_ready()
+
     @sweep_recently_added.before_loop
     async def _before_sweep(self):
         await self.bot.wait_until_ready()
@@ -564,6 +582,7 @@ class NewMediaAddedCog(commands.Cog):
         """Cleanup when cog is unloaded"""
         self.cleanup_old_batches.cancel()
         self.sweep_recently_added.cancel()
+        self.live_progress.cancel()
         # Note: Can't await in cog_unload, data will be saved on next cleanup cycle
 
     async def load_tracking_data(self):
