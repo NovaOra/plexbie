@@ -30,7 +30,7 @@
   <a href="#support-plexbies-development">Support its development</a>
 </p>
 
-https://github.com/user-attachments/assets/b5409525-02c4-48ea-bc10-70a2202e68a6
+https://github.com/user-attachments/assets/0cabfb6a-3bb2-4ae9-8d53-c5f07857dffc
 
 <p align="center"><sub>A 73-second look, made with invented titles and people. For the full three-minute tour, tune to channel 02 on <a href="https://plexbie.com">plexbie.com</a>.<br>Music: “Dry and High” by <a href="https://freemusicarchive.org/music/Ketsa/cc-by-free-to-use-for-anything">Ketsa</a> (CC BY 4.0). Sound effects: <a href="https://kenney.nl">Kenney</a> (CC0).</sub></p>
 
