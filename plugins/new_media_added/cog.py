@@ -92,6 +92,12 @@ def _recently_added_episodes(server, rating_key, within: timedelta) -> List[tupl
             for e in item.episodes() if e.addedAt and e.addedAt >= cutoff and e.index is not None]
 
 
+def _show_key_by_title(server, title: str) -> Optional[str]:
+    """Blocking: the rating key of the one Plex show with exactly this title, if there is one."""
+    shows = [s for s in server.library.search(title=title, libtype="show") if (s.title or "").lower() == title.lower()]
+    return str(shows[0].ratingKey) if len(shows) == 1 else None
+
+
 class EpisodeBatch:
     """Track a batch of episodes being added for a show/season"""
 
@@ -107,6 +113,9 @@ class EpisodeBatch:
         self.expected_episode_count: Optional[int] = None    # aired episodes in the season
         self.titles: Dict[str, str] = {}                     # episode number -> title
         self.plex_url: Optional[str] = None
+        self.tvdb_id: Optional[int] = None
+        self.show_key: Optional[str] = None                  # the show's Plex rating key
+        self.started = self.last_update                      # when this run of episodes began
 
     def add_episode(self, episode_num: int):
         """Add an episode to the batch"""
@@ -140,6 +149,9 @@ class EpisodeBatch:
             "expected_episode_count": self.expected_episode_count,
             "titles": self.titles,
             "plex_url": self.plex_url,
+            "tvdb_id": self.tvdb_id,
+            "show_key": self.show_key,
+            "started": self.started.isoformat(),
         }
 
     @classmethod
@@ -154,6 +166,9 @@ class EpisodeBatch:
         batch.expected_episode_count = data.get("expected_episode_count")
         batch.titles = data.get("titles") or {}
         batch.plex_url = data.get("plex_url")
+        batch.tvdb_id = data.get("tvdb_id")
+        batch.show_key = data.get("show_key")
+        batch.started = datetime.fromisoformat(data["started"]) if data.get("started") else batch.last_update
         return batch
 
 
@@ -446,6 +461,39 @@ class NewMediaAddedCog(commands.Cog):
             logger.info(f"Recently added sweep: {len(fresh)} new item(s) on Plex")
         if fresh or mark is None:
             await kv_set(SWEEP_NAMESPACE, "mark", (fresh[-1][1] if fresh else since).isoformat())
+        await self._follow_open_batches(server)
+
+    async def _follow_open_batches(self, server) -> None:
+        """Episodes that joined a season already announced. Plex's Recently Added
+        lists a season once, with the time its first episode came, so the rest of a
+        season arriving over the next hours doesn't show up there as anything new
+        (and no webhook may say so either). For each announcement still open (the
+        season not complete, an episode within GROUP_WINDOW), ask Plex which of the
+        season's episodes came since the run began, and add any it hasn't got."""
+        await self.load_tracking_data()
+        now = datetime.now(timezone.utc)
+        for batch in list(self.active_batches.values()):
+            if not batch.message_id or batch.is_complete() or now - batch.last_update > GROUP_WINDOW:
+                continue
+            if not batch.show_key:
+                # Announced before batches kept the show's key.
+                try:
+                    batch.show_key = await run_blocking(_show_key_by_title, server, batch.show_title)
+                except Exception as e:
+                    logger.info(f"Couldn't find {batch.show_title} on Plex: {e}")
+                if not batch.show_key:
+                    continue
+            within = now - batch.started + RECENT_EPISODES
+            try:
+                found = await run_blocking(_recently_added_episodes, server, batch.show_key, within)
+            except Exception as e:
+                logger.info(f"Couldn't check {batch.show_title} S{batch.season} for more episodes: {e}")
+                continue
+            more = [(n, t) for season, n, t in found if season == batch.season and n not in batch.episodes]
+            if more:
+                logger.info(f"{len(more)} more episode(s) of {batch.show_title} S{batch.season} on Plex since the announcement")
+                await self._arrivals(batch.show_title, batch.season, more, batch.tmdb_id, batch.tvdb_id, {},
+                                     show_key=batch.show_key)
 
     @sweep_recently_added.before_loop
     async def _before_sweep(self):
@@ -760,7 +808,7 @@ class NewMediaAddedCog(commands.Cog):
             tmdb_id, tvdb_id = self._ids([{"id": metadata["grandparentGuid"]}] if "grandparentGuid" in metadata else [])
         await self._arrivals(metadata.get("grandparentTitle", "Unknown Show"), metadata.get("parentIndex", 0),
                              [(metadata.get("index", 0), metadata.get("title", "Unknown Episode"))],
-                             tmdb_id, tvdb_id, payload)
+                             tmdb_id, tvdb_id, payload, show_key=metadata.get("grandparentRatingKey"))
 
     async def _handle_new_show_or_season(self, metadata: Dict, payload: Dict, kind: str) -> bool:
         """Several episodes at once. Plex then sends one show- (or season-) level event
@@ -785,18 +833,19 @@ class NewMediaAddedCog(commands.Cog):
         for season, number, title in found:
             by_season[season].append((number, title))
         for season in sorted(by_season):
-            await self._arrivals(show_title or "Unknown Show", season, by_season[season], tmdb_id, tvdb_id, payload)
+            await self._arrivals(show_title or "Unknown Show", season, by_season[season], tmdb_id, tvdb_id, payload,
+                                 show_key=show_key)
         return True
 
     async def _arrivals(self, show_title: str, season: int, episodes: List[tuple],
-                        tmdb_id: Optional[int], tvdb_id: Optional[int], payload: Dict) -> None:
+                        tmdb_id: Optional[int], tvdb_id: Optional[int], payload: Dict, show_key=None) -> None:
         """Episodes of one season reached Plex: add them to the season's announcement
         (one post, then edits), mark tracked requests, and DM requesters."""
         async with self._batch_locks[self.get_batch_key(show_title, season)]:
-            await self._arrivals_locked(show_title, season, episodes, tmdb_id, tvdb_id, payload)
+            await self._arrivals_locked(show_title, season, episodes, tmdb_id, tvdb_id, payload, show_key)
 
     async def _arrivals_locked(self, show_title: str, season: int, episodes: List[tuple],
-                               tmdb_id: Optional[int], tvdb_id: Optional[int], payload: Dict) -> None:
+                               tmdb_id: Optional[int], tvdb_id: Optional[int], payload: Dict, show_key=None) -> None:
         await self.load_tracking_data()
         try:
             batch_key = self.get_batch_key(show_title, season)
@@ -807,11 +856,14 @@ class NewMediaAddedCog(commands.Cog):
                 # Integration point with media_requests: is someone waiting for it?
                 batch.is_monitored = await self._check_if_monitored(show_title, season, tmdb_id)
 
+            batch.tvdb_id = tvdb_id or batch.tvdb_id
+            batch.show_key = str(show_key) if show_key else batch.show_key
             # Post or edit, decided before these episodes refresh last_update.
             post_new = batch.should_create_new_message()
             if post_new and batch.message_id:
                 # A new run of episodes (a week later, say): start a fresh message.
                 batch.episodes, batch.titles, batch.message_id = [], {}, None
+                batch.started = datetime.now(timezone.utc)
             before = set(batch.episodes)
             for number, title in episodes:
                 batch.add_episode(number)

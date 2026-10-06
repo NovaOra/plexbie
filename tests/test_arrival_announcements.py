@@ -471,3 +471,86 @@ def test_plex_matching_the_right_file_to_another_film_is_fixed_not_flagged():
         (module.kv_get_all, module.kv_set_many, module.kv_delete_many, season_search.open_help,
          request_store.all_requests) = saved
     assert tried == ["11509"] and opened == [] and store == {}, "fixed: no help request, nothing kept"
+
+
+def _sweep_with(cog, module, plex_episodes):
+    """One Recently Added check where Plex lists nothing new, and the show's episodes
+    are plex_episodes: (season, number, title, added) with added a UTC datetime."""
+    from datetime import datetime, timezone
+    store = {"mark": datetime.now(timezone.utc).isoformat()}
+
+    async def kv_get(ns, key, default=None):
+        return store.get(key, default)
+
+    async def kv_set(ns, key, value):
+        store[key] = value
+
+    def episodes(server, key, within):
+        cutoff = datetime.now(timezone.utc) - within
+        return [(s, n, t) for s, n, t, added in plex_episodes if added >= cutoff]
+    saved = module.kv_get, module.kv_set, module._recent_items, module._recently_added_episodes
+    module.kv_get, module.kv_set = kv_get, kv_set
+    module._recent_items = lambda server: []
+    module._recently_added_episodes = episodes
+    try:
+        asyncio.run(module.NewMediaAddedCog.sweep_recently_added.coro(cog))
+    finally:
+        module.kv_get, module.kv_set, module._recent_items, module._recently_added_episodes = saved
+
+
+def test_the_rest_of_a_season_arriving_later_edits_the_announcement():
+    """Bob's Burgers S2: episodes 1-3 were announced as "3 of 9 · more on the way", then
+    4-9 reached Plex. Recently Added still listed the season with its first time, and no
+    webhook came, so the post stayed at 3 of 9 while Plex had all nine."""
+    from datetime import datetime, timezone
+    from plugins.new_media_added import cog as module
+    cog, channel = _cog(season_size=9)
+    cog.services.plex_server = object()
+    now = datetime.now(timezone.utc)
+    original = module._recently_added_episodes
+    module._recently_added_episodes = lambda server, key, within: [(2, n, f"Ep {n}") for n in range(1, 4)]
+    try:
+        asyncio.run(cog.handle_plex_webhook({"event": "library.new", "Metadata": {
+            "type": "show", "title": "Bob's Burgers", "ratingKey": "88", "Guid": []}}))
+    finally:
+        module._recently_added_episodes = original
+    assert "3 of 9" in channel.posts[0].description
+    _sweep_with(cog, module, [(2, n, f"Ep {n}", now) for n in range(1, 10)])
+    assert len(channel.posts) == 1, "the rest is an edit, not a second post"
+    final = channel.edits[-1][1]
+    assert final.title.startswith("✅") and "All 9 episodes" in final.description
+    _sweep_with(cog, module, [(2, n, f"Ep {n}", now) for n in range(1, 10)])
+    assert len(channel.edits) == 1, "a complete season isn't checked again"
+
+
+def test_following_a_weekly_episode_doesnt_pull_in_earlier_weeks():
+    from datetime import datetime, timezone
+    from plugins.new_media_added import cog as module
+    cog, channel = _cog(season_size=10)
+    cog.services.plex_server = object()
+    meta = {"grandparentTitle": "The Simpsons", "grandparentRatingKey": "77", "parentIndex": 2,
+            "index": 5, "title": "Ep 5", "Guid": []}
+    asyncio.run(cog._handle_new_episode(meta, {}))
+    now = datetime.now(timezone.utc)
+    weeks_ago = [(2, n, f"Ep {n}", now - timedelta(days=7 * (5 - n))) for n in range(1, 5)]
+    _sweep_with(cog, module, weeks_ago + [(2, 5, "Ep 5", now)])
+    assert not channel.edits, "episodes 1-4 came in earlier weeks; they aren't new"
+    _sweep_with(cog, module, weeks_ago + [(2, 5, "Ep 5", now), (2, 6, "Ep 6", now)])
+    assert "Episodes 5-6" in channel.edits[-1][1].description
+
+
+def test_an_announcement_saved_before_show_keys_is_followed_by_title():
+    from datetime import datetime, timezone
+    from plugins.new_media_added import cog as module
+    cog, channel = _cog(season_size=9)
+    cog.services.plex_server = object()
+    for n in (1, 2, 3):
+        _arrive(cog, n)
+    cog.active_batches["the simpsons:s2"].show_key = None
+    saved = module._show_key_by_title
+    module._show_key_by_title = lambda server, title: "77" if title == "The Simpsons" else None
+    try:
+        _sweep_with(cog, module, [(2, n, f"Ep {n}", datetime.now(timezone.utc)) for n in range(1, 10)])
+    finally:
+        module._show_key_by_title = saved
+    assert "All 9 episodes" in channel.edits[-1][1].description
