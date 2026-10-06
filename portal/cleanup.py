@@ -5,17 +5,19 @@ This mirrors MediaCleanupCog.check_item_for_cleanup step for step, so the
 countdown on the site is the bot's own schedule, not an estimate:
 
   last activity = latest of
-      when it was last watched (for a show, its most recently watched episode),
-      when it was added (only if never watched),
+      when anyone last watched it: every account's plays, from the server's own
+      history (for a show, any episode: the whole show is one thing),
+      when it was added (for a show, its newest episode, so a new season is fresh),
       the newest request for it in media tracking;
   removal       = last activity + inactivity_days (90 by default);
   exempt titles and excluded libraries never count down.
 
-Plex reports lastViewedAt for the account whose token the bot uses, exactly as
-the cleanup task sees it. Synchronous Plex reads; call compute() via run_blocking.
+Plex's lastViewedAt on an item is only the bot's own account (the owner's), so the
+household's watching comes from the server's history instead (everyones_views).
+Synchronous Plex reads; call compute() via run_blocking.
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -64,10 +66,33 @@ def _tmdb(el) -> Optional[int]:
     return None
 
 
+def aware(when: datetime) -> datetime:
+    """plexapi's datetimes are the server's local time, without a zone."""
+    return when.astimezone(timezone.utc) if when.tzinfo is None else when
+
+
+def everyones_views(server, days: int) -> Dict[str, datetime]:
+    """The last time anyone (every account, managed users too) watched each film, and
+    any episode of each show, by Plex key, over the last `days` (+2). Raises if Plex's
+    history can't be read: then nothing should be judged unwatched."""
+    since = datetime.now() - timedelta(days=int(days) + 2)
+    latest: Dict[str, datetime] = {}
+    for h in server.history(mindate=since):
+        key = str(getattr(h, "grandparentRatingKey", None) or getattr(h, "ratingKey", None) or "")
+        when = getattr(h, "viewedAt", None)
+        if not key or not when:
+            continue
+        when = aware(when)
+        if key not in latest or when > latest[key]:
+            latest[key] = when
+    return latest
+
+
 def compute(server, config: dict, requests: List[dict]) -> Dict[str, dict]:
     """{ratingKey: {...}} for every film and show the cleanup task would consider."""
     now = datetime.now(timezone.utc)
     days = int(config.get("inactivity_days", 90))
+    views = everyones_views(server, days)
     notify = days - int(config.get("notify_days_before", 7))
     exempt = config.get("exempt_items", {}) or {}
     excluded = set(config.get("exclude_libraries", []) or [])
@@ -85,17 +110,23 @@ def compute(server, config: dict, requests: List[dict]) -> Dict[str, dict]:
             if rk in exempt:
                 out[rk] = {**entry, "exempt": True}
                 continue
+            last, newest = views.get(rk), None
             if stype == "movie":
-                last = _ts(el.get("lastViewedAt"))
+                own = _ts(el.get("lastViewedAt"))
+                if own and (last is None or own > last):
+                    last = own
             else:
-                last = None
                 for ep in server.query(f"/library/metadata/{rk}/allLeaves").findall("Video"):
                     seen = _ts(ep.get("lastViewedAt"))
                     if seen and (last is None or seen > last):
                         last = seen
+                    came = _ts(ep.get("addedAt"))
+                    if came and (newest is None or came > newest):
+                        newest = came
             reason = "watched"
-            if not last:
-                last, reason = _ts(el.get("addedAt")), "added"
+            added = newest or _ts(el.get("addedAt"))
+            if added and (not last or added > last):
+                last, reason = added, "added"
             kind = "tv" if stype == "show" else "movie"
             asked = [r["at"] for r in requests
                      if (tmdb is not None and r["tmdb"] == tmdb)

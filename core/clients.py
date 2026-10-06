@@ -274,6 +274,9 @@ class Seerr(_Client):
     async def ping(self, timeout: float = 6) -> None:
         await self._api("GET", "status", timeout=timeout)
 
+    async def delete(self, path: str) -> Any:
+        return await self._api("DELETE", path)
+
     async def post(self, path: str, body: Any, raw: bool = False) -> Any:
         return await self._api("POST", path, json=body, raw=raw)
 

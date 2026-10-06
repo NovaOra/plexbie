@@ -22,6 +22,22 @@ logger = get_logger(__name__)
 
 # Namespace for cleanup data
 CLEANUP_NAMESPACE = "media_cleanup"
+#: Seerr's media status for something Plex no longer has.
+SEERR_DELETED = 7
+
+from portal.cleanup import aware as _aware  # noqa: E402  (plexapi's zone-less local times)
+
+
+def _ids_of(item) -> Dict[str, str]:
+    """A Plex item's TMDB / TheTVDB / IMDb ids, from its guids ("tmdb://1396")."""
+    out: Dict[str, str] = {}
+    for g in getattr(item, "guids", None) or []:
+        gid = str(getattr(g, "id", "") or "")
+        if "://" in gid:
+            k, v = gid.split("://", 1)
+            if k in ("tmdb", "tvdb", "imdb") and v:
+                out.setdefault(k, v)
+    return out
 CHECK_EVERY = timedelta(hours=24)
 
 REQUEST_EXPIRY_DAYS = 90
@@ -460,6 +476,10 @@ class MediaCleanupCog(commands.Cog):
             logger.info("Starting daily media cleanup check...")
             monitor_summary = await self.enforce_request_monitor_cleanup()
             logger.info(f"Request monitor cleanup summary: {monitor_summary}")
+            try:
+                await self.reconcile_seerr()
+            except Exception as e:
+                logger.warning(f"Couldn't tidy Seerr's removed titles: {e}")
 
             # The whole traversal runs in one worker thread. It is one request to
             # list sections, one per section to list items, and one more per show
@@ -569,6 +589,14 @@ class MediaCleanupCog(commands.Cog):
         """
         items_to_notify = []
         items_to_delete = []
+        # What anyone on the server watched lately. Without it nothing is deleted: Plex's
+        # own "last viewed" on an item is only the owner's, so a show the household is
+        # watching would look untouched.
+        try:
+            views = self._everyones_views()
+        except Exception as e:
+            logger.warning(f"Media cleanup: couldn't read Plex's watch history ({e}); deleting nothing today")
+            return [], []
 
         for library in self.services.plex_server.library.sections():
             # Skip excluded libraries
@@ -583,7 +611,7 @@ class MediaCleanupCog(commands.Cog):
             logger.info(f"Checking library: {library.title}")
 
             for item in library.all():
-                result = self.check_item_for_cleanup(item)
+                result = self.check_item_for_cleanup(item, views)
                 if result:
                     if result["action"] == "notify":
                         items_to_notify.append(result)
@@ -592,7 +620,13 @@ class MediaCleanupCog(commands.Cog):
 
         return items_to_notify, items_to_delete
 
-    def check_item_for_cleanup(self, item) -> Optional[Dict]:
+    def _everyones_views(self) -> Dict[str, datetime]:
+        """Blocking: when anyone last watched each film / any episode of each show
+        (portal/cleanup.everyones_views: the server's history has every account)."""
+        from portal.cleanup import everyones_views
+        return everyones_views(self.services.plex_server, int(self.config["inactivity_days"]))
+
+    def check_item_for_cleanup(self, item, views: Optional[Dict[str, datetime]] = None) -> Optional[Dict]:
         """Check if an item should be cleaned up.
 
         Synchronous on purpose: it performs a blocking plexapi call per show
@@ -608,10 +642,13 @@ class MediaCleanupCog(commands.Cog):
                 logger.info(f"Skipping exempt media item: {item.title} ({item.type})")
                 return None
 
-            # Check last viewed time
-            last_viewed = None
+            # Check last viewed time: by anyone (views), and the owner's own as before
+            last_viewed = (views or {}).get(rating_key)
+            newest = None
 
-            # For TV shows, check all episodes
+            # For TV shows, check all episodes: the whole show is one thing. Anyone
+            # watching any episode keeps all of it, and a season that just arrived
+            # counts as fresh, so it isn't deleted before anyone could watch it.
             if item.type == "show":
                 # One request per show, not one per season. Show.episodes() fetches
                 # /library/metadata/<key>/allLeaves in a single call; seasons()
@@ -621,19 +658,23 @@ class MediaCleanupCog(commands.Cog):
                 # the daily library walk.
                 for episode in item.episodes():
                     if episode.lastViewedAt:
-                        if not last_viewed or episode.lastViewedAt > last_viewed:
-                            last_viewed = episode.lastViewedAt
+                        seen = _aware(episode.lastViewedAt)
+                        if not last_viewed or seen > last_viewed:
+                            last_viewed = seen
+                    came = getattr(episode, "addedAt", None)
+                    if came and (not newest or _aware(came) > newest):
+                        newest = _aware(came)
 
             # For movies, check directly
-            elif item.type == "movie":
-                last_viewed = item.lastViewedAt
+            elif item.type == "movie" and item.lastViewedAt:
+                seen = _aware(item.lastViewedAt)
+                if not last_viewed or seen > last_viewed:
+                    last_viewed = seen
 
-            # If never watched, use added date
-            if not last_viewed:
-                last_viewed = item.addedAt
-
-            if last_viewed and last_viewed.tzinfo is None:
-                last_viewed = last_viewed.replace(tzinfo=timezone.utc)
+            # Never watched, or new episodes since: the newest addition counts
+            added = newest or (_aware(item.addedAt) if getattr(item, "addedAt", None) else None)
+            if added and (not last_viewed or added > last_viewed):
+                last_viewed = added
 
             recent_request_timestamp = self._get_recent_request_timestamp(item)
             if recent_request_timestamp and (not last_viewed or recent_request_timestamp > last_viewed):
@@ -698,18 +739,21 @@ class MediaCleanupCog(commands.Cog):
                     logger.info(f"Deleting: {item.title} ({media_type})")
 
                     # Delete from Sonarr/Radarr first (this deletes the actual files)
+                    ids = _ids_of(item)
+                    removed = None
                     if media_type == "movie":
-                        success = await self._delete_from_radarr(item)
-                        if success:
-                            logger.info(f"Successfully deleted {item.title} from Radarr")
-                        else:
+                        removed = await self._delete_from_radarr(item, ids)
+                        if not removed:
                             logger.warning(f"Could not delete {item.title} from Radarr, trying Plex...")
                     elif media_type == "show":
-                        success = await self._delete_from_sonarr(item)
-                        if success:
-                            logger.info(f"Successfully deleted {item.title} from Sonarr")
-                        else:
+                        removed = await self._delete_from_sonarr(item, ids)
+                        if not removed:
                             logger.warning(f"Could not delete {item.title} from Sonarr, trying Plex...")
+                    # ...and from Seerr, or it keeps the old request and refuses the next one
+                    # ("no seasons available to request": The Boys, after three removals).
+                    tmdb = ids.get("tmdb") or (removed or {}).get("tmdbId")
+                    if tmdb:
+                        await self._clear_from_seerr("movie" if media_type == "movie" else "tv", int(tmdb), item.title)
 
                     # Also remove from Plex library (Sonarr/Radarr deletion should trigger this, but be safe)
                     try:
@@ -724,6 +768,7 @@ class MediaCleanupCog(commands.Cog):
                         "deleted_at": datetime.now(timezone.utc).isoformat(),
                         "title": item.title,
                         "type": item.type,
+                        "tmdb": tmdb,
                     }
 
             except Exception as e:
@@ -732,35 +777,100 @@ class MediaCleanupCog(commands.Cog):
         await self.save_tracking_data()
         return deleted
 
-    async def _delete_from_radarr(self, movie) -> bool:
-        """Delete a movie from Radarr and from disk."""
+    async def _delete_from_radarr(self, movie, ids: Optional[Dict[str, str]] = None) -> Optional[dict]:
+        """Delete a movie from Radarr and from disk. Returns Radarr's record of it."""
         return await self._delete_from_arr(self.services.radarr, "movie", movie,
-                                           {"deleteFiles": "true", "addImportExclusion": "false"})
+                                           {"deleteFiles": "true", "addImportExclusion": "false"}, ids)
 
-    async def _delete_from_sonarr(self, show) -> bool:
-        """Delete a TV show from Sonarr and from disk."""
+    async def _delete_from_sonarr(self, show, ids: Optional[Dict[str, str]] = None) -> Optional[dict]:
+        """Delete a TV show from Sonarr and from disk. Returns Sonarr's record of it."""
         return await self._delete_from_arr(self.services.sonarr, "series", show,
-                                           {"deleteFiles": "true", "addImportListExclusion": "false"})
+                                           {"deleteFiles": "true", "addImportListExclusion": "false"}, ids)
 
-    async def _delete_from_arr(self, arr, path: str, item, params: Dict[str, str]) -> bool:
-        """Find a Plex item in Sonarr/Radarr by title (and year when both have one) and delete it with its files."""
+    async def _delete_from_arr(self, arr, path: str, item, params: Dict[str, str],
+                               ids: Optional[Dict[str, str]] = None) -> Optional[dict]:
+        """Find a Plex item in Sonarr/Radarr, by its TMDB/TheTVDB/IMDb id (Plex's guids),
+        else by title and year, and delete it with its files. Returns what was deleted."""
         if not arr.configured:
             logger.warning(f"{arr.name} not configured")
-            return False
+            return None
+        ids = ids if ids is not None else _ids_of(item)
         try:
+            rows = await arr.get(path) or []
+
+            def same(m: dict) -> bool:
+                return any(str(m.get(field) or "") == ids[k] for k, field in
+                           (("tmdb", "tmdbId"), ("tvdb", "tvdbId"), ("imdb", "imdbId")) if ids.get(k))
             year = getattr(item, "year", None)
-            match = next((m for m in await arr.get(path)
-                          if (m.get("title") or "").lower() == item.title.lower()
-                          and (not year or not m.get("year") or m["year"] == year)), None)
+            match = next((m for m in rows if ids and same(m)), None) or next(
+                (m for m in rows if (m.get("title") or "").lower() == item.title.lower()
+                 and (not year or not m.get("year") or m["year"] == year)), None)
             if not match:
                 logger.warning(f"Could not find {item.title} in {arr.name}")
-                return False
+                return None
             await arr.delete(f"{path}/{match['id']}", **params)
             logger.info(f"Deleted {item.title} from {arr.name} and disk")
-            return True
+            return match
         except Exception as e:
             logger.error(f"Error deleting {item.title} from {arr.name}: {e}")
+            return None
+
+    async def _clear_from_seerr(self, kind: str, tmdb_id: int, title: str) -> bool:
+        """Seerr's "Clear data" for it: its media record and requests go, so it can be
+        asked for again. True when Seerr no longer has it."""
+        seerr = self.services.seerr
+        if not seerr.configured:
             return False
+        try:
+            info = (await seerr.get(f"{kind}/{int(tmdb_id)}") or {}).get("mediaInfo") or {}
+            if not info.get("id"):
+                return True
+            await seerr.delete(f"media/{int(info['id'])}")
+            logger.info(f"Cleared {title} from Seerr")
+            return True
+        except Exception as e:
+            logger.warning(f"Could not clear {title} from Seerr: {e}")
+            return False
+
+    async def reconcile_seerr(self) -> int:
+        """Seerr records of things that are gone: Seerr marks media "deleted" (status 7)
+        once Plex no longer has it, but keeps the old request, and then refuses new ones.
+        Each of those Sonarr/Radarr no longer has is cleared, as a removal now does
+        itself. Returns how many were cleared."""
+        seerr = self.services.seerr
+        if not seerr.configured or self.config.get("dry_run"):
+            return 0
+        gone, skip = [], 0
+        while True:
+            page = await seerr.get("media", take=100, skip=skip) or {}
+            results = page.get("results") or []
+            gone += [m for m in results if m.get("status") == SEERR_DELETED]
+            skip += len(results)
+            if not results or skip >= ((page.get("pageInfo") or {}).get("results") or 0):
+                break
+        if not gone:
+            return 0
+        have = {"movie": set(), "tv": set()}
+        if self.services.radarr.configured:
+            have["movie"] = {str(m.get("tmdbId")) for m in await self.services.radarr.movies()}
+        if self.services.sonarr.configured:
+            for s in await self.services.sonarr.series():
+                have["tv"] |= {f"tvdb:{s.get('tvdbId')}", f"tmdb:{s.get('tmdbId')}"}
+        cleared = 0
+        for m in gone:
+            kind = m.get("mediaType")
+            still = (str(m.get("tmdbId")) in have["movie"]) if kind == "movie" else bool(
+                {f"tvdb:{m.get('tvdbId')}", f"tmdb:{m.get('tmdbId')}"} & have["tv"])
+            if still or kind not in ("movie", "tv"):
+                continue
+            try:
+                await seerr.delete(f"media/{int(m['id'])}")
+                cleared += 1
+            except Exception as e:
+                logger.info(f"Could not clear Seerr media {m.get('id')}: {e}")
+        if cleared:
+            logger.info(f"Cleared {cleared} removed title(s) from Seerr, so they can be requested again")
+        return cleared
 
     async def send_cleanup_notification(self, items: List[Dict], notification_type: str):
         """Send notification about cleanup actions"""
