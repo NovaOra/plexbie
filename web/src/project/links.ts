@@ -12,6 +12,7 @@ export const OPERATOR = "NovaOra";
 export const REPO_PUBLIC = import.meta.env.VITE_REPO_PUBLIC !== "false";
 /** Tips toward Plexbie's development (the software), never for anyone's Plex access. */
 export const SUPPORT = {
+  github: "https://github.com/sponsors/NovaOra",
   kofi: "https://ko-fi.com/novaora",
   coffee: "https://buymeacoffee.com/novaora",
 };

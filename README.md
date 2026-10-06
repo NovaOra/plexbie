@@ -15,7 +15,7 @@
   <img alt="Python 3.11" src="https://img.shields.io/badge/python-3.11-8e9cc6">
   <img alt="Docker" src="https://img.shields.io/badge/docker-one%20container-ff5c93">
   <a href="LICENSE"><img alt="AGPL-3.0 licence" src="https://img.shields.io/badge/licence-AGPL--3.0-ffd1e4"></a>
-  <a href="https://ko-fi.com/novaora"><img alt="Support Plexbie's development on Ko-fi" src="https://img.shields.io/badge/support-Ko--fi-ff5c93"></a>
+  <a href="https://github.com/sponsors/NovaOra"><img alt="Sponsor Plexbie's development on GitHub" src="https://img.shields.io/badge/sponsor-GitHub-ff5c93"></a>
 </p>
 
 <p align="center">
@@ -898,6 +898,7 @@ takes some of the admin off your household, you can chip in toward its
 development: new features, fixes, keeping up with Plex, Discord and the *arr apps,
 and the hours that go into all of it.
 
+- **GitHub Sponsors:** https://github.com/sponsors/NovaOra (monthly or one-time)
 - **Ko-fi:** https://ko-fi.com/novaora
 - **Buy Me a Coffee:** https://buymeacoffee.com/novaora
 

@@ -36,7 +36,7 @@ export function ProjectLayout({ children }: { children?: ReactNode }) {
         </p>
         <p className="footer__support">
           Plexbie is free and built in spare time. To support its development, chip in on{" "}
-          <a href={SUPPORT.kofi} rel="noopener">Ko-fi</a> or <a href={SUPPORT.coffee} rel="noopener">Buy Me a Coffee</a>.
+          <a href={SUPPORT.github} rel="noopener">GitHub Sponsors</a>, <a href={SUPPORT.kofi} rel="noopener">Ko-fi</a> or <a href={SUPPORT.coffee} rel="noopener">Buy Me a Coffee</a>.
           Tips go to building Plexbie, not to anyone’s Plex server.
         </p>
       </footer>

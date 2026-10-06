@@ -401,7 +401,8 @@ function TuneIn() {
             Tips support Plexbie, the open-source software. They don’t pay for access to anyone’s Plex server or media.
           </p>
           <div className="landing__actions">
-            <a className="btn" href={SUPPORT.kofi} rel="noopener"><Heart size={18} aria-hidden /> Support on Ko-fi</a>
+            <a className="btn" href={SUPPORT.github} rel="noopener"><Heart size={18} aria-hidden /> Sponsor on GitHub</a>
+            <a className="btn btn--quiet" href={SUPPORT.kofi} rel="noopener"><Coffee size={18} aria-hidden /> Ko-fi</a>
             <a className="btn btn--quiet" href={SUPPORT.coffee} rel="noopener"><Coffee size={18} aria-hidden /> Buy Me a Coffee</a>
           </div>
         </div>

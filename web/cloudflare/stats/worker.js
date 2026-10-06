@@ -53,8 +53,8 @@ async function load(env, days, site) {
     await Promise.all([
       one(env, `SELECT SUM(CASE WHEN event='pageview' THEN 1 ELSE 0 END) AS views,
                        COUNT(DISTINCT CASE WHEN event='pageview' THEN day || visitor END) AS visitors,
-                       SUM(CASE WHEN event='outbound' AND label LIKE 'github.com%' THEN 1 ELSE 0 END) AS github,
-                       SUM(CASE WHEN event='outbound' AND (label LIKE 'ko-fi.com%' OR label LIKE 'buymeacoffee.com%') THEN 1 ELSE 0 END) AS support,
+                       SUM(CASE WHEN event='outbound' AND label LIKE 'github.com%' AND label NOT LIKE 'github.com/sponsors%' THEN 1 ELSE 0 END) AS github,
+                       SUM(CASE WHEN event='outbound' AND (label LIKE 'github.com/sponsors%' OR label LIKE 'ko-fi.com%' OR label LIKE 'buymeacoffee.com%') THEN 1 ELSE 0 END) AS support,
                        SUM(CASE WHEN event='outbound' AND label LIKE 'demo.plexbie.com%' THEN 1 ELSE 0 END) AS demo,
                        COUNT(DISTINCT CASE WHEN event='pageview' AND path='/' THEN day || visitor END) AS home
                 FROM events WHERE ${W}`, since, site),
@@ -448,7 +448,7 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
   ${demo ? "" : tile("Video plays", num(plays), `teaser ${num(playsOf(d.video, "Teaser", 0))} · tour ${num(playsOf(d.video, "Full tour", 0))}${plays ? ` · ${Math.round((done / plays) * 100)}% to the end` : ""}`)}
   ${demo ? "" : tile("Went to the demo", num(t.demo), "from plexbie.com")}
   ${tile("GitHub clicks", num(t.github))}
-  ${tile("Support clicks", num(t.support), "Ko-fi and Buy Me a Coffee")}
+  ${tile("Support clicks", num(t.support), "GitHub Sponsors, Ko-fi and Buy Me a Coffee")}
 </div>
 <div class="grid">
   ${dailyChart(d.daily, d.since, Math.min(days, 365))}
