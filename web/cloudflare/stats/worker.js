@@ -98,6 +98,9 @@ const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS gh_account (day TEXT, login TEXT, followers INTEGER, public_repos INTEGER, PRIMARY KEY (day, login))",
   "CREATE TABLE IF NOT EXISTS gh_runs (ts INTEGER PRIMARY KEY, ok INTEGER, note TEXT)",
   "CREATE TABLE IF NOT EXISTS gh_images (day TEXT, image TEXT, downloads INTEGER, PRIMARY KEY (day, image))",
+  // The repo's own GitHub Actions runs, by day: each job checks the repo out, and GitHub
+  // counts that as a clone, so they're taken off the clone numbers.
+  "CREATE TABLE IF NOT EXISTS gh_ci (repo TEXT, run INTEGER, day TEXT, jobs INTEGER, PRIMARY KEY (repo, run))",
 ];
 let schemaReady = false;
 async function ensure(env) {
@@ -128,6 +131,31 @@ async function everyPage(env, path, accept) {
     if (got.length < 100) break;
   }
   return rows;
+}
+
+/** The repo's own Actions runs since `since` (YYYY-MM-DD) not counted yet, with how
+ *  many jobs each had: every job is a checkout, which GitHub counts as a clone. Dependabot's
+ *  update runs are Actions runs too. A workflow always has the same jobs, so they're asked
+ *  for once per workflow, not per run (a collection has few requests to spare). */
+async function actionsCheckouts(env, db, repo, since) {
+  const known = new Set((await db.prepare("SELECT run FROM gh_ci WHERE repo = ?").bind(repo).all()).results.map((r) => r.run));
+  const runs = [];
+  for (let page = 1; page <= 5; page++) {
+    const got = await gh(env, `/repos/${repo}/actions/runs?created=%3E%3D${since}&per_page=100&page=${page}`);
+    runs.push(...(got.workflow_runs || []));
+    if ((got.workflow_runs || []).length < 100) break;
+  }
+  const jobsOf = new Map();
+  const out = [];
+  for (const r of runs) {
+    if (known.has(r.id) || r.status !== "completed") continue;
+    if (!jobsOf.has(r.workflow_id)) {
+      const jobs = await gh(env, `/repos/${repo}/actions/runs/${r.id}/jobs?per_page=100`);
+      jobsOf.set(r.workflow_id, jobs.total_count || 0);
+    }
+    out.push({ run: r.id, day: r.created_at.slice(0, 10), jobs: jobsOf.get(r.workflow_id) });
+  }
+  return out;
 }
 
 /** A container image's total downloads (every pull: Unraid, docker run, Compose, updates,
@@ -190,6 +218,12 @@ async function collectGithub(env) {
       }
       for (const st of stars || []) if (st.user) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'star', ?, ?)").bind(repo, st.user.login, st.starred_at));
       for (const f of forks || []) if (f.owner) writes.push(db.prepare("INSERT OR IGNORE INTO gh_people VALUES (?, 'fork', ?, ?)").bind(repo, f.owner.login, f.created_at));
+      // GitHub keeps 14 days of clones; the runs from then on are what's taken off them.
+      const ci = await actionsCheckouts(env, db, repo, new Date(Date.now() - 15 * 86400000).toISOString().slice(0, 10)).catch((err) => {
+        problems.push(`${short(repo)}: ${/ answered 403/.test(err.message) ? "the token can't read Actions (give it Actions: read-only), so build checkouts count as clones" : err.message}`);
+        return [];
+      });
+      for (const c of ci) writes.push(db.prepare("INSERT OR IGNORE INTO gh_ci VALUES (?, ?, ?, ?)").bind(repo, c.run, c.day, c.jobs));
     } catch (err) {
       problems.push(`${short(repo)}: ${err.message}`);
     }
@@ -218,7 +252,7 @@ async function collectGithub(env) {
 async function loadGithub(env, since) {
   await ensure(env);
   const latestOf = (table) => `day = (SELECT MAX(day) FROM ${table} x WHERE x.repo = t.repo)`;
-  const [now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen, pulls, pullsThen] = await Promise.all([
+  const [now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen, pulls, pullsThen, ciDays] = await Promise.all([
     all(env, `SELECT repo, stars, forks, watchers, issues FROM gh_repo t WHERE ${latestOf("gh_repo")}`),
     all(env, `SELECT repo, stars, forks FROM gh_repo t WHERE day = (SELECT MIN(day) FROM gh_repo x WHERE x.repo = t.repo AND day >= ?)`, since),
     all(env, `SELECT day, SUM(views) AS views, SUM(view_uniques) AS uniques, SUM(clones) AS clones FROM gh_traffic WHERE day >= ? GROUP BY day ORDER BY day`, since),
@@ -232,8 +266,25 @@ async function loadGithub(env, since) {
     one(env, "SELECT followers FROM gh_account WHERE day >= ? ORDER BY day LIMIT 1", since),
     one(env, "SELECT SUM(downloads) AS n FROM gh_images t WHERE day = (SELECT MAX(day) FROM gh_images x WHERE x.image = t.image)"),
     one(env, "SELECT SUM(downloads) AS n FROM gh_images t WHERE day = (SELECT MIN(day) FROM gh_images x WHERE x.image = t.image AND day >= ?)", since),
+    all(env, "SELECT day, repo, SUM(jobs) AS jobs FROM gh_ci WHERE day >= ? GROUP BY day, repo", since),
   ]);
-  return { now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen, pulls, pullsThen };
+  // Clones by everyone else. Each Actions job is one unique cloner to GitHub (a fresh
+  // runner) but several clones (a checkout is a few git fetches: about 3), so it's the
+  // unique cloners that are taken off, and each day's clones are shared out in proportion.
+  // Our own git pulls (one cloner a day) can't be told apart and still count.
+  const ciOn = Object.fromEntries(ciDays.map((r) => [`${r.day}|${r.repo}`, r.jobs]));
+  const perRepo = await all(env, "SELECT day, repo, clones, clone_uniques FROM gh_traffic WHERE day >= ?", since);
+  let builds = 0, outside = 0, cloners = 0;
+  for (const r of perRepo) {
+    const ci = ciOn[`${r.day}|${r.repo}`] || 0, count = r.clones || 0, uniq = r.clone_uniques || 0;
+    const others = Math.max(0, uniq - ci);
+    const theirs = uniq ? Math.round(count * others / uniq) : 0;
+    cloners += others;
+    outside += theirs;
+    builds += count - theirs;
+  }
+  return { now, then, traffic, totals, popular, downloads, dlThen, people, run, account, accountThen, pulls, pullsThen,
+           clones: { outside, builds, cloners, counted: ciDays.length > 0 } };
 }
 
 // ---- page ----------------------------------------------------------------------------
@@ -371,9 +422,11 @@ function githubSection(g, since, days) {
   ${tile("Watchers", num(sum(g.now, "watchers")))}
   ${tile("Followers", num(g.account.followers), g.account.followers != null && g.accountThen.followers != null ? plus(g.account.followers - g.accountThen.followers) : "")}
   ${tile("Repo views", num(t.views), `${num(t.uniques)} unique a day, added up`)}
-  ${tile("Clones", num(t.clones), "GitHub Actions' own checkouts count too")}
+  ${g.clones.counted
+    ? tile("Clones by others", num(g.clones.outside), `${num(g.clones.cloners)} unique a day, added up · ${num(g.clones.builds)} by Plexbie's own builds left out · your git pulls still count`)
+    : tile("Clones", num(t.clones), "GitHub Actions' own checkouts count too")}
   ${tile("Release downloads", num(downloads), [appFiles.length ? `APK ${kind(".apk")} · IPA ${kind(".ipa")}` : "", plus(downloads - (g.dlThen.n ?? downloads))].filter(Boolean).join(" · "))}
-  ${g.pulls.n == null ? "" : tile("Image pulls", num(g.pulls.n), ["every install and update, Unraid and docker alike", plus(g.pulls.n - (g.pullsThen.n ?? g.pulls.n))].filter(Boolean).join(" · "))}
+  ${g.pulls.n == null ? "" : tile("Image pulls", num(g.pulls.n), ["every install and update, yours included: GitHub doesn't say whose", plus(g.pulls.n - (g.pullsThen.n ?? g.pulls.n))].filter(Boolean).join(" · "))}
   ${tile("Open issues and PRs", num(sum(g.now, "issues")))}
 </div>
 <div class="grid">
