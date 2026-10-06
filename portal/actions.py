@@ -801,6 +801,52 @@ class Actions:
             return {"ok": True, "message": "Open."}
         raise web.HTTPBadRequest(text='{"error":"Unknown status."}', content_type="application/json")
 
+    # ------------------------------------------------------- blocked imports
+    @staticmethod
+    def _blocked_ref(app: str, download_id: str) -> None:
+        from core.blocked_imports import APPS, DOWNLOAD_ID
+        if app not in APPS or not DOWNLOAD_ID.fullmatch(download_id or ""):
+            raise web.HTTPNotFound(text='{"error":"No such download."}', content_type="application/json")
+
+    async def blocked_list(self, user: dict) -> dict:
+        """Manage → Health: every download Sonarr/Radarr won't import by themselves."""
+        from core import blocked_imports
+        self.limit(user["user"]["id"], "admin")
+        rows = []
+        for b in await blocked_imports.blocked(self.services):
+            rows.append({k: b[k] for k in ("app", "downloadId", "title", "year", "release", "messages", "episodes")}
+                        | {"ticket": await blocked_imports.ticket_for(b["app"], b["downloadId"])})
+        return {"rows": rows}
+
+    async def blocked_preview(self, user: dict, app: str, download_id: str) -> dict:
+        """What's in it and what looks off, for an admin to look at before importing."""
+        from core import blocked_imports
+        self.limit(user["user"]["id"], "admin")
+        self._blocked_ref(app, download_id)
+        try:
+            return blocked_imports.public(await blocked_imports.preview(self.services, app, download_id))
+        except LookupError as e:
+            raise web.HTTPNotFound(text=json.dumps({"error": str(e)}), content_type="application/json")
+
+    async def blocked_import(self, user: dict, app: str, download_id: str) -> dict:
+        """Import it through Sonarr's/Radarr's Manual Import (after the admin held the button)."""
+        from core import blocked_imports
+        from portal import help as helpdesk
+        self.limit(user["user"]["id"], "admin")
+        self._blocked_ref(app, download_id)
+        actor = self.actor(user)
+        try:
+            message = await blocked_imports.do_import(self.services, app, download_id)
+        except LookupError as e:
+            return {"ok": False, "message": str(e)}
+        except (ValueError, RuntimeError) as e:
+            return {"ok": False, "message": str(e)}
+        hid = await blocked_imports.ticket_for(app, download_id)
+        if hid:
+            await helpdesk.add(hid, "action", actor, f"Looked it over and imported it. {message}")
+        logger.info(f"{actor} imported blocked download {app}:{download_id}: {message}")
+        return {"ok": True, "message": message}
+
     async def ticket_take(self, user: dict, hid: str) -> dict:
         from portal import help as helpdesk
         self.limit(user["user"]["id"], "admin")

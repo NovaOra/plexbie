@@ -512,6 +512,26 @@ threads.h3 = [
   { id: "e4", at: at(64), by: "Alex Kim", kind: "status", text: "Waiting on them" },
 ];
 
+/** A download Sonarr won't import by itself, as Plexbie opens it (core/blocked_imports). */
+const BLOCKED_NOTE = "Radar Men from the Moon finished downloading, but Sonarr won't import it by itself: Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. Look at the files on this ticket before you import it.";
+helps.push({ id: "h4", request: "5099", slot: 216, title: "Radar Men from the Moon", kind: "tv", seasons: [1], who: "Jordan Lee",
+  reason: "Downloaded, but won't import", note: BLOCKED_NOTE, status_then: "Downloaded, import blocked", status: "open", created_at: at(8), opened_by: "Plexbie" } as Help);
+threads.h4 = [{ id: "e9", at: at(8), by: "Plexbie", kind: "note", text: BLOCKED_NOTE }];
+const sampleBlocked = { app: "sonarr" as const, downloadId: "SABnzbd_nzo_demo" };
+export const adminBlocked = () => wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952,
+  release: "Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"], ticket: "h4",
+  messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."] }] });
+export const blockedPreview = () => wait({
+  ...sampleBlocked, title: "Radar Men from the Moon", year: 1952, release: "Radar.Men.From.The.Moon.S01.1080p.WEB",
+  folder: "/data/usenet/complete/tv/Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"],
+  messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."],
+  warnings: [],
+  files: [1, 2, 3].map((n) => ({ name: `Radar.Men.From.The.Moon.S01E0${n}.1080p.WEB.mkv`, size: (1.1 + n / 10) * 2 ** 30,
+    as: [`S01E0${n}`], quality: "WEBDL-1080p", notes: [] as string[] })),
+  others: [{ name: "Radar.Men.From.The.Moon.S01.nfo", size: 2048, danger: false }],
+  ok: true,
+}, 400);
+
 function threadOf(h: Help): Entry[] {
   threads[h.id] ??= [
     { id: `x${nextEntry++}`, at: h.created_at, by: h.opened_by ?? h.who, kind: h.opened_by ? "note" : "member",
@@ -547,7 +567,8 @@ export function ticketsList(): import("./types").AdminTickets {
 export const adminTicket = (id: string) => {
   const h = helps.find((x) => x.id === id) ?? helps[0];
   const request = allRequests("").rows.find((r) => r.id === h.request) ?? null;
-  return wait({ ...ticketRow(h), note: h.note, statusThen: h.status_then, quiet: false, thread: [...threadOf(h)], request }, 250);
+  return wait({ ...ticketRow(h), note: h.note, statusThen: h.status_then, quiet: false, thread: [...threadOf(h)], request,
+    blocked: h.id === "h4" ? sampleBlocked : null }, 250);
 };
 export const ticketComment = (id: string, kind: "note" | "reply", text: string) => {
   entry(id, kind, "Sam Rivera", text);

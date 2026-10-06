@@ -249,6 +249,11 @@ class NewMediaAddedCog(commands.Cog):
         except Exception as e:
             logger.warning(f"Waiting-for-Plex check failed: {e}")
         try:
+            from core import blocked_imports
+            await blocked_imports.check(self.bot, self.services)
+        except Exception as e:
+            logger.warning(f"Blocked-imports check failed: {e}")
+        try:
             await self.check_movie_grabs()
         except Exception as e:
             logger.warning(f"Checking Radarr's downloads failed: {e}")

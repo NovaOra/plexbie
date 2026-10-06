@@ -320,7 +320,9 @@ class Admin:
         if not isinstance(h, dict):
             return None
         out = {**_ticket_row(hid, h), "note": h.get("note"), "statusThen": h.get("status_then"),
-               "quiet": bool(h.get("quiet")), "thread": helpdesk.thread_of(h), "request": None}
+               "quiet": bool(h.get("quiet")), "thread": helpdesk.thread_of(h), "request": None,
+               # A download Sonarr/Radarr won't import by themselves (core/blocked_imports).
+               "blocked": h.get("blocked") if isinstance(h.get("blocked"), dict) else None}
         rec = (await self.data._slots()).get(str(h.get("request")))
         if rec:
             names = await self._names()

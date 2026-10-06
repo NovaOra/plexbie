@@ -183,7 +183,7 @@ async def open_help(bot, request_key: Any, *, seasons: Any, reason: str, note: s
             "plexAccountId": rec.get("plex_account_id"), "plexName": rec.get("requester_name")}
     h = await helpdesk.create(
         request_key=str(request_key), slot=slot, title=media.get("title") or media.get("name") or "Untitled",
-        kind=media.get("media_type") or "tv", seasons=seasons, user=user, reason=helpdesk.REASONS[reason],
+        kind=media.get("media_type") or "tv", seasons=seasons, user=user, reason=helpdesk.REASONS.get(reason) or helpdesk.PLEXBIE_REASONS[reason],
         note=note, status_now=status_now, offer=offer)
     if actions:
         await actions._tell_admins_about_help(h)

@@ -1,4 +1,4 @@
-import type { AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
+import type { BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
 import * as sample from "./sample";
 export { DEMO } from "./sample";
 
@@ -164,6 +164,12 @@ export const api = {
     SAMPLE ? sample.adminRequest(key) : call(`/admin/request/${enc(key)}`),
   requestTicket: (key: string, note: string, tell: boolean, message = ""): Promise<Ack & { help: { id: string; reason: string } }> =>
     SAMPLE ? sample.requestTicket(key, note, tell, message) : post(`/admin/request/${enc(key)}/ticket`, { note, tell, message }),
+  adminBlocked: (): Promise<{ rows: BlockedRow[] }> =>
+    SAMPLE ? sample.adminBlocked() : call("/admin/blocked"),
+  blockedPreview: (app: string, downloadId: string): Promise<BlockedPreview> =>
+    SAMPLE ? sample.blockedPreview() : call(`/admin/blocked/${enc(app)}/${enc(downloadId)}`),
+  blockedImport: (app: string, downloadId: string): Promise<Ack> =>
+    SAMPLE ? sample.wait({ ok: true, message: "Imported 3 files." }, 900) : post(`/admin/blocked/${enc(app)}/${enc(downloadId)}/import`),
   adminTicket: (id: string): Promise<AdminTicketDetail> =>
     SAMPLE ? sample.adminTicket(id) : call(`/admin/ticket/${enc(id)}`),
   /** "note": admins only; "reply": sent to the member the usual way. */

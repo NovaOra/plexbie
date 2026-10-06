@@ -332,6 +332,28 @@ export interface AdminTicketDetail extends AdminTicketRow {
   thread: TicketEntry[];
   /** Its request, as Manage → All requests shows it (null if the request is gone). */
   request: AdminRequestRow | null;
+  /** A download Sonarr/Radarr won't import by themselves, on this ticket. */
+  blocked?: BlockedRef | null;
+}
+
+/* ---------------------------------------------- blocked imports (Manage) */
+
+/** A finished download Sonarr or Radarr won't import by themselves (core/blocked_imports). */
+export interface BlockedRef { app: "sonarr" | "radarr"; downloadId: string }
+export interface BlockedRow extends BlockedRef {
+  title: string; year?: number | null; release: string; messages: string[]; episodes: string[];
+  /** Its ticket, when it's on a request. */
+  ticket?: string | null;
+}
+/** What's in it, and what looks off, for an admin to look at before importing. */
+export interface BlockedPreview extends BlockedRef {
+  title: string; year?: number | null; release: string; folder: string; messages: string[]; episodes: string[];
+  warnings: string[];
+  files: { name: string; size: number; as: string[]; quality?: string | null; notes: string[] }[];
+  /** Other files in the folder (Plexbie lists them when it can see it); `danger`: a program. */
+  others: { name: string; size: number; danger: boolean }[];
+  /** Whether it can be imported from Plexbie at all. */
+  ok: boolean;
 }
 
 /* ------------------------------------------------- all requests (Manage) */

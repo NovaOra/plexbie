@@ -39,6 +39,10 @@ REASONS = {
     "playback": "Won't play on Plex",
     "other": "Something else",
 }
+#: Reasons only Plexbie opens tickets for (members don't pick these).
+PLEXBIE_REASONS = {
+    "blocked": "Downloaded, but won't import",
+}
 
 
 def _now() -> str:

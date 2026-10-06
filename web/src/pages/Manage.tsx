@@ -12,7 +12,7 @@ import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { api, type Ack } from "../api/client";
-import type { AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
+import type { BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { Journey, LiveProgress } from "../components/motion";
@@ -99,12 +99,20 @@ function useAct() {
  * the end. Letting go early cancels. Keyboard users hold Space or Enter;
  * assistive tech that "clicks" without a press gets a two-step confirm instead.
  */
-function HoldButton({ label, icon, onConfirm, disabled, ms = 1000 }: {
+function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail }: {
   label: string; icon?: ReactNode; onConfirm: () => void; disabled?: boolean; ms?: number;
+  /** What the button says through the hold, evenly spaced (instead of "Keep holding…"). */
+  stages?: string[];
+  /** Shown for a moment after letting go early. */
+  bail?: string;
 }) {
   const [holding, setHolding] = useState(false);
   const [armed, setArmed] = useState(false);
+  const [stage, setStage] = useState(0);
+  const [bailed, setBailed] = useState(false);
   const timer = useRef<number | undefined>(undefined);
+  const ticker = useRef<number | undefined>(undefined);
+  const bailTimer = useRef<number | undefined>(undefined);
   const pressed = useRef(false);
   const self = useRef<HTMLButtonElement>(null);
 
@@ -130,8 +138,15 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000 }: {
     if (disabled || pressed.current) return;
     pressed.current = true;
     setHolding(true);
+    setBailed(false);
+    setStage(0);
     buzz(4);
+    if (stages?.length) {
+      let at = 0;
+      ticker.current = window.setInterval(() => { at = Math.min(at + 1, stages.length - 1); setStage(at); buzz(3); }, ms / stages.length);
+    }
     timer.current = window.setTimeout(() => {
+      window.clearInterval(ticker.current);
       pressed.current = false;
       setHolding(false);
       buzz(16);
@@ -140,12 +155,18 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000 }: {
   };
   const cancel = () => {
     window.clearTimeout(timer.current);
+    window.clearInterval(ticker.current);
+    if (pressed.current && bail) {
+      setBailed(true);
+      window.clearTimeout(bailTimer.current);
+      bailTimer.current = window.setTimeout(() => setBailed(false), 2200);
+    }
     pressed.current = false;
     setHolding(false);
   };
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => () => { window.clearTimeout(timer.current); window.clearInterval(ticker.current); window.clearTimeout(bailTimer.current); }, []);
   const isKey = (e: ReactKeyboardEvent) => e.key === " " || e.key === "Enter";
-  const text = armed ? "Again to confirm" : `Hold to ${label.toLowerCase()}`;
+  const text = armed ? "Again to confirm" : bailed && bail ? bail : `Hold to ${label.toLowerCase()}`;
   const hint = useId();
 
   return (
@@ -176,10 +197,10 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000 }: {
       onBlur={() => { cancel(); setArmed(false); }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <span className="m-hold__label">{icon}{text}</span>
+      <span className="m-hold__label">{icon}{holding && stages?.length ? stages[stage] : text}</span>
       <span id={hint} hidden>Press and hold, or press twice, to confirm.</span>
       <span className="m-hold__fill" aria-hidden>
-        <span className="m-hold__label">{icon}{holding ? "Keep holding…" : text}</span>
+        <span className="m-hold__label">{icon}{holding ? (stages?.[stage] ?? "Keep holding…") : text}</span>
       </span>
     </button>
   );
@@ -1057,6 +1078,105 @@ function CleanupTab() {
   );
 }
 
+/** What the import button says while it's held: a little ceremony, so nobody imports blind. */
+const IMPORT_STAGES = ["Did you look at the files? 👀", "Episode numbers? Sizes? No .exe? 🧐", "Okay, okay. Going in 3…", "2…", "1…"];
+
+/**
+ * A download Sonarr or Radarr won't import by themselves (core/blocked_imports in the
+ * bot): why, what's in it, and what looks off, then a long hold to import it anyway.
+ */
+function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => void }) {
+  const { toast, readOnly } = useManage();
+  const { busy, act } = useAct();
+  const [p, setP] = useState<BlockedPreview | null>(null);
+  const [failed, setFailed] = useState("");
+  const [done, setDone] = useState("");
+  useEffect(() => {
+    let live = true;
+    api.blockedPreview(target.app, target.downloadId).then((x) => { if (live) setP(x); })
+      .catch((e: unknown) => { if (live) setFailed(e instanceof Error ? e.message : "Couldn’t look inside it."); });
+    return () => { live = false; };
+  }, [target.app, target.downloadId]);
+  const app = target.app === "sonarr" ? "Sonarr" : "Radarr";
+  const go = async () => {
+    const out = await act("import", () => api.blockedImport(target.app, target.downloadId), { failText: "Not imported" });
+    if (!out) return;
+    setDone(out.message);
+    toast({ text: "Imported", detail: out.message });
+    onDone?.();
+  };
+  return (
+    <section className="m-blocked" aria-label={`${app} won’t import this by itself`}>
+      <p className="m-blocked__head"><CircleAlert size={16} aria-hidden /> {app} won’t import this by itself</p>
+      {failed ? <p className="muted">{failed}</p> : !p ? <p className="muted">Looking inside…</p> : (
+        <>
+          {p.messages.map((m) => <p key={m} className="m-blocked__why">“{m}”</p>)}
+          <p className="m-blocked__advice">Look before you import. Usually it’s fine (a name {app} couldn’t match), but a blocked import can be the wrong episode, the wrong film, or something that shouldn’t be there.</p>
+          {p.warnings.length ? (
+            <ul className="m-blocked__warnings">{p.warnings.map((w) => <li key={w}><CircleAlert size={14} aria-hidden /> {w}</li>)}</ul>
+          ) : null}
+          <ul className="m-blocked__files" aria-label="What’s in it">
+            {p.files.map((f) => (
+              <li key={f.name} className={f.notes.length ? "is-odd" : undefined}>
+                <span className="m-blocked__name">{f.name}</span>
+                <span className="muted">{bytes(f.size)}{f.quality ? ` · ${f.quality}` : ""}{f.as.length ? ` · as ${f.as.join(", ")}` : ""}</span>
+                {f.notes.map((n) => <span key={n} className="m-blocked__note">{n}</span>)}
+              </li>
+            ))}
+            {p.others.map((o) => (
+              <li key={o.name} className={o.danger ? "is-danger" : "is-other"}>
+                <span className="m-blocked__name">{o.name}</span>
+                <span className="muted">{bytes(o.size)} · {o.danger ? "a program, not a video" : "not imported"}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="muted m-blocked__folder">In {p.folder}</p>
+          {done ? <p className="m-blocked__done"><Check size={16} aria-hidden /> {done}</p> : p.ok ? (
+            <HoldButton label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
+              disabled={readOnly || !!busy} onConfirm={() => void go()} />
+          ) : (
+            <p className="m-blocked__nope">Not importable from here: sort it out in {app}, or delete the download.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function bytes(n: number): string {
+  if (n >= 2 ** 30) return `${(n / 2 ** 30).toFixed(1)} GB`;
+  if (n >= 2 ** 20) return `${Math.round(n / 2 ** 20)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+/** Manage → Health: every download waiting for an admin to look at it. */
+function BlockedList() {
+  const [rows, setRows] = useState<BlockedRow[] | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const load = useCallback(() => api.adminBlocked().then((x) => setRows(x.rows)).catch(() => setRows([])), []);
+  useEffect(() => { void load(); }, [load]);
+  if (!rows?.length) return null;
+  return (
+    <section className="section">
+      <div className="m-head"><h2>Waiting for you to look</h2></div>
+      <ul className="m-cards">
+        {rows.map((r) => {
+          const key = `${r.app}:${r.downloadId}`;
+          return (
+            <li key={key} className="m-card">
+              <p className="m-card__eyebrow">{r.app === "sonarr" ? "Sonarr" : "Radarr"} · import blocked{r.episodes.length ? ` · ${r.episodes.join(", ")}` : ""}</p>
+              <h3 className="m-card__title">{r.title}{r.year ? <span className="muted"> ({r.year})</span> : null}</h3>
+              {open === key ? <BlockedImport target={r} onDone={() => window.setTimeout(() => void load(), 1500)} /> : (
+                <button type="button" className="btn m-btn" onClick={() => setOpen(key)}>Look inside</button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function HealthTab() {
   const { data, refresh } = useManage();
   const [spinning, setSpinning] = useState(false);
@@ -1068,6 +1188,8 @@ function HealthTab() {
     setSpinning(false);
   };
   return (
+    <>
+    <BlockedList />
     <section className="section">
       <div className="m-head">
         <h2>Services</h2>
@@ -1091,6 +1213,7 @@ function HealthTab() {
         ))}
       </ul>
     </section>
+    </>
   );
 }
 
@@ -2116,6 +2239,8 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
               ) : null}
             </div>
           ) : null}
+
+          {t.blocked && t.status === "open" ? <BlockedImport target={t.blocked} onDone={after} /> : null}
 
           {video && t.status === "open" ? (
             <div className="m-reqsheet__fixes">

@@ -258,6 +258,8 @@ class Progress:
                 left += min((r.get("sizeleft") or 0) for r in recs) / 1048576
 
         states = {r.get("trackedDownloadState") for r in records}
+        blocked = next((m for r in records if r.get("trackedDownloadState") in ("importBlocked", "importFailed")
+                        for s in r.get("statusMessages") or [] for m in s.get("messages") or [] if m), None)
         problem = next((r.get("errorMessage") or r.get("trackedDownloadStatus") for r in records
                         if r.get("trackedDownloadStatus") in ("warning", "error") or r.get("status") == "failed"), None)
         eta = min((r.get("estimatedCompletionTime") for r in records if r.get("estimatedCompletionTime")), default=None)
@@ -265,6 +267,11 @@ class Progress:
             problem = "SABnzbd couldn't finish a download; Sonarr or Radarr will look for another copy"
         elif post and left <= 0:
             return post
+        elif (blocked or states & {"importBlocked", "importFailed"}) and (finished == len(groups) or left <= 0):
+            # Downloaded, but Sonarr/Radarr won't import it by themselves (core/blocked_imports):
+            # an admin has to look at it, so it isn't "Adding to Plex".
+            return {"stage": "importing", "percent": 100, "detail": "Downloaded. An admin needs to check it before it goes to Plex",
+                    "problem": f"Import blocked: {blocked}" if blocked else "Import blocked: Sonarr or Radarr won't import it by itself"}
         elif finished == len(groups) or (states & {"importPending", "importing", "imported"} and left <= 0):
             return {"stage": "importing", "percent": 100, "detail": "Downloaded, moving it onto Plex"}
 

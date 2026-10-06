@@ -496,6 +496,26 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         r.add_post("/api/admin/help/{id}/name", safe(post_help_name))
         r.add_post("/api/admin/help/{id}/resolve", safe(post_help_resolve))
 
+        # Downloads Sonarr/Radarr won't import by themselves (core/blocked_imports).
+        BLOCKED = "/api/admin/blocked/{app:sonarr|radarr}/{did:[\\w.:-]{1,120}}"
+
+        async def get_blocked(request):
+            return web.json_response(await actions.blocked_list(await admin_only(request)))
+
+        async def get_blocked_preview(request):
+            m = request.match_info
+            return web.json_response(await actions.blocked_preview(await admin_only(request), m["app"], m["did"]))
+
+        async def post_blocked_import(request):
+            await body(request)
+            m = request.match_info
+            result = await actions.blocked_import(await admin_only(request), m["app"], m["did"])
+            return web.json_response(result, status=200 if result.get("ok") else 409)
+
+        r.add_get("/api/admin/blocked", safe(get_blocked))
+        r.add_get(BLOCKED, safe(get_blocked_preview))
+        r.add_post(BLOCKED + "/import", safe(post_blocked_import))
+
         async def post_admin_ticket(request):
             payload = await body(request)
             result = await actions.admin_ticket(await admin_only(request), request.match_info["key"], payload)
