@@ -218,7 +218,7 @@ function ChannelGuide({ play }: { play?: { film: Film; ask: number } }) {
         <p className="muted">Two channels: the teaser on 01, and the three-minute tour on 02. Or try it yourself in the demo.</p>
         <p className="muted guide__credit">
           Music: “Dry and High” by <a href="https://freemusicarchive.org/music/Ketsa/cc-by-free-to-use-for-anything" rel="noopener">Ketsa</a> (CC BY 4.0).
-          Sound effects: <a href="https://kenney.nl" rel="noopener">Kenney</a> (CC0). Every title and person in the films is made up.
+          Sound effects: <a href="https://kenney.nl" rel="noopener">Kenney</a> (CC0). Posters: <a href="https://studio.blender.org/films/" rel="noopener">Blender Foundation</a> open movies and Pepper &amp; Carrot by David Revoy (CC BY), and public-domain serials. Everyone in the films is made up.
         </p>
       </div>
       <RetroTv channels={list} tuneTo={tuneTo} onTune={(name) => track("channel", { l: name })} />
