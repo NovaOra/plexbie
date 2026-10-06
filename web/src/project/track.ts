@@ -1,12 +1,12 @@
 // plexbie.com counts its own visits: pages, where people came from, clicks, TV channels,
-// how much of the tour is watched, and time on page with scroll depth. Each event is one
+// how much of the teaser and the tour is watched, which parts of the home page are reached, and time on page with scroll depth. Each event is one
 // small POST to /e on this site (cloudflare/worker.js), stored in Cloudflare D1 for the
 // maintainer's dashboard. No cookies and nothing kept on the device. Browsers that send
 // Global Privacy Control or Do Not Track aren't counted at all, and nothing is sent while
 // developing locally. The public demo (demo.plexbie.com, npm run build:demo) is counted
 // the same way, into the same place; household installs never include this file.
 
-type Event = "pageview" | "engage" | "click" | "outbound" | "channel" | "video";
+type Event = "pageview" | "engage" | "click" | "outbound" | "channel" | "video" | "seen";
 
 const OFF = typeof navigator === "undefined" || import.meta.env.DEV
   || (navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl === true
@@ -94,4 +94,22 @@ export function startTracking() {
     else shownSince = Date.now();
   });
   window.addEventListener("pagehide", flush);
+}
+
+/** Counts each home-page section marked data-seen once per visit to the page, when its top
+ *  passes 60% of the way down the screen. Returns the clean-up. */
+export function watchSections(): () => void {
+  if (OFF || typeof IntersectionObserver === "undefined") return () => undefined;
+  const counted = new Set<string>();
+  const io = new IntersectionObserver((entries) => {
+    for (const en of entries) {
+      const name = (en.target as HTMLElement).dataset.seen;
+      if (!en.isIntersecting || !name || counted.has(name)) continue;
+      counted.add(name);
+      io.unobserve(en.target);
+      track("seen", { l: name });
+    }
+  }, { rootMargin: "0px 0px -40% 0px" });
+  document.querySelectorAll<HTMLElement>("[data-seen]").forEach((el) => io.observe(el));
+  return () => io.disconnect();
 }

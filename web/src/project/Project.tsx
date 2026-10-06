@@ -8,7 +8,7 @@ import { stageHelp, Strap, useCopied, useTitle } from "../components/ui";
 import { DragCrawl } from "../components/DragCrawl";
 import { RetroTv, type TvChannel } from "../components/RetroTv";
 import { FILMS, TvFilm, type Film } from "./Screening";
-import { track } from "./track";
+import { track, watchSections } from "./track";
 
 // The public project page: Plexbie the open-source software, for a household's
 // Plex server. It shows nothing about any real server or library, every claim
@@ -212,7 +212,7 @@ function ChannelGuide({ play }: { play?: { film: Film; ask: number } }) {
   const list = useMemo(() => channels(play), [play]);
   const tuneTo = useMemo(() => (play ? { index: list.findIndex((c) => c.name === FILMS[play.film].channel), ask: play.ask } : undefined), [play, list]);
   return (
-    <section id="channels" className="guide" aria-labelledby="guide-h" style={{ scrollMarginTop: 80 }}>
+    <section id="channels" data-seen="TV" className="guide" aria-labelledby="guide-h" style={{ scrollMarginTop: 80 }}>
       <div className="guide__head">
         <h2 id="guide-h" className="display section-title">Tonight’s line-up</h2>
         <p className="muted">Two channels: the teaser on 01, and the three-minute tour on 02. Or try it yourself in the demo.</p>
@@ -228,7 +228,7 @@ function ChannelGuide({ play }: { play?: { film: Film; ask: number } }) {
 
 function Features() {
   return (
-    <section id="features" className="features" aria-labelledby="features-h" style={{ scrollMarginTop: 80 }}>
+    <section id="features" data-seen="Features" className="features" aria-labelledby="features-h" style={{ scrollMarginTop: 80 }}>
       <h2 id="features-h" className="display section-title">What it does</h2>
       <div className="features__grid">
         {FEATURES.map((f) => <article key={f.name} className="feature" aria-label={f.name}>{f.render()}</article>)}
@@ -262,7 +262,7 @@ function Plugins() {
     <span className={`crawl__chip${picked?.[0] === name ? " is-picked" : ""}`}>{name}</span>
   );
   return (
-    <section className="plugs" aria-labelledby="plugs-h">
+    <section className="plugs" data-seen="Plugins" aria-labelledby="plugs-h">
       <div className="shell plugs__head">
         <h2 id="plugs-h" className="display section-title">Eleven plugins. Keep the ones you like.</h2>
         <p className="muted">
@@ -349,7 +349,7 @@ function Terminal() {
 
 function SelfHost() {
   return (
-    <section id="self-host" className="selfhost" aria-labelledby="self-h" style={{ scrollMarginTop: 80 }}>
+    <section id="self-host" data-seen="Self-host" className="selfhost" aria-labelledby="self-h" style={{ scrollMarginTop: 80 }}>
       <div className="selfhost__copy">
         <h2 id="self-h" className="display section-title">On air in six commands</h2>
         <p>
@@ -377,7 +377,7 @@ function SelfHost() {
 
 function TuneIn() {
   return (
-    <section className="tunein" aria-labelledby="tune-h">
+    <section className="tunein" data-seen="Tune in" aria-labelledby="tune-h">
       <div className="tunein__copy">
         <h2 id="tune-h" className="display tunein__title">Tune in.</h2>
         {REPO_PUBLIC ? (
@@ -414,6 +414,7 @@ function TuneIn() {
 export function Project() {
   useTitle(null);
   const [play, setPlay] = useState<{ film: Film; ask: number }>();
+  useEffect(() => watchSections(), []);
   return (
     <div className="project">
       <Hero onWatch={() => setPlay((p) => ({ film: "tour", ask: (p?.ask ?? 0) + 1 }))} />

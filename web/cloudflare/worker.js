@@ -27,7 +27,7 @@ const REDIRECT = [/^\/app(\/|$)/, /^\/invite(\/|$)/, /^\/auth\//, /^\/setup(\/|$
 /** Where an event may come from: this site, or the public demo (demo.plexbie.com), which
  *  sends its own visits here. Each is stored with its site, so the dashboard can tell them apart. */
 const SITES = { "https://plexbie.com": "plexbie.com", "https://www.plexbie.com": "plexbie.com", "https://demo.plexbie.com": "demo" };
-const EVENTS = new Set(["pageview", "engage", "click", "outbound", "channel", "video"]);
+const EVENTS = new Set(["pageview", "engage", "click", "outbound", "channel", "video", "seen"]);
 const BOTS = /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|monitor|curl|wget|python|go-http|java\//i;
 const clip = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
 

@@ -49,16 +49,18 @@ async function load(env, days, site) {
   const since = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10);
   // ?1 is the first day, ?2 the site (rows from before sites were recorded are plexbie.com's).
   const W = "day >= ?1 AND COALESCE(site, 'plexbie.com') = ?2";
-  const [totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, times] =
+  const [totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, times, seen] =
     await Promise.all([
       one(env, `SELECT SUM(CASE WHEN event='pageview' THEN 1 ELSE 0 END) AS views,
                        COUNT(DISTINCT CASE WHEN event='pageview' THEN day || visitor END) AS visitors,
                        SUM(CASE WHEN event='outbound' AND label LIKE 'github.com%' THEN 1 ELSE 0 END) AS github,
                        SUM(CASE WHEN event='outbound' AND (label LIKE 'ko-fi.com%' OR label LIKE 'buymeacoffee.com%') THEN 1 ELSE 0 END) AS support,
-                       SUM(CASE WHEN event='outbound' AND label LIKE 'demo.plexbie.com%' THEN 1 ELSE 0 END) AS demo
+                       SUM(CASE WHEN event='outbound' AND label LIKE 'demo.plexbie.com%' THEN 1 ELSE 0 END) AS demo,
+                       COUNT(DISTINCT CASE WHEN event='pageview' AND path='/' THEN day || visitor END) AS home
                 FROM events WHERE ${W}`, since, site),
       one(env, `SELECT AVG(value) AS seconds, COUNT(*) AS n FROM events WHERE ${W} AND event='engage'`, since, site),
-      all(env, `SELECT CAST(value AS INTEGER) AS q, COUNT(*) AS n FROM events WHERE ${W} AND event='video' GROUP BY q ORDER BY q`, since, site),
+      // Plays before the films carried a label were all the tour.
+      all(env, `SELECT COALESCE(label, 'Full tour') AS film, CAST(value AS INTEGER) AS q, COUNT(*) AS n FROM events WHERE ${W} AND event='video' GROUP BY film, q ORDER BY film, q`, since, site),
       all(env, `SELECT day, SUM(event='pageview') AS views, COUNT(DISTINCT CASE WHEN event='pageview' THEN visitor END) AS visitors
                 FROM events WHERE ${W} GROUP BY day ORDER BY day`, since, site),
       all(env, `SELECT COALESCE(referrer, 'Direct or unknown') AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='pageview' AND ts IN
@@ -74,12 +76,13 @@ async function load(env, days, site) {
       all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='engage' GROUP BY k ORDER BY k`, since, site),
       all(env, `SELECT ts, event, path, label, value, referrer, country, device, browser FROM events WHERE COALESCE(site, 'plexbie.com') = ?1 ORDER BY ts DESC LIMIT 40`, site),
       all(env, `SELECT ts FROM events WHERE ${W} AND event='pageview' LIMIT 50000`, since, site),
+      all(env, `SELECT label AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='seen' GROUP BY k`, since, site),
     ]);
   const hours = Array(24).fill(0);
   const hourOf = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", hourCycle: "h23" });
   for (const r of times) hours[Number(hourOf.format(r.ts)) % 24]++;
   const github = await loadGithub(env, since);
-  return { site, since, totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, hours, github };
+  return { site, since, totals, engage, video, daily, sources, countries, devices, browsers, oses, pages, clicks, outbound, channels, scroll, recent, hours, github, seen };
 }
 
 // ---- GitHub --------------------------------------------------------------------------
@@ -294,14 +297,32 @@ function hoursChart(hours) {
     `<span title="${h}:00 to ${h}:59: ${n} page views" style="--h:${(n / max * 100).toFixed(1)}%"><i></i><b>${h % 6 === 0 ? h : ""}</b></span>`).join("")}</div></section>`;
 }
 
-function funnel(video) {
-  const at = Object.fromEntries(video.map((r) => [r.q, r.n]));
+/** plexbie.com's TV: channel 01 plays the teaser, 02 the three-minute tour. The names match
+ *  FILMS[…].channel in src/project/Screening.tsx, which is what the site sends. */
+const FILMS = [["Teaser", "The teaser (channel 01)"], ["Full tour", "The tour (channel 02)"]];
+/** The home page's sections, top to bottom, as marked with data-seen in src/project/Project.tsx. */
+const SECTIONS = ["TV", "Features", "Plugins", "Self-host", "Tune in"];
+
+const playsOf = (video, film, q) => video.filter((r) => (film == null || r.film === film) && r.q === q).reduce((a, r) => a + r.n, 0);
+
+function funnel(video, film, title) {
+  const at = Object.fromEntries(video.filter((r) => r.film === film).map((r) => [r.q, r.n]));
   const start = at[0] || 0;
   const rows = [[0, "Pressed play"], [25, "A quarter in"], [50, "Halfway"], [75, "Three quarters"], [100, "To the end"]];
-  return `<section class="card"><h2>The tour (channel 05)</h2><ol class="rk">${rows.map(([q, name]) => {
+  return `<section class="card"><h2>${e(title)}</h2><ol class="rk">${rows.map(([q, name]) => {
     const n = at[q] || 0;
     return `<li title="${name}: ${n}"><span class="rk__k">${name}</span><span class="rk__n">${num(n)}${q && start ? ` · ${Math.round((n / start) * 100)}%` : ""}</span>
       <span class="rk__bar" style="width:${start ? Math.max(2, (n / start) * 100).toFixed(1) : 0}%"></span></li>`;
+  }).join("")}</ol></section>`;
+}
+
+/** How far down the home page visitors got: each section's share of the home page's visitors. */
+function reached(seen, home) {
+  const at = Object.fromEntries(seen.map((r) => [r.k, r.n]));
+  return `<section class="card"><h2>Home page sections reached <small>(of ${num(home)} visitors)</small></h2><ol class="rk">${SECTIONS.map((k) => {
+    const n = at[k] || 0;
+    return `<li title="${e(k)}: ${num(n)}"><span class="rk__k">${e(k)}</span><span class="rk__n">${num(n)}${home ? ` · ${Math.round((n / home) * 100)}%` : ""}</span>
+      <span class="rk__bar" style="width:${home && n ? Math.max(2, (n / home) * 100).toFixed(1) : 0}%"></span></li>`;
   }).join("")}</ol></section>`;
 }
 
@@ -368,8 +389,11 @@ function githubSection(g, since, days) {
 
 function page(d, days) {
   const t = d.totals;
-  const plays = (d.video.find((r) => r.q === 0) || {}).n || 0;
-  const done = (d.video.find((r) => r.q === 100) || {}).n || 0;
+  const plays = playsOf(d.video, null, 0);
+  const done = playsOf(d.video, null, 100);
+  const current = new Set(FILMS.map(([film]) => film));
+  // Channels from the old line-up (Requests, Plex access, …) are now cards below the TV.
+  const channelRows = d.channels.map((r) => ({ k: current.has(r.k) ? r.k : `${r.k} (old line-up)`, n: r.n }));
   const secs = Math.round(d.engage.seconds || 0);
   const scrollRows = d.scroll.map((r) => ({ k: r.k?.replace("scroll:", "") + "%", n: r.n }));
   const demo = d.site === "demo";
@@ -421,7 +445,7 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
   ${tile("Visitors", num(t.visitors), "one per person per day")}
   ${tile("Page views", num(t.views))}
   ${tile("Time on a page", secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`, "average, while on screen")}
-  ${demo ? "" : tile("Tour plays", num(plays), plays ? `${Math.round((done / plays) * 100)}% watched to the end` : "")}
+  ${demo ? "" : tile("Video plays", num(plays), `teaser ${num(playsOf(d.video, "Teaser", 0))} · tour ${num(playsOf(d.video, "Full tour", 0))}${plays ? ` · ${Math.round((done / plays) * 100)}% to the end` : ""}`)}
   ${demo ? "" : tile("Went to the demo", num(t.demo), "from plexbie.com")}
   ${tile("GitHub clicks", num(t.github))}
   ${tile("Support clicks", num(t.support), "Ko-fi and Buy Me a Coffee")}
@@ -431,8 +455,9 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
   ${ranked("Came from", d.sources)}
   ${ranked("Countries", d.countries, country)}
   ${ranked("Pages", d.pages)}
-  ${demo ? "" : funnel(d.video)}
-  ${demo ? "" : ranked("TV channels picked", d.channels)}
+  ${demo ? "" : FILMS.map(([film, title]) => funnel(d.video, film, title)).join("")}
+  ${demo ? "" : ranked("TV channels picked", channelRows)}
+  ${demo ? "" : reached(d.seen, t.home || 0)}
   ${ranked("Links to other sites", d.outbound)}
   ${ranked("Buttons and links on the page", d.clicks)}
   ${ranked("How far down they read", scrollRows)}
