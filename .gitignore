@@ -42,3 +42,8 @@ config/cache/
 *.pem
 *.key
 *.p12
+
+# Local tool settings
+AGENTS.md
+CLAUDE.md
+.claude/
