@@ -158,3 +158,35 @@ def test_seerrs_leftovers_from_earlier_removals_are_cleared_unless_still_in_sona
     cog.services.seerr = seerr
     assert asyncio.run(cog.reconcile_seerr()) == 2
     assert seerr.deleted == ["media/1", "media/5"]
+
+
+def test_a_request_that_never_reaches_sonarr_opens_a_ticket():
+    """Seerr refused The Boys ("no seasons available to request") and Plexbie took it as
+    handled; ten minutes on, it still wasn't in Sonarr and nobody was told."""
+    from core import season_search
+    told = []
+
+    class Sonarr:
+        async def series(self):
+            return []
+
+    class Services:
+        sonarr = Sonarr()
+
+    async def missing():
+        told.append("ticket")
+
+    async def body():
+        saved = season_search.POLL_SECONDS
+        season_search.POLL_SECONDS = 0
+        try:
+            season_search.follow_up_new_show(Services(), tmdb_id=76479, seasons=[1], title="The Boys",
+                                             wait_for_sonarr=0, on_missing=missing)
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if told:
+                    break
+        finally:
+            season_search.POLL_SECONDS = saved
+    asyncio.run(body())
+    assert told == ["ticket"]

@@ -51,6 +51,14 @@ def _title(rec: dict) -> str:
     return title
 
 
+def _same_thing(rec: dict) -> tuple:
+    """What a request is for: the same title and seasons is the same notification."""
+    media = rec.get("media") or {}
+    seasons = rec.get("seasons")
+    return (media.get("media_type") or rec.get("media_type"), str(media.get("id") or media.get("open_library_key") or _title(rec)),
+            tuple(sorted(seasons)) if isinstance(seasons, list) else str(seasons))
+
+
 def _text(live: dict) -> str:
     stage = live.get("stage")
     if stage == "importing":
@@ -119,6 +127,18 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
     # Numbered as everywhere else (No. 0214): by the request's key, oldest first.
     ordered = sorted((await all_requests()).items(), key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0)
     records = {key: {**rec, "_slot": n + 1} for n, (key, rec) in enumerate(ordered)}
+    # Two requests for the same thing (asked twice, or once here and once in Seerr,
+    # which the bot records too) are one notification on a phone: the newest request's.
+    newest: Dict[tuple, str] = {}
+    for key, rec in records.items():
+        if (rec or {}).get("status") != "approved":
+            continue
+        did, pid = _owner(rec)
+        group = (tuple(sorted(k for k, _ in phones_of([o for o in (f"d{did}" if did else None, f"p{pid}" if pid else None) if o]))),
+                 _same_thing(rec))
+        if group[0] and (group not in newest or str(rec.get("timestamp") or "") > str(records[newest[group]].get("timestamp") or "")):
+            newest[group] = key
+    shown_for = set(newest.values())
     for key in [k for k in states if k not in records]:
         # Deleted: take its notification down on the phones it was on.
         state = states[key] if isinstance(states[key], dict) else {}
@@ -130,7 +150,7 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
         did, pid = _owner(rec or {})
         owners = [o for o in (f"d{did}" if did else None, f"p{pid}" if pid else None) if o]
         apps = phones_of(owners)
-        if rec.get("status") != "approved":
+        if rec.get("status") != "approved" or (apps and key not in shown_for):
             if state:
                 if state.get("shown") and apps:
                     sent += await notify.push_app_live(apps, {"op": "end", "id": key})

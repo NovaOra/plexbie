@@ -42,6 +42,7 @@ REASONS = {
 #: Reasons only Plexbie opens tickets for (members don't pick these).
 PLEXBIE_REASONS = {
     "blocked": "Downloaded, but won't import",
+    "notreached": "Approved, but it never reached Sonarr or Radarr",
 }
 
 

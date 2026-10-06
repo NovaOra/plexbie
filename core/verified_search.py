@@ -328,7 +328,7 @@ async def find_movie(radarr, tmdb_id: Any) -> Optional[Dict[str, Any]]:
 
 def follow_up_new_movie(services, *, tmdb_id: int, title: str,
                         on_nothing: Optional[Callable[[str], Awaitable[None]]] = None,
-                        wait_for_radarr: float = 600, settle: float = SETTLE_AFTER_ADD) -> None:
+                        wait_for_radarr: float = 600, settle: float = SETTLE_AFTER_ADD, on_missing=None) -> None:
     """After a film is approved: once Radarr has it and its own search has run,
     check what that grabbed and search by ID if there's nothing (right). Nothing
     found: on_nothing hears why, to ask the admins about searching by name."""
@@ -345,7 +345,9 @@ def follow_up_new_movie(services, *, tmdb_id: int, title: str,
                 await asyncio.sleep(POLL_SECONDS)
                 waited += POLL_SECONDS
         if movie is None:
-            logger.info(f"{title} didn't show up in Radarr; leaving it to Seerr")
+            logger.info(f"{title} didn't show up in Radarr after Seerr had it; the admins are told")
+            if on_missing:
+                await on_missing()
             return
         await asyncio.sleep(settle)
         try:

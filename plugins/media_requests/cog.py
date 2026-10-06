@@ -1366,7 +1366,31 @@ class AdminApprovalView(_RequestApprovalBase):
                 await season_search.open_movie_not_found_help(bot, key, report)
         extra = {} if settle is None else {"settle": settle}
         verified_search.follow_up_new_movie(self.services, tmdb_id=int(self.media["id"]), title=self._title(),
-                                            on_nothing=nothing, **extra)
+                                            on_nothing=nothing, on_missing=self._never_reached("Radarr"), **extra)
+
+    def _never_reached(self, arr: str):
+        """What to do when an approved request still isn't in Sonarr/Radarr a while after
+        Seerr had it: a ticket for the admins. Plexbie doesn't add it to Sonarr/Radarr
+        itself, which would leave Seerr out of step. When Seerr refused it ("no seasons
+        available to request"), it's almost always an old request or record of Seerr's
+        for the title, left from when it was on Plex before (The Boys, after cleanup)."""
+        bot, key, seasons = getattr(self, "_bot", None), getattr(self, "_message_id", None), self._requested_seasons_list()
+        refused = self._seerr_noop_reason
+
+        async def tell():
+            from core import season_search
+            if bot is None or key is None:
+                return
+            if refused:
+                note = (f"Seerr wouldn't take it: it said there was nothing left to request, so it never reached {arr}. "
+                        "That usually means Seerr still has an old request or record for this title from when it was on "
+                        "Plex before. In Seerr, open the title and use Clear data, then search again here.")
+            else:
+                note = (f"Seerr accepted it, but {arr} still doesn't have it 10 minutes later. Check the request in "
+                        f"Seerr and its {arr} settings.")
+            await season_search.open_help(bot, key, seasons=seasons, reason="notreached", note=note,
+                                          status_now=f"Approved, not in {arr}")
+        return tell
 
     async def _restore_existing_request_monitoring(self) -> Optional[Dict[str, str]]:
         media_type = "movie" if self.media.get('media_type') == 'movie' else "tv"
@@ -1477,7 +1501,8 @@ class AdminApprovalView(_RequestApprovalBase):
                 if bot is not None:
                     await season_search.open_not_found_help(bot, key, seasons)
             season_search.follow_up_new_show(self.services, tmdb_id=int(self.media["id"]),
-                                             seasons=self._requested_seasons_list(), title=title, on_nothing=nothing)
+                                             seasons=self._requested_seasons_list(), title=title, on_nothing=nothing,
+                                             on_missing=self._never_reached("Sonarr"))
         if submitted:
             if self._seerr_noop_reason:
                 return {

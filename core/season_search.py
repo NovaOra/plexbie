@@ -217,7 +217,8 @@ async def first_air(sonarr, series_id: int, seasons: Optional[Iterable[int]]) ->
 
 def follow_up_new_show(services, *, tmdb_id: int, seasons: Optional[List[int]], title: str,
                        on_nothing: Optional[Callable[[List[int]], Awaitable[None]]] = None,
-                       wait_for_sonarr: float = 600, retries: int = 3) -> None:
+                       wait_for_sonarr: float = 600, retries: int = 3,
+                       on_missing: Optional[Callable[[], Awaitable[None]]] = None) -> None:
     """After Seerr adds a show to Sonarr: search it ourselves, with the
     episode-by-episode fallback. Sonarr's search-on-add skips episodes it thinks
     haven't aired; if they really haven't, try again a couple of hours after the
@@ -236,7 +237,9 @@ def follow_up_new_show(services, *, tmdb_id: int, seasons: Optional[List[int]], 
                 await asyncio.sleep(POLL_SECONDS * 2)
                 waited += POLL_SECONDS * 2
         if series is None:
-            logger.info(f"{title} didn't show up in Sonarr; leaving it to Seerr")
+            logger.info(f"{title} didn't show up in Sonarr after Seerr had it; the admins are told")
+            if on_missing:
+                await on_missing()
             return
         for attempt in range(retries + 1):
             asked = list(seasons) if seasons else sorted({int(e["seasonNumber"]) for e in await sonarr.episodes(series["id"])

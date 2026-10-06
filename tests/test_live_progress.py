@@ -38,7 +38,7 @@ async def _request(key, title, user_id=42, status="approved", when=T0):
     from database.kv_store import kv_set
     from database.request_store import REQUESTS_NAMESPACE
     await kv_set(REQUESTS_NAMESPACE, key, {"user_id": user_id, "status": status, "timestamp": when.isoformat(),
-                                           "media": {"title": title, "media_type": "movie", "id": 1}})
+                                           "media": {"title": title, "media_type": "movie", "id": sum(map(ord, title))}})
 
 
 def _run(steps):
@@ -129,3 +129,15 @@ def test_a_declined_or_vanished_request_ends_its_notification():
         assert await kv_get_all(live_progress.NAMESPACE) == {}
     sent = _run(steps)
     assert sorted((d["op"], d["id"]) for d in sent) == [("end", "100"), ("end", "200"), ("show", "100"), ("show", "200")]
+
+
+def test_two_requests_for_the_same_season_are_one_notification():
+    """The Boys S1, asked for here and again in Seerr (which the bot records as a
+    request of its own): one notification on the phone, not two."""
+    async def steps(p, tick):
+        await _request("100", "The Boys", when=T0)
+        await _request("232", "The Boys", when=T0 + timedelta(minutes=40))
+        p.now["The Boys"] = {"stage": "downloading", "percent": 28}
+        await tick(T0 + timedelta(minutes=41))
+    sent = _run(steps)
+    assert [(d["op"], d["id"]) for d in sent] == [("show", "232")]
