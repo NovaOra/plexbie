@@ -104,9 +104,48 @@ def _scan_folder(folder: str) -> Optional[List[dict]]:
     return found
 
 
+def _episode(e: dict) -> dict:
+    return {"id": e.get("id"), "label": _ep(e), "season": int(e.get("seasonNumber") or 0),
+            "episode": int(e.get("episodeNumber") or 0), "title": e.get("title") or "", "hasFile": bool(e.get("hasFile"))}
+
+
+async def _options(client, app: str) -> dict:
+    """Qualities and languages to choose from, as Sonarr's/Radarr's own Manual Import offers."""
+    out = {"qualities": [], "languages": []}
+    try:
+        out["qualities"] = [{"id": (d.get("quality") or {}).get("id"), "name": (d.get("quality") or {}).get("name") or d.get("title")}
+                            for d in await client.get("qualitydefinition") or [] if (d.get("quality") or {}).get("id") is not None]
+    except Exception as e:
+        logger.info(f"Blocked imports: no quality list from {client.name}: {e}")
+    try:
+        out["languages"] = [{"id": x.get("id"), "name": x.get("name")} for x in await client.get("language") or [] if x.get("id") is not None]
+    except Exception as e:
+        logger.info(f"Blocked imports: no language list from {client.name}: {e}")
+    return out
+
+
+async def episodes_of(services, series_id: int) -> List[dict]:
+    """Every episode of a show in Sonarr, to say which one a file is."""
+    return sorted((_episode(e) for e in await services.sonarr.episodes(int(series_id))),
+                  key=lambda e: (e["season"] or 999, e["episode"]))
+
+
+async def library(services, app: str, q: str) -> List[dict]:
+    """Shows (Sonarr) or films (Radarr) in the library whose title has `q`, for "Wrong show?"."""
+    client = _client(services, app)
+    rows = await (client.series() if app == "sonarr" else client.movies())
+    words = [w for w in (q or "").casefold().split() if w]
+    hits = [{"id": r.get("id"), "title": r.get("title") or "", "year": r.get("year")} for r in rows
+            if words and all(w in (r.get("title") or "").casefold() for w in words)]
+    return sorted(hits, key=lambda r: (len(r["title"]), r["title"]))[:20]
+
+
 async def preview(services, app: str, download_id: str) -> dict:
-    """What importing this download would do, and what looks off. `ok` is whether it can
-    be imported from Plexbie at all; `files` keeps Sonarr's/Radarr's own entries for it."""
+    """What importing this download would do, and what looks off: for each file what
+    Sonarr/Radarr think it is (and every reason they gave for not importing it), and the
+    choices an admin can change, as their own Manual Import screen offers. `ok` is
+    whether it can be imported from Plexbie at all (never with a program in it); each
+    file's `ready` is whether it's placed (an episode, or a film)."""
     from core.blocking import run_blocking
     item = next((b for b in await blocked(services) if b["app"] == app and b["downloadId"] == download_id), None)
     if not item:
@@ -115,28 +154,37 @@ async def preview(services, app: str, download_id: str) -> dict:
     raw = await client.get("manualimport", folder=item["folder"], downloadId=download_id, filterExistingFiles="false") or []
     if not isinstance(raw, list):
         raise LookupError(f"{client.name} couldn't look inside the download.")
-    files, problems, warnings, seen = [], [], [], {}
+    thing = "episode" if app == "sonarr" else "film"
+    files, danger, warnings, seen = [], [], [], {}
     for f in raw:
         name = f.get("relativePath") or os.path.basename(f.get("path") or "")
         size = int(f.get("size") or 0)
-        where = ([_ep(e) for e in f.get("episodes") or []] if app == "sonarr"
-                 else [(f.get("movie") or {}).get("title")] if f.get("movie") else [])
-        notes = [r.get("reason") for r in f.get("rejections") or [] if r.get("reason")]
+        eps = [_episode(e) for e in f.get("episodes") or []] if app == "sonarr" else []
+        movie = f.get("movie") or None
+        where = [e["label"] for e in eps] if app == "sonarr" else ([movie.get("title")] if movie else [])
+        rejections = [r.get("reason") for r in f.get("rejections") or [] if r.get("reason")]
+        notes = []
         ext = os.path.splitext(name)[1].lower()
         if ext and ext not in VIDEO:
             notes.append(f"{ext} isn't a usual video file")
         if "sample" in name.lower():
             notes.append("Looks like a sample, not the real thing")
         if size and size < SMALL[app]:
-            notes.append(f"Very small for a whole {'episode' if app == 'sonarr' else 'film'}")
+            notes.append(f"Very small for a whole {thing}")
         if not where:
-            notes.append(f"{client.name} can't tell which {'episode' if app == 'sonarr' else 'film'} this is")
+            notes.append(f"{client.name} can't tell which {thing} this is: pick it")
         for w in where:
             seen.setdefault(w, []).append(name)
-        files.append({"name": name, "size": size, "as": where, "quality": ((f.get("quality") or {}).get("quality") or {}).get("name"),
-                      "notes": notes, "_raw": f})
-        if f.get("rejections") or not where:
-            problems.append(name)
+        quality = (f.get("quality") or {}).get("quality") or {}
+        series = f.get("series") or {}
+        files.append({
+            "name": name, "size": size, "as": where, "quality": quality.get("name"), "qualityId": quality.get("id"),
+            "languages": [{"id": x.get("id"), "name": x.get("name")} for x in f.get("languages") or []],
+            "releaseGroup": f.get("releaseGroup") or "", "rejections": rejections, "notes": rejections + notes,
+            "episodes": eps, "seriesId": series.get("id") or (item["ownerId"] if app == "sonarr" else None),
+            "movie": {"id": movie.get("id"), "title": movie.get("title"), "year": movie.get("year")} if movie else None,
+            "ready": bool(where), "_raw": f,
+        })
     for w, names in seen.items():
         if len(names) > 1:
             warnings.append(f"{len(names)} files claim to be {w}")
@@ -153,21 +201,28 @@ async def preview(services, app: str, download_id: str) -> dict:
         for x in listing:
             if x["name"] in videos:
                 continue
-            ext = os.path.splitext(x["name"])[1].lower()
-            danger = ext in DANGEROUS
-            others.append({"name": x["name"], "size": x["size"], "danger": danger})
-            if danger:
-                problems.append(x["name"])
+            bad = os.path.splitext(x["name"])[1].lower() in DANGEROUS
+            others.append({"name": x["name"], "size": x["size"], "danger": bad})
+            if bad:
+                danger.append(x["name"])
                 warnings.append(f"{x['name']} is a program, not a video. Don't import this: delete the download.")
     if not files:
-        problems.append("no files")
         warnings.append(f"{client.name} found no video files it could import.")
-    return {
+    owner = {"id": item["ownerId"], "title": item["title"], "year": item["year"]}
+    out = {
         "app": app, "downloadId": download_id, "title": item["title"], "year": item["year"],
         "release": item["release"], "folder": item["folder"], "messages": item["messages"],
         "episodes": item["episodes"], "warnings": warnings, "others": others[:50],
-        "files": files, "ok": not problems,
+        "files": files, "ok": bool(files) and not danger,
+        "series": owner if app == "sonarr" else None, "movie": owner if app == "radarr" else None,
+        "options": await _options(client, app),
     }
+    if app == "sonarr" and item["ownerId"]:
+        try:
+            out["options"]["episodes"] = await episodes_of(services, item["ownerId"])
+        except Exception as e:
+            logger.info(f"Blocked imports: no episode list for {item['title']}: {e}")
+    return out
 
 
 def public(p: dict) -> dict:
@@ -175,26 +230,74 @@ def public(p: dict) -> dict:
     return {**p, "files": [{k: v for k, v in f.items() if k != "_raw"} for f in p["files"]]}
 
 
-async def do_import(services, app: str, download_id: str) -> str:
+async def do_import(services, app: str, download_id: str, choices: Optional[List[dict]] = None) -> str:
     """Import it through Sonarr's/Radarr's Manual Import, as their own Activity page
-    would. Refused when the preview finds anything it can't vouch for."""
+    would, with the admin's choices for each file (`choices`: name, skip, seriesId,
+    episodeIds / movieId, qualityId, languageIds, releaseGroup). Every choice is checked
+    against Sonarr/Radarr; a program in the download, an unplaced file or two files as
+    one episode refuse it."""
     p = await preview(services, app, download_id)
-    if not p["ok"]:
-        raise ValueError("Not importing this one from Plexbie: " + (p["warnings"][-1] if p["warnings"] else
-                         "a file in it can't be placed. Sort it out in " + ("Sonarr" if app == "sonarr" else "Radarr") + "."))
     client = _client(services, app)
-    files = []
+    thing = "episode" if app == "sonarr" else "film"
+    if not p["ok"]:
+        raise ValueError("Not importing this one from Plexbie: " + (p["warnings"][-1] if p["warnings"] else "nothing in it can be imported."))
+    by_name = {c.get("name"): c for c in choices or [] if isinstance(c, dict)}
+    unknown = set(by_name) - {f["name"] for f in p["files"]}
+    if unknown:
+        raise ValueError("The download changed since you looked at it. Look again.")
+    qualities = {q["id"]: q for q in p["options"]["qualities"]}
+    languages = {x["id"]: x for x in p["options"]["languages"]}
+    episode_ids: Dict[int, set] = {}
+
+    async def series_episodes(series_id: int) -> set:
+        if series_id not in episode_ids:
+            episode_ids[series_id] = {e["id"] for e in await episodes_of(services, series_id)}
+        return episode_ids[series_id]
+    movie_ids = None
+    files, claimed = [], {}
     for f in p["files"]:
-        raw = f["_raw"]
+        c, raw = by_name.get(f["name"], {}), f["_raw"]
+        if c.get("skip"):
+            continue
         entry = {"path": raw["path"], "folderName": raw.get("folderName"), "quality": raw.get("quality"),
                  "languages": raw.get("languages") or [], "releaseGroup": raw.get("releaseGroup"),
                  "downloadId": raw.get("downloadId") or download_id, "indexerFlags": raw.get("indexerFlags", 0)}
+        if c.get("qualityId") is not None:
+            q = qualities.get(c["qualityId"])
+            if not q:
+                raise ValueError(f"{client.name} doesn't have that quality.")
+            entry["quality"] = {"quality": {"id": q["id"], "name": q["name"]},
+                                "revision": ((raw.get("quality") or {}).get("revision") or {"version": 1, "real": 0, "isRepack": False})}
+        if c.get("languageIds") is not None:
+            if not isinstance(c["languageIds"], list) or not all(i in languages for i in c["languageIds"]):
+                raise ValueError(f"{client.name} doesn't have that language.")
+            entry["languages"] = [languages[i] for i in c["languageIds"]]
+        if c.get("releaseGroup") is not None:
+            entry["releaseGroup"] = str(c["releaseGroup"])[:60]
         if app == "sonarr":
-            entry.update(seriesId=(raw.get("series") or {}).get("id"), episodeIds=[e["id"] for e in raw.get("episodes") or []],
-                         releaseType=raw.get("releaseType", "unknown"))
+            series_id = int(c.get("seriesId") or f["seriesId"] or 0)
+            ids = c.get("episodeIds") if c.get("episodeIds") is not None else [e["id"] for e in f["episodes"]]
+            if not series_id or not ids:
+                raise ValueError(f"Pick which episode {f['name']} is (or skip it).")
+            if not set(ids) <= await series_episodes(series_id):
+                raise ValueError(f"Those episodes aren't in that show ({f['name']}).")
+            for i in ids:
+                if i in claimed:
+                    raise ValueError(f"{claimed[i]} and {f['name']} are both set as the same episode.")
+                claimed[i] = f["name"]
+            entry.update(seriesId=series_id, episodeIds=list(ids), releaseType=raw.get("releaseType", "unknown"))
         else:
-            entry.update(movieId=(raw.get("movie") or {}).get("id"))
+            movie_id = c.get("movieId") if c.get("movieId") is not None else (f["movie"] or {}).get("id")
+            if not movie_id:
+                raise ValueError(f"Pick which film {f['name']} is (or skip it).")
+            if c.get("movieId") is not None:
+                movie_ids = movie_ids or {m.get("id") for m in await client.movies()}
+                if movie_id not in movie_ids:
+                    raise ValueError("That film isn't in Radarr.")
+            entry["movieId"] = movie_id
         files.append(entry)
+    if not files:
+        raise ValueError(f"Every file is skipped: nothing to import.")
     command = await client.command("ManualImport", files=files, importMode="auto")
     cid = (command or {}).get("id")
     for _ in range(60):          # up to two minutes: a big file on another disk is copied

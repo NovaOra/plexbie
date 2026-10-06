@@ -345,15 +345,43 @@ export interface BlockedRow extends BlockedRef {
   /** Its ticket, when it's on a request. */
   ticket?: string | null;
 }
+/** An episode in Sonarr, to say which one a file is. */
+export interface ArrEpisode { id: number; label: string; season: number; episode: number; title: string; hasFile: boolean }
+/** A show (Sonarr) or film (Radarr) in the library. */
+export interface ArrItem { id: number; title: string; year?: number | null }
+export interface BlockedFile {
+  name: string; size: number;
+  /** What Sonarr/Radarr take it to be ("S01E01", or the film's title). */
+  as: string[];
+  quality?: string | null; qualityId?: number | null;
+  languages: { id: number; name: string }[];
+  releaseGroup: string;
+  /** Sonarr's/Radarr's own reasons for not importing it, word for word. */
+  rejections: string[];
+  /** Those reasons and what Plexbie noticed (samples, tiny files, odd extensions). */
+  notes: string[];
+  episodes: ArrEpisode[]; seriesId?: number | null;
+  movie?: ArrItem | null;
+  /** Placed: it has an episode (or a film). */
+  ready: boolean;
+}
 /** What's in it, and what looks off, for an admin to look at before importing. */
 export interface BlockedPreview extends BlockedRef {
   title: string; year?: number | null; release: string; folder: string; messages: string[]; episodes: string[];
   warnings: string[];
-  files: { name: string; size: number; as: string[]; quality?: string | null; notes: string[] }[];
+  files: BlockedFile[];
   /** Other files in the folder (Plexbie lists them when it can see it); `danger`: a program. */
   others: { name: string; size: number; danger: boolean }[];
-  /** Whether it can be imported from Plexbie at all. */
+  /** Whether it can be imported from Plexbie at all (never with a program in it). */
   ok: boolean;
+  series?: ArrItem | null; movie?: ArrItem | null;
+  /** What Sonarr's/Radarr's own Manual Import lets you choose. */
+  options: { qualities: { id: number; name: string }[]; languages: { id: number; name: string }[]; episodes?: ArrEpisode[] };
+}
+/** An admin's choices for one file when importing a blocked download. */
+export interface BlockedChoice {
+  name: string; skip?: boolean; seriesId?: number; episodeIds?: number[]; movieId?: number;
+  qualityId?: number; languageIds?: number[]; releaseGroup?: string;
 }
 
 /* ------------------------------------------------- all requests (Manage) */

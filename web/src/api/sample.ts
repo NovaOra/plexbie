@@ -521,15 +521,25 @@ const sampleBlocked = { app: "sonarr" as const, downloadId: "SABnzbd_nzo_demo" }
 export const adminBlocked = () => wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952,
   release: "Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"], ticket: "h4",
   messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."] }] });
+const RADAR_TITLES = ["Moon Rocket", "Molten Terror", "Bridge of Death", "Flight to Destruction", "Murder Car", "Hills of Death",
+  "Camouflaged Destruction", "The Enemy Planet", "Battle in the Stratosphere", "Mass Execution", "Planned Pursuit", "Death of the Moon Man"];
+export const sampleEpisodes = RADAR_TITLES.map((title, i) => ({ id: 700 + i + 1, label: `S01E${String(i + 1).padStart(2, "0")}`, season: 1,
+  episode: i + 1, title, hasFile: false }));
 export const blockedPreview = () => wait({
   ...sampleBlocked, title: "Radar Men from the Moon", year: 1952, release: "Radar.Men.From.The.Moon.S01.1080p.WEB",
   folder: "/data/usenet/complete/tv/Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"],
   messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."],
   warnings: [],
   files: [1, 2, 3].map((n) => ({ name: `Radar.Men.From.The.Moon.S01E0${n}.1080p.WEB.mkv`, size: (1.1 + n / 10) * 2 ** 30,
-    as: [`S01E0${n}`], quality: "WEBDL-1080p", notes: [] as string[] })),
+    as: n === 3 ? [] : [`S01E0${n}`], quality: "WEBDL-1080p", qualityId: 3, languages: [{ id: 1, name: "English" }], releaseGroup: "WEB",
+    rejections: n === 3 ? ["Unable to determine if file is a sample"] : [],
+    notes: n === 3 ? ["Unable to determine if file is a sample", "Sonarr can't tell which episode this is: pick it"] : [],
+    episodes: n === 3 ? [] : [sampleEpisodes[n - 1]], seriesId: 41, movie: null, ready: n !== 3 })),
   others: [{ name: "Radar.Men.From.The.Moon.S01.nfo", size: 2048, danger: false }],
   ok: true,
+  series: { id: 41, title: "Radar Men from the Moon", year: 1952 }, movie: null,
+  options: { qualities: [{ id: 3, name: "WEBDL-1080p" }, { id: 7, name: "Bluray-1080p" }, { id: 18, name: "WEBDL-2160p" }],
+    languages: [{ id: 1, name: "English" }, { id: 2, name: "French" }], episodes: sampleEpisodes },
 }, 400);
 
 function threadOf(h: Help): Entry[] {

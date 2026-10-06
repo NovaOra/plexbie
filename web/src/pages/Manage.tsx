@@ -12,7 +12,7 @@ import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { api, type Ack } from "../api/client";
-import type { BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
+import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { Journey, LiveProgress } from "../components/motion";
@@ -1083,7 +1083,9 @@ const IMPORT_STAGES = ["Did you look at the files? 👀", "Episode numbers? Size
 
 /**
  * A download Sonarr or Radarr won't import by themselves (core/blocked_imports in the
- * bot): why, what's in it, and what looks off, then a long hold to import it anyway.
+ * bot): why, word for word, what's in it, what looks off, and the choices their own
+ * Manual Import gives (which episode or film each file is, quality, language, release
+ * group, or skip it). Then a long hold to import it. Nothing goes in blind.
  */
 function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => void }) {
   const { toast, readOnly } = useManage();
@@ -1091,6 +1093,12 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
   const [p, setP] = useState<BlockedPreview | null>(null);
   const [failed, setFailed] = useState("");
   const [done, setDone] = useState("");
+  /** The admin's changes, by file name. */
+  const [picks, setPicks] = useState<Record<string, BlockedChoice>>({});
+  /** "Wrong show?": another series for every file, and its episodes. */
+  const [series, setSeries] = useState<ArrItem | null>(null);
+  const [eps, setEps] = useState<ArrEpisode[] | null>(null);
+  const [finding, setFinding] = useState<string | null>(null);   // "series", or a file name for "Wrong film?"
   useEffect(() => {
     let live = true;
     api.blockedPreview(target.app, target.downloadId).then((x) => { if (live) setP(x); })
@@ -1098,29 +1106,125 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
     return () => { live = false; };
   }, [target.app, target.downloadId]);
   const app = target.app === "sonarr" ? "Sonarr" : "Radarr";
+  const tv = target.app === "sonarr";
+  const episodes = eps ?? p?.options.episodes ?? [];
+  const pick = (name: string, change: Partial<BlockedChoice>) => setPicks((x) => ({ ...x, [name]: { ...x[name], name, ...change } }));
+
+  /** Each file as it stands with the admin's changes. */
+  const files = (p?.files ?? []).map((f) => {
+    const c = picks[f.name] ?? { name: f.name };
+    const episodeIds = c.episodeIds ?? (series ? [] : f.episodes.map((e) => e.id));
+    const movie = c.movieId ? { id: c.movieId } : f.movie;
+    return { f, c, skip: !!c.skip, episodeIds, placed: tv ? episodeIds.length > 0 : !!movie?.id };
+  });
+  const used = new Map<number, number>();
+  files.filter((x) => !x.skip).forEach((x) => x.episodeIds.forEach((id) => used.set(id, (used.get(id) ?? 0) + 1)));
+  const doubled = [...used].filter(([, n]) => n > 1).map(([id]) => episodes.find((e) => e.id === id)?.label ?? "an episode");
+  const going = files.filter((x) => !x.skip);
+  const unplaced = going.filter((x) => !x.placed);
+  const blocker = !going.length ? "Every file is skipped." : unplaced.length ? `Pick which ${tv ? "episode" : "film"} ${unplaced[0].f.name} is, or skip it.`
+    : doubled.length ? `Two files are set as ${doubled[0]}.` : "";
+
   const go = async () => {
-    const out = await act("import", () => api.blockedImport(target.app, target.downloadId), { failText: "Not imported" });
+    const choices: BlockedChoice[] = files.map(({ f, c, skip, episodeIds }) => ({
+      ...c, name: f.name, ...(skip ? { skip: true } : {}),
+      ...(tv ? { episodeIds, ...(series ? { seriesId: series.id } : {}) } : {}),
+    }));
+    const out = await act("import", () => api.blockedImport(target.app, target.downloadId, choices), { failText: "Not imported" });
     if (!out) return;
     setDone(out.message);
     toast({ text: "Imported", detail: out.message });
     onDone?.();
   };
+  const useSeries = async (s: ArrItem) => {
+    setFinding(null);
+    setSeries(s);
+    setPicks({});
+    const out = await attempt(() => api.arrEpisodes(s.id).then((x) => ({ ok: true, message: "", rows: x.rows })));
+    setEps(out.ok ? (out as unknown as { rows: ArrEpisode[] }).rows : []);
+  };
+
   return (
     <section className="m-blocked" aria-label={`${app} won’t import this by itself`}>
       <p className="m-blocked__head"><CircleAlert size={16} aria-hidden /> {app} won’t import this by itself</p>
       {failed ? <p className="muted">{failed}</p> : !p ? <p className="muted">Looking inside…</p> : (
         <>
-          {p.messages.map((m) => <p key={m} className="m-blocked__why">“{m}”</p>)}
-          <p className="m-blocked__advice">Look before you import. Usually it’s fine (a name {app} couldn’t match), but a blocked import can be the wrong episode, the wrong film, or something that shouldn’t be there.</p>
+          {p.messages.map((m) => <p key={m} className="m-blocked__why">{app} says: “{m}”</p>)}
+          <p className="m-blocked__advice">Look before you import. Usually it’s fine (a name {app} couldn’t match), but a blocked import can be the wrong episode, the wrong film, or something that shouldn’t be there. Check each file below is what {app} thinks it is.</p>
           {p.warnings.length ? (
             <ul className="m-blocked__warnings">{p.warnings.map((w) => <li key={w}><CircleAlert size={14} aria-hidden /> {w}</li>)}</ul>
           ) : null}
+
+          {tv ? (
+            <div className="m-blocked__owner">
+              <span>Show: <b>{(series ?? p.series)?.title ?? "none"}</b>{(series ?? p.series)?.year ? ` (${(series ?? p.series)!.year})` : ""}</span>
+              <button type="button" className="btn btn--quiet m-btn" onClick={() => setFinding(finding === "series" ? null : "series")}>Wrong show?</button>
+              {finding === "series" ? <ArrFinder app="sonarr" onPick={(s) => void useSeries(s)} /> : null}
+            </div>
+          ) : null}
+
           <ul className="m-blocked__files" aria-label="What’s in it">
-            {p.files.map((f) => (
-              <li key={f.name} className={f.notes.length ? "is-odd" : undefined}>
+            {files.map(({ f, c, skip, episodeIds, placed }) => (
+              <li key={f.name} className={skip ? "is-other" : !placed || f.notes.length ? "is-odd" : undefined}>
                 <span className="m-blocked__name">{f.name}</span>
-                <span className="muted">{bytes(f.size)}{f.quality ? ` · ${f.quality}` : ""}{f.as.length ? ` · as ${f.as.join(", ")}` : ""}</span>
-                {f.notes.map((n) => <span key={n} className="m-blocked__note">{n}</span>)}
+                <span className="muted">{bytes(f.size)}</span>
+                {f.rejections.map((r) => <span key={r} className="m-blocked__note">{app}: {r}</span>)}
+                {f.notes.filter((n) => !f.rejections.includes(n) && !(placed && n.includes("can’t tell which") || placed && n.includes("can't tell which")))
+                  .map((n) => <span key={n} className="m-blocked__note">{n}</span>)}
+                {!skip ? (
+                  <div className="m-blocked__edit">
+                    {tv ? (
+                      <>
+                        {(episodeIds.length ? episodeIds : [0]).map((id, i) => (
+                          <label key={i} className="m-blocked__field">
+                            <span>{i ? "and" : "Episode"}</span>
+                            <select className="m-select" value={id || ""} onChange={(e) => {
+                              const next = [...episodeIds]; const v = Number(e.target.value);
+                              if (v) next[i] = v; else next.splice(i, 1);
+                              pick(f.name, { episodeIds: next.filter(Boolean) });
+                            }}>
+                              <option value="">Pick one…</option>
+                              {episodes.map((e) => <option key={e.id} value={e.id}>{e.label} · {e.title || "TBA"}{e.hasFile ? " (has a file)" : ""}</option>)}
+                            </select>
+                          </label>
+                        ))}
+                        {episodeIds.length ? (
+                          <button type="button" className="btn btn--quiet m-btn m-blocked__more" onClick={() => pick(f.name, { episodeIds: [...episodeIds, 0] })}>
+                            + Another episode (a double)
+                          </button>
+                        ) : null}
+                      </>
+                    ) : (
+                      <span className="m-blocked__field">
+                        <span>Film</span>
+                        <b>{c.movieId ? (c as BlockedChoice & { movieLabel?: string }).movieLabel : f.movie ? `${f.movie.title}${f.movie.year ? ` (${f.movie.year})` : ""}` : "none"}</b>
+                        <button type="button" className="btn btn--quiet m-btn" onClick={() => setFinding(finding === f.name ? null : f.name)}>Wrong film?</button>
+                      </span>
+                    )}
+                    {!tv && finding === f.name ? (
+                      <ArrFinder app="radarr" onPick={(m) => { setFinding(null); pick(f.name, { movieId: m.id, movieLabel: `${m.title}${m.year ? ` (${m.year})` : ""}` } as Partial<BlockedChoice>); }} />
+                    ) : null}
+                    <details className="m-blocked__details">
+                      <summary>Quality, language, release group</summary>
+                      <label className="m-blocked__field"><span>Quality</span>
+                        <select className="m-select" value={c.qualityId ?? f.qualityId ?? ""} onChange={(e) => pick(f.name, { qualityId: Number(e.target.value) })}>
+                          {p.options.qualities.map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}
+                        </select>
+                      </label>
+                      <label className="m-blocked__field"><span>Language</span>
+                        <select className="m-select" value={(c.languageIds ?? f.languages.map((l) => l.id))[0] ?? ""} onChange={(e) => pick(f.name, { languageIds: [Number(e.target.value)] })}>
+                          {p.options.languages.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      </label>
+                      <label className="m-blocked__field"><span>Release group</span>
+                        <input className="m-select" value={c.releaseGroup ?? f.releaseGroup} maxLength={60} onChange={(e) => pick(f.name, { releaseGroup: e.target.value })} />
+                      </label>
+                    </details>
+                  </div>
+                ) : null}
+                <label className="m-blocked__skip">
+                  <input type="checkbox" checked={skip} onChange={(e) => pick(f.name, { skip: e.target.checked })} /> Don’t import this file
+                </label>
               </li>
             ))}
             {p.others.map((o) => (
@@ -1131,15 +1235,38 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
             ))}
           </ul>
           <p className="muted m-blocked__folder">In {p.folder}</p>
-          {done ? <p className="m-blocked__done"><Check size={16} aria-hidden /> {done}</p> : p.ok ? (
-            <HoldButton label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
-              disabled={readOnly || !!busy} onConfirm={() => void go()} />
-          ) : (
+          {done ? <p className="m-blocked__done"><Check size={16} aria-hidden /> {done}</p> : !p.ok ? (
             <p className="m-blocked__nope">Not importable from here: sort it out in {app}, or delete the download.</p>
+          ) : (
+            <>
+              {blocker ? <p className="m-blocked__nope">{blocker}</p> : null}
+              <HoldButton label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
+                disabled={readOnly || !!busy || !!blocker} onConfirm={() => void go()} />
+            </>
           )}
         </>
       )}
     </section>
+  );
+}
+
+/** Search Sonarr's shows or Radarr's films by title, to say which one it really is. */
+function ArrFinder({ app, onPick }: { app: "sonarr" | "radarr"; onPick: (item: ArrItem) => void }) {
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<ArrItem[] | null>(null);
+  useEffect(() => {
+    if (q.trim().length < 2) { setRows(null); return; }
+    const t = window.setTimeout(() => { void api.arrLibrary(app, q.trim()).then((x) => setRows(x.rows)).catch(() => setRows([])); }, 250);
+    return () => window.clearTimeout(t);
+  }, [app, q]);
+  return (
+    <div className="m-blocked__finder">
+      <input className="m-select" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+        placeholder={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} aria-label={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} />
+      {rows ? (rows.length ? (
+        <ul>{rows.map((r) => <li key={r.id}><button type="button" className="btn btn--quiet m-btn" onClick={() => onPick(r)}>{r.title}{r.year ? ` (${r.year})` : ""}</button></li>)}</ul>
+      ) : <p className="muted">Nothing in {app === "sonarr" ? "Sonarr" : "Radarr"} by that name.</p>) : null}
+    </div>
   );
 }
 

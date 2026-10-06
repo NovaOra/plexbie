@@ -507,14 +507,24 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return web.json_response(await actions.blocked_preview(await admin_only(request), m["app"], m["did"]))
 
         async def post_blocked_import(request):
-            await body(request)
+            payload = await body(request)
             m = request.match_info
-            result = await actions.blocked_import(await admin_only(request), m["app"], m["did"])
+            result = await actions.blocked_import(await admin_only(request), m["app"], m["did"], payload)
             return web.json_response(result, status=200 if result.get("ok") else 409)
 
         r.add_get("/api/admin/blocked", safe(get_blocked))
         r.add_get(BLOCKED, safe(get_blocked_preview))
         r.add_post(BLOCKED + "/import", safe(post_blocked_import))
+
+        async def get_arr_library(request):
+            return web.json_response(await actions.arr_library(await admin_only(request), request.match_info["app"],
+                                                               request.query.get("q", "")))
+
+        async def get_arr_episodes(request):
+            return web.json_response(await actions.arr_episodes(await admin_only(request), int(request.match_info["id"])))
+
+        r.add_get("/api/admin/arr/{app:sonarr|radarr}/library", safe(get_arr_library))
+        r.add_get("/api/admin/arr/sonarr/series/{id:\\d{1,9}}/episodes", safe(get_arr_episodes))
 
         async def post_admin_ticket(request):
             payload = await body(request)

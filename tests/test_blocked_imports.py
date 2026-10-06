@@ -39,10 +39,18 @@ class Arr:
         if path == "manualimport":
             return [{"path": f"{self.folder}/{name}", "relativePath": name, "size": size, "quality": {"quality": {"name": "WEBDL-2160p"}},
                      "series": {"id": 139}, "episodes": [{"id": 900 + n, "seasonNumber": 1, "episodeNumber": n}] if n else [],
+                     "quality": {"quality": {"id": 18, "name": "WEBDL-2160p"}, "revision": {"version": 1}},
                      "rejections": []} for name, size, n in self.files]
         if path.startswith("command/"):
             return {"status": "completed", "message": "Manually imported 2 files"}
+        if path == "qualitydefinition":
+            return [{"quality": {"id": 3, "name": "WEBDL-1080p"}}, {"quality": {"id": 18, "name": "WEBDL-2160p"}}]
+        if path == "language":
+            return [{"id": 1, "name": "English"}, {"id": 2, "name": "French"}]
         return {}
+
+    async def episodes(self, series_id):
+        return [{"id": 900 + n, "seasonNumber": 1, "episodeNumber": n, "title": f"Chapter {n}"} for n in (1, 2, 3)] if series_id == 139 else []
 
     async def command(self, name, **body):
         self.commands.append((name, body))
@@ -144,7 +152,7 @@ def test_odd_files_are_pointed_out():
     sample, extras = p["files"]
     assert any("sample" in n for n in sample["notes"]) and any("small" in n for n in sample["notes"])
     assert any("can't tell which episode" in n for n in extras["notes"])
-    assert not p["ok"], "a file it can't place blocks importing from Plexbie"
+    assert p["ok"] and not extras["ready"], "an unplaced file is for the admin to place, not a dead end"
     assert any("S01E02" in w for w in p["warnings"]), "grabbed for E02, but nothing in it is E02"
 
 
@@ -153,3 +161,63 @@ def test_a_blocked_download_is_a_problem_not_adding_to_plex():
     live = Progress._downloading([{"downloadId": "d", "size": 100, "sizeleft": 0, "trackedDownloadState": "importBlocked",
                                    "statusMessages": [{"messages": ["Matched to series by ID."]}]}], {"d": {"_done": "Completed"}})
     assert live["stage"] == "importing" and live["problem"] == "Import blocked: Matched to series by ID."
+
+
+def _import(files, choices):
+    async def body():
+        arr = Arr(_folder(), files)
+        try:
+            return await blocked_imports.do_import(Services(arr), "sonarr", DID, choices), arr.commands
+        except ValueError as e:
+            return str(e), arr.commands
+    return asyncio.run(body())
+
+
+def test_an_admin_can_say_which_episode_each_file_is():
+    """"Is this really episode 1?": the two files were swapped, and one is set to 1080p."""
+    message, commands = _import(GOOD, [{"name": "East.Of.Eden.S01E01.mkv", "episodeIds": [902], "qualityId": 3},
+                                       {"name": "East.Of.Eden.S01E02.mkv", "episodeIds": [901], "languageIds": [2]}])
+    files = commands[0][1]["files"]
+    assert [f["episodeIds"] for f in files] == [[902], [901]]
+    assert files[0]["quality"]["quality"] == {"id": 3, "name": "WEBDL-1080p"} and files[1]["languages"] == [{"id": 2, "name": "French"}]
+
+
+def test_a_file_sonarr_couldnt_place_is_imported_once_an_admin_picks_its_episode():
+    files = GOOD + [("Extras.mkv", 2 * 2**30, 0)]
+    refused, none = _import(files, None)
+    assert "Pick which episode Extras.mkv is" in refused and not none
+    message, commands = _import(files, [{"name": "Extras.mkv", "episodeIds": [903]}])
+    assert [f["episodeIds"] for f in commands[0][1]["files"]] == [[901], [902], [903]]
+    message, commands = _import(files, [{"name": "Extras.mkv", "skip": True}])
+    assert len(commands[0][1]["files"]) == 2, "a skipped file stays where it is"
+
+
+def test_choices_are_checked_against_sonarr():
+    two, none = _import(GOOD, [{"name": "East.Of.Eden.S01E02.mkv", "episodeIds": [901]}])
+    assert "both set as the same episode" in two and not none
+    other, none = _import(GOOD, [{"name": "East.Of.Eden.S01E01.mkv", "episodeIds": [12345]}])
+    assert "aren't in that show" in other and not none
+    stale, none = _import(GOOD, [{"name": "Something.Else.mkv", "skip": True}])
+    assert "changed since you looked" in stale and not none
+    quality, none = _import(GOOD, [{"name": "East.Of.Eden.S01E01.mkv", "qualityId": 99}])
+    assert "doesn't have that quality" in quality and not none
+
+
+def test_the_preview_carries_sonarrs_reasons_and_the_choices():
+    async def body():
+        arr = Arr(_folder(), GOOD)
+        arr_get = arr.get
+
+        async def get(path, **params):
+            out = await arr_get(path, **params)
+            if path == "manualimport":
+                out[0]["rejections"] = [{"reason": "Episode has a TBA title and recently aired"}]
+            return out
+        arr.get = get
+        return blocked_imports.public(await blocked_imports.preview(Services(arr), "sonarr", DID))
+    p = asyncio.run(body())
+    first = p["files"][0]
+    assert first["rejections"] == ["Episode has a TBA title and recently aired"] and first["ready"]
+    assert [e["label"] for e in p["options"]["episodes"]] == ["S01E01", "S01E02", "S01E03"]
+    assert [q["name"] for q in p["options"]["qualities"]] == ["WEBDL-1080p", "WEBDL-2160p"] and p["series"]["id"] == 139
+    assert first["qualityId"] == 18 and "_raw" not in first

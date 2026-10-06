@@ -1836,6 +1836,18 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-blocked__folder { margin: 0; font-size: 0.82rem; overflow-wrap: anywhere; }
 .m-blocked__done { display: flex; gap: 6px; align-items: center; margin: 0; font-weight: 700; }
 .m-blocked__nope { margin: 0; font-weight: 600; color: var(--tally); }
+.m-blocked__owner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.m-blocked__edit { display: grid; gap: 8px; margin-top: 6px; }
+.m-blocked__field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.9rem; }
+.m-blocked__field > span:first-child { min-width: 72px; color: var(--muted); }
+.m-blocked__field .m-select { flex: 1 1 200px; min-width: 0; }
+.m-blocked__more { justify-self: start; }
+.m-blocked__details summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; padding: 4px 0; }
+.m-blocked__details[open] { display: grid; gap: 8px; }
+.m-blocked__skip { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--muted); margin-top: 4px; }
+.m-blocked__finder { flex-basis: 100%; display: grid; gap: 6px; }
+.m-blocked__finder ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.m-blocked__finder .m-btn { width: 100%; justify-content: flex-start; }
 .m-blocked .m-hold { justify-self: start; min-width: min(100%, 300px); }
 .m-stuck { display: inline-flex; align-items: flex-start; gap: 6px; color: var(--tally); font-size: 0.88rem; font-weight: 600; line-height: 1.35; }
 .m-stuck svg { flex: none; margin-top: 2px; }

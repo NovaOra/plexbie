@@ -1,4 +1,4 @@
-import type { BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
+import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
 import * as sample from "./sample";
 export { DEMO } from "./sample";
 
@@ -168,8 +168,14 @@ export const api = {
     SAMPLE ? sample.adminBlocked() : call("/admin/blocked"),
   blockedPreview: (app: string, downloadId: string): Promise<BlockedPreview> =>
     SAMPLE ? sample.blockedPreview() : call(`/admin/blocked/${enc(app)}/${enc(downloadId)}`),
-  blockedImport: (app: string, downloadId: string): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: "Imported 3 files." }, 900) : post(`/admin/blocked/${enc(app)}/${enc(downloadId)}/import`),
+  blockedImport: (app: string, downloadId: string, files?: BlockedChoice[]): Promise<Ack> =>
+    SAMPLE ? sample.wait({ ok: true, message: "Imported 3 files." }, 900) : post(`/admin/blocked/${enc(app)}/${enc(downloadId)}/import`, files ? { files } : {}),
+  /** Shows (Sonarr) or films (Radarr) in the library, for "Wrong show?". */
+  arrLibrary: (app: string, q: string): Promise<{ rows: ArrItem[] }> =>
+    SAMPLE ? sample.wait({ rows: [{ id: 41, title: "Radar Men from the Moon", year: 1952 }, { id: 42, title: "King of the Rocket Men", year: 1949 }] })
+      : call(`/admin/arr/${enc(app)}/library?q=${enc(q)}`),
+  arrEpisodes: (seriesId: number): Promise<{ rows: ArrEpisode[] }> =>
+    SAMPLE ? sample.wait({ rows: sample.sampleEpisodes }) : call(`/admin/arr/sonarr/series/${seriesId}/episodes`),
   adminTicket: (id: string): Promise<AdminTicketDetail> =>
     SAMPLE ? sample.adminTicket(id) : call(`/admin/ticket/${enc(id)}`),
   /** "note": admins only; "reply": sent to the member the usual way. */

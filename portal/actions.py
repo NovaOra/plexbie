@@ -828,15 +828,20 @@ class Actions:
         except LookupError as e:
             raise web.HTTPNotFound(text=json.dumps({"error": str(e)}), content_type="application/json")
 
-    async def blocked_import(self, user: dict, app: str, download_id: str) -> dict:
-        """Import it through Sonarr's/Radarr's Manual Import (after the admin held the button)."""
+    async def blocked_import(self, user: dict, app: str, download_id: str, body: Optional[dict] = None) -> dict:
+        """Import it through Sonarr's/Radarr's Manual Import (after the admin held the button),
+        with their choices for each file (which episode or film it is, quality, language,
+        release group, or skip it)."""
         from core import blocked_imports
         from portal import help as helpdesk
         self.limit(user["user"]["id"], "admin")
         self._blocked_ref(app, download_id)
         actor = self.actor(user)
+        choices = (body or {}).get("files")
+        if choices is not None and (not isinstance(choices, list) or len(choices) > 300):
+            raise web.HTTPBadRequest(text='{"error":"files must be a list."}', content_type="application/json")
         try:
-            message = await blocked_imports.do_import(self.services, app, download_id)
+            message = await blocked_imports.do_import(self.services, app, download_id, choices)
         except LookupError as e:
             return {"ok": False, "message": str(e)}
         except (ValueError, RuntimeError) as e:
@@ -846,6 +851,20 @@ class Actions:
             await helpdesk.add(hid, "action", actor, f"Looked it over and imported it. {message}")
         logger.info(f"{actor} imported blocked download {app}:{download_id}: {message}")
         return {"ok": True, "message": message}
+
+    async def arr_library(self, user: dict, app: str, q: str) -> dict:
+        """Shows or films in Sonarr/Radarr matching `q`: "Wrong show?" on a blocked import."""
+        from core import blocked_imports
+        self.limit(user["user"]["id"], "lookup")
+        if app not in blocked_imports.APPS:
+            raise web.HTTPNotFound(text='{"error":"No such service."}', content_type="application/json")
+        return {"rows": await blocked_imports.library(self.services, app, (q or "")[:80])}
+
+    async def arr_episodes(self, user: dict, series_id: int) -> dict:
+        """Every episode of a show in Sonarr, to say which one a file is."""
+        from core import blocked_imports
+        self.limit(user["user"]["id"], "lookup")
+        return {"rows": await blocked_imports.episodes_of(self.services, series_id)}
 
     async def ticket_take(self, user: dict, hid: str) -> dict:
         from portal import help as helpdesk
