@@ -178,7 +178,7 @@ def test_a_request_that_never_reaches_sonarr_opens_a_ticket():
 
     async def body():
         saved = season_search.POLL_SECONDS
-        season_search.POLL_SECONDS = 0
+        season_search.POLL_SECONDS = 0.001
         try:
             season_search.follow_up_new_show(Services(), tmdb_id=76479, seasons=[1], title="The Boys",
                                              wait_for_sonarr=0, on_missing=missing)
