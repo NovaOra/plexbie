@@ -20,6 +20,7 @@ Everything here is best-effort: a failure is logged and never raised, because
 the callers are background loops (inactivity checks, arrival notices) that must
 carry on.
 """
+import asyncio
 import base64
 import hashlib
 import json
@@ -273,8 +274,14 @@ def _app_key(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()[:40]
 
 
+#: Android notification channels the app makes. "alerts" vibrates in Plexbie's own
+#: pattern, "alerts-quiet" doesn't (the app's Vibration setting picks); app versions
+#: before them have only "default".
+APP_CHANNELS = ("alerts", "alerts-quiet", "default")
+
+
 async def register_app(token: Any, platform: Any, *, plex_account_id: Optional[str], plex_name: Optional[str],
-                       discord_id: Optional[str], session: Optional[str] = None) -> bool:
+                       discord_id: Optional[str], session: Optional[str] = None, channel: Any = None) -> bool:
     """Alerts on in the Plexbie app on one phone, tied to the app sign-in (`session`)
     that asked, so they stop when that sign-in ends.
 
@@ -298,6 +305,7 @@ async def register_app(token: Any, platform: Any, *, plex_account_id: Optional[s
         "plex_name": plex_name,
         "discord_id": str(discord_id) if discord_id else None,
         "session": session,
+        "channel": channel if channel in APP_CHANNELS else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return True
@@ -359,7 +367,7 @@ async def _push_app(apps: List[tuple], payload: Dict[str, Any]) -> int:
     import aiohttp
     messages = [{
         "to": r["token"], "title": str(payload.get("title") or "Plexbie")[:120], "body": str(payload.get("body") or "")[:400],
-        "data": {"url": str(payload.get("url") or "/app")}, "sound": "default", "channelId": "default", "priority": "high",
+        "data": {"url": str(payload.get("url") or "/app")}, "sound": "default", "channelId": r.get("channel") or "default", "priority": "high",
     } for _, r in apps]
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
@@ -462,6 +470,34 @@ async def push_to_admins(*, discord_ids: set, plex_account_ids: set, title: str,
     apps = [(k, r) for k, r in (await kv_get_all(APP_NAMESPACE)).items() if theirs(r)]
     payload = {"title": title, "body": body, "url": url, "tag": tag}
     return await _push(subs, payload) + await _push_app(apps, payload)
+
+
+_admin_tasks: set = set()
+
+
+def alert_admins_soon(bot, config, *, title: str, body: str, url: str, tag: str) -> None:
+    """A phone/browser alert to the admins about something that just reached the admin
+    channel (a request, a join request), in the background: the caller never waits on
+    Expo or web push, and it never raises."""
+    async def go():
+        try:
+            from core.discord_lookup import home_guild
+            from database.kv_store import kv_get as get
+            from portal.auth import OWNER_ID
+            ids = {str(config.bot_owner_id)} if getattr(config, "bot_owner_id", None) else set()
+            guild = home_guild(bot, config)
+            for m in (guild.members if guild else []):
+                roles = {r.id for r in m.roles}
+                if m.guild_permissions.administrator or (config.admin_role_id and config.admin_role_id in roles):
+                    ids.add(str(m.id))
+            owner = await get(*OWNER_ID)
+            await push_to_admins(discord_ids=ids, plex_account_ids={owner} if owner else set(),
+                                 title=title, body=body, url=url, tag=tag)
+        except Exception as e:
+            logger.info(f"Couldn't alert the admins ({tag}): {type(e).__name__}")
+    task = asyncio.create_task(go())
+    _admin_tasks.add(task)
+    task.add_done_callback(_admin_tasks.discard)
 
 
 # ------------------------------------------------------------------ main

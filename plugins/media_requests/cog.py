@@ -16,6 +16,7 @@ from core.clients import ServiceError
 from core.logging import get_logger
 from core.permissions import AdminActionView, single_flight
 from core.services import BotServices
+from core import notify
 from core.admin_mirror import dm_user_id
 from utils.embeds import truncate_field
 from utils.views import RequesterOnlyView, reply_failure
@@ -153,6 +154,10 @@ async def post_media_request(bot, services, user, media: dict, seasons=None, mon
     view = AdminApprovalView(media, user.id, services, seasons, monitor)
     message = await admin_channel.send(embed=embed, view=view)
     await save_request(message.id, user_id=user.id, media=media, seasons=seasons, monitor=monitor, extra=extra)
+    what = f"{title} ({media_type.title() if media_type != 'tv' else 'TV'}"
+    what += f", {season_text.split(' 🔔')[0]})" if media_type == 'tv' and seasons else ")"
+    notify.alert_admins_soon(bot, services.config, title=f"{_who(user)} asked for {title}", body=f"{what}. Approve or decline it.",
+                             url="/manage?tab=requests", tag=f"request-{message.id}")
     return message.id
 
 
@@ -202,7 +207,14 @@ async def post_book_request(bot, services, user, book: dict, extra: Optional[Dic
 
     # One keyed write, not a rewrite of every request ever made.
     await save_request(message.id, user_id=user.id, media=book, media_type=format_type, extra=extra)
+    kind = {"ebook": "ebook", "audiobook": "audiobook", "both": "ebook and audiobook"}.get(format_type, format_type)
+    notify.alert_admins_soon(bot, services.config, title=f"{_who(user)} asked for {title}", body=f"{title} by {author} ({kind}). Approve or decline it.",
+                             url="/manage?tab=requests", tag=f"request-{message.id}")
     return message.id
+
+
+def _who(user) -> str:
+    return getattr(user, "display_name", None) or getattr(user, "name", None) or "Someone"
 
 
 _DECISION_LOCKS: Dict[int, asyncio.Lock] = {}

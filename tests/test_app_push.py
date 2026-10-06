@@ -230,3 +230,45 @@ def test_signing_out_of_the_app_forgets_its_phone_at_once():
         return before, len(await notify.apps_for(discord_id="55")), notify.session_alive(key)
     before, after, alive = _db(body)
     assert before == 1 and after == 0 and alive is False
+
+
+def test_each_phone_gets_alerts_on_the_channel_its_app_made():
+    """Android: "alerts" vibrates in Plexbie's pattern, "alerts-quiet" doesn't; an app from
+    before those channels registers without one and keeps getting "default"."""
+    expo = _Expo(lambda m: {"status": "ok", "id": "t"})
+    try:
+        async def body():
+            await notify.register_app(TOKEN, "android", plex_account_id="7", plex_name=None, discord_id=None, channel="alerts")
+            await notify.register_app(OTHER, "android", plex_account_id="8", plex_name=None, discord_id=None, channel="evil")
+            await notify.notify_member(None, title="a", body="b", plex_account_id="7", context="test")
+            await notify.notify_member(None, title="a", body="b", plex_account_id="8", context="test")
+        _db(body)
+    finally:
+        expo.close()
+    assert [m["channelId"] for m in expo.sent] == ["alerts", "default"]
+
+
+def test_a_new_request_alerts_the_admins_phones_straight_away():
+    expo = _Expo(lambda m: {"status": "ok", "id": "t"})
+    try:
+        class Config:
+            bot_owner_id, admin_role_id, guild_id = 42, None, None
+
+        class Bot:
+            guilds = []
+
+            def get_guild(self, _):
+                return None
+
+        async def body():
+            await notify.register_app(TOKEN, "android", plex_account_id=None, plex_name=None, discord_id="42", channel="alerts")
+            await notify.register_app(OTHER, "android", plex_account_id=None, plex_name=None, discord_id="99")
+            notify.alert_admins_soon(Bot(), Config, title="Sam asked for Sintel", body="Sintel (Movie). Approve or decline it.",
+                                     url="/manage?tab=requests", tag="request-1")
+            while notify._admin_tasks:
+                await asyncio.sleep(0.01)
+        _db(body)
+    finally:
+        expo.close()
+    assert [m["to"] for m in expo.sent] == [TOKEN], "only the admin's phone"
+    assert expo.sent[0]["title"] == "Sam asked for Sintel" and expo.sent[0]["data"]["url"] == "/manage?tab=requests"

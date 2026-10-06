@@ -573,6 +573,10 @@ async def post_join_request(bot, services, user, email: str, *, plex_name: Optio
     # Update saved request with message ID
     namespace, key = (INVITES_NAMESPACE, str(user.id)) if user else (WEB_JOINS_NAMESPACE, str(plex_account_id))
     await kv_update(namespace, key, message_id=message.id)
+    from core import notify
+    name = (getattr(user, "display_name", None) or user.name) if user else plex_name or "Someone"
+    notify.alert_admins_soon(bot, services.config, title=f"{name} wants to join Plex", body="Approve or decline it on Manage.",
+                             url="/manage?tab=joins", tag=f"join-{message.id}")
     return message.id
 
 

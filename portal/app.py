@@ -451,7 +451,7 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             signed = auth.session(request) if auth is not None else None
             ok = await notify.register_app(payload.get("token"), payload.get("platform"), plex_account_id=user.get("plexAccountId"),
                                            plex_name=user.get("plexName"), discord_id=user.get("discordId"),
-                                           session=(signed or {}).get("app"))
+                                           session=(signed or {}).get("app"), channel=payload.get("channel"))
             return web.json_response({"ok": ok}, status=200 if ok else 400)
 
         async def push_test(request):
