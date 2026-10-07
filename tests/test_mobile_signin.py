@@ -256,7 +256,7 @@ def test_a_code_works_once_only_with_the_apps_secret_and_only_for_a_minute():
         sessions._sessions = {}
 
         async def no_save():
-            return None
+            return True
         sessions._save = no_save
         verifier, challenge, _ = _pkce()
 
@@ -291,7 +291,7 @@ def test_a_code_used_again_ends_the_session_it_made():
         sessions._sessions = {}
 
         async def no_save():
-            return None
+            return True
         sessions._save = no_save
         verifier, challenge, _ = _pkce()
         code = _minted(sessions, challenge)
@@ -417,6 +417,39 @@ def test_the_confirm_page_escapes_the_name_and_needs_its_own_cookie():
     assert nothing == 410
 
 
+def test_the_confirm_tap_from_another_site_or_without_a_yes_gives_no_code():
+    async def scenario():
+        auth = _auth()
+        _, challenge, state = _pkce()
+        pending = {"mobile": {"challenge": challenge, "state": state, "redirect": REDIRECT},
+                   "person": {"via": "discord", "id": "5", "name": "sam"}}
+        auth._cookie = lambda request, name: pending if name == "plexbie_app_signin" else None
+
+        async def tap(origin, form):
+            request = make_mocked_request("POST", "/auth/mobile/confirm", headers={"Origin": origin} if origin else {})
+
+            async def post():
+                return form
+            request.post = post
+            try:
+                return await auth.mobile_confirm(request)
+            except web.HTTPFound as e:
+                return e
+        out = {}
+        for origin in ("https://evil.example", "null"):
+            answer = await tap(origin, {"answer": "yes"})
+            out[origin] = (answer.status, answer.headers.get("Location"), dict(auth.mobile._codes))
+        for name, form in (("maybe", {"answer": "maybe"}), ("empty", {})):
+            out[name] = parse_qs(urlsplit((await tap(None, form)).headers["Location"]).query)
+        out["yes"] = parse_qs(urlsplit((await tap(None, {"answer": "yes"})).headers["Location"]).query)
+        return out, state
+    out, state = asyncio.run(scenario())
+    for origin in ("https://evil.example", "null"):
+        assert out[origin] == (410, None, {}), f"a tap posted from {origin} makes no code"
+    assert out["maybe"] == out["empty"] == {"error": ["denied"], "state": [state]}, "only a yes signs in"
+    assert set(out["yes"]) == {"code", "state"}, "this site's own tap does"
+
+
 def test_one_account_signing_in_over_and_over_only_replaces_its_own_app_sessions():
     async def scenario():
         sessions = mobile.MobileSessions()
@@ -489,6 +522,112 @@ def test_sign_out_says_so_when_it_could_not_be_stored():
                                                     headers={"Authorization": f"Bearer {token}", "X-Plexbie": "1"}))
         return out.status
     assert asyncio.run(scenario()) == 503
+
+
+def _store(stored):
+    """kv_set stand-ins: one that keeps what it's given, one that always fails."""
+    async def works(namespace, key, value):
+        stored[key] = value
+
+    async def broken(*a, **k):
+        raise RuntimeError("database is locked")
+    return works, broken
+
+
+def test_a_sign_in_that_could_not_be_stored_is_unavailable_and_its_code_still_works():
+    async def scenario():
+        sessions = mobile.MobileSessions()
+        sessions._sessions = {}
+        stored = {}
+        works, broken = _store(stored)
+        mobile.kv_set, saved_set = broken, mobile.kv_set
+        try:
+            verifier, challenge, _ = _pkce()
+            code = _minted(sessions, challenge)
+            try:
+                handed_out = await sessions.exchange(code, verifier)
+            except mobile.Unavailable:
+                handed_out = "unavailable"
+            kept = dict(sessions._sessions)
+            mobile.kv_set = works
+            retried = await sessions.exchange(code, verifier)
+        finally:
+            mobile.kv_set = saved_set
+        return handed_out, kept, retried, stored
+    handed_out, kept, retried, stored = asyncio.run(scenario())
+    assert handed_out == "unavailable", "no token is handed out that a restart would end"
+    assert kept == {}, "nor is it accepted until it's stored"
+    assert retried is not None and mobile._hash(retried["token"]) in stored["app"], "the code wasn't spent"
+
+
+def test_a_sign_in_that_could_not_be_stored_signs_none_of_their_other_devices_out():
+    async def scenario():
+        sessions = mobile.MobileSessions()
+        sessions._sessions = {}
+        stored = {}
+        works, broken = _store(stored)
+        mobile.kv_set, saved_set = works, mobile.kv_set
+        try:
+            verifier, challenge, _ = _pkce()
+            tokens = [(await sessions.exchange(_minted(sessions, challenge), verifier))["token"]
+                      for _ in range(mobile.PER_PERSON)]
+            mobile.kv_set = broken
+            try:
+                await sessions.exchange(_minted(sessions, challenge), verifier)
+            except mobile.Unavailable:
+                pass
+            return [sessions.lookup(token) is not None for token in tokens]
+        finally:
+            mobile.kv_set = saved_set
+    assert all(asyncio.run(scenario())), "the oldest device is still signed in after a sign-in that failed"
+
+
+def test_a_sign_out_that_could_not_be_stored_keeps_the_sign_in_so_a_retry_ends_it():
+    async def scenario():
+        sessions = mobile.MobileSessions()
+        sessions._sessions = {}
+        stored = {}
+        works, broken = _store(stored)
+        mobile.kv_set, saved_set = works, mobile.kv_set
+        try:
+            verifier, challenge, _ = _pkce()
+            token = (await sessions.exchange(_minted(sessions, challenge), verifier))["token"]
+            key = mobile._hash(token)
+            mobile.kv_set = broken
+            first = await sessions.revoke(key)
+            still = sessions.lookup(token) is not None
+            mobile.kv_set = works
+            second = await sessions.revoke(key)
+            return first, still, second, sessions.lookup(token), key in stored["app"]
+        finally:
+            mobile.kv_set = saved_set
+    first, still, second, after, kept = asyncio.run(scenario())
+    assert first is False and still, "a failed sign-out says so and changes nothing, rather than ending it until a restart"
+    assert second is True and after is None and not kept
+
+
+def test_a_replayed_code_ends_its_session_even_when_that_could_not_be_stored():
+    async def scenario():
+        sessions = mobile.MobileSessions()
+        sessions._sessions = {}
+        stored = {}
+        works, broken = _store(stored)
+        mobile.kv_set, saved_set = works, mobile.kv_set
+        try:
+            verifier, challenge, _ = _pkce()
+            code = _minted(sessions, challenge)
+            made = await sessions.exchange(code, verifier)
+            mobile.kv_set = broken
+            replay = await sessions.exchange(code, verifier)
+            gone = sessions.lookup(made["token"]) is None
+            mobile.kv_set = works
+            await sessions.exchange(_minted(sessions, challenge), verifier)     # the next save that works
+            return replay, gone, mobile._hash(made["token"]) in stored["app"]
+        finally:
+            mobile.kv_set = saved_set
+    replay, gone, kept = asyncio.run(scenario())
+    assert replay is None and gone, "a replayed code's session ends at once, stored or not"
+    assert not kept
 
 
 def test_a_strange_retry_count_is_not_a_crash():

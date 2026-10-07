@@ -201,7 +201,10 @@ class MobileSessions:
             if spent and spent[1] and spent[0] >= now:
                 self._spent[key] = (spent[0], None)
                 logger.warning("An app sign-in code was used twice; the session it made is ended")
-                await self.revoke(spent[1])
+                # Ended here at once either way; unsaved, it stays ended once anything else is saved.
+                self._sessions.pop(spent[1], None)
+                if not await self._save():
+                    logger.warning("Could not store the end of that app sign-in; it may come back after a restart")
             return None
         self._spent[key] = (now + CODE_SECONDS, None)
         if entry["exp"] < now or not (isinstance(verifier, str) and VERIFIER.fullmatch(verifier)):
@@ -219,8 +222,17 @@ class MobileSessions:
         }
         self._sessions[token_key] = record
         self._spent[key] = (now + CODE_SECONDS, token_key)
-        self._cap(now, record)
-        await self._save()
+        pushed_out = self._cap(now, record)
+        if not await self._save():
+            # A token that only lives until the next restart isn't handed out, nor does
+            # it push anyone out; the code stays good for a retry, unless it was replayed meanwhile.
+            self._sessions.pop(token_key, None)
+            for old_key, old in pushed_out.items():
+                self._sessions.setdefault(old_key, old)
+            if self._spent.get(key, (0, None))[1] == token_key:
+                del self._spent[key]
+                self._codes[key] = entry
+            raise Unavailable()
         logger.info(f"App sign-in via {entry['via'].capitalize()}: {record['name']}")
         return {"token": token, "expiresAt": expires}
 
@@ -276,28 +288,34 @@ class MobileSessions:
         return bool(record) and self._alive(record, time.time())
 
     async def revoke(self, key: str) -> bool:
-        """End one app sign-in. False if that couldn't be stored (it may come back)."""
+        """End one app sign-in. False if that couldn't be stored, and then it's kept as
+        it was, so a sign-out that says it failed has changed nothing and can be retried."""
         await self.load()
         if self._sessions is None:
             return False
-        if self._sessions.pop(key, None) is None:
+        record = self._sessions.pop(key, None)
+        if record is None:
             return True
-        return await self._save()
+        if await self._save():
+            return True
+        self._sessions.setdefault(key, record)
+        return False
 
-    def _cap(self, now: float, newest: dict) -> None:
+    def _cap(self, now: float, newest: dict) -> dict:
         """Expired sign-ins go; one account keeps at most PER_PERSON (its own oldest
         go first), so nobody signing in over and over can push out anyone else's.
-        The overall cap is a last resort."""
+        The overall cap is a last resort. Returns the live sign-ins it pushed out."""
         sessions = self._sessions or {}
         for key in [k for k, r in sessions.items() if not self._alive(r, now)]:
             del sessions[key]
         mine = sorted((k for k, r in sessions.items()
                        if r.get("via") == newest["via"] and r.get("id") == newest["id"]),
                       key=lambda k: sessions[k].get("last", 0))
-        for key in mine[:max(0, len(mine) - PER_PERSON)]:
-            del sessions[key]
+        pushed_out = {key: sessions.pop(key) for key in mine[:max(0, len(mine) - PER_PERSON)]}
         while len(sessions) > MAX_APP_SESSIONS:
-            del sessions[min(sessions, key=lambda k: sessions[k].get("last", 0))]
+            key = min(sessions, key=lambda k: sessions[k].get("last", 0))
+            pushed_out[key] = sessions.pop(key)
+        return pushed_out
 
     async def _save(self) -> bool:
         async with self._save_lock:
