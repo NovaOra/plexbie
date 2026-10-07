@@ -267,7 +267,8 @@ class PlexInviteApprovalView(AdminActionView):
             # delays every other interaction.
             account = await run_blocking(owner_account, self.services.config)
 
-            sections = await run_blocking(self.services.plex_server.library.sections)
+            # .library is fetched on first read, so it is read in the thread too.
+            sections = await run_blocking(lambda: self.services.plex_server.library.sections())
             await run_blocking(
                 account.inviteFriend,
                 user=self.email,
@@ -598,7 +599,7 @@ async def join_with_invite_link(bot, services, *, plex_name: str, plex_account_i
         return {"ok": False, "accepted": False}
     try:
         owner = await run_blocking(owner_account, cfg)
-        sections = await run_blocking(services.plex_server.library.sections)
+        sections = await run_blocking(lambda: services.plex_server.library.sections())
         await run_blocking(owner.inviteFriend, user=plex_name, server=services.plex_server,
                            sections=sections, allowSync=False)
     except Exception as e:

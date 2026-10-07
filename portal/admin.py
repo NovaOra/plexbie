@@ -512,7 +512,7 @@ class Admin:
             return []
 
         async def load():
-            return sorted(s.title for s in await run_blocking(server.library.sections))
+            return sorted(s.title for s in await run_blocking(lambda: server.library.sections()))
         try:
             return await self.cache.get("admin:libraries", 600, load)
         except Exception:

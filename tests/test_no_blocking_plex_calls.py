@@ -58,6 +58,31 @@ def _receiver_names(func_node):
     return names
 
 
+def _library_reads(node):
+    """Every ``<expr>.library.<attr>`` read in node, skipping lambda bodies.
+
+    PlexServer.library is a cached property whose first read fetches /library,
+    so run_blocking(server.library.sections) performs that request on the loop
+    while Python evaluates the argument. A lambda defers it to the thread. A
+    bare ``<module>.library`` (a function reference) is not a read and passes.
+    """
+    if isinstance(node, ast.Lambda):
+        return []
+    found = []
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute):
+        if node.value.attr == "library":
+            found.append(node.value)
+    for child in ast.iter_child_nodes(node):
+        found.extend(_library_reads(child))
+    return found
+
+
+def _is_run_blocking(node):
+    func = node.func
+    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+    return name == "run_blocking"
+
+
 def _is_plex_call(node, line):
     if isinstance(node.func, ast.Name):
         return node.func.id in PLEX_CTORS
@@ -102,6 +127,11 @@ class _Auditor(ast.NodeVisitor):
             # an actual invocation on this line is a finding.
             if _is_plex_call(node, line) and "run_blocking" not in line:
                 self.findings.append(f"{self.rel}:{node.lineno}: {line.strip()[:90]}")
+            if _is_run_blocking(node):
+                for arg in [*node.args, *(k.value for k in node.keywords)]:
+                    for read in _library_reads(arg):
+                        text = self.lines[read.lineno - 1]
+                        self.findings.append(f"{self.rel}:{read.lineno}: {text.strip()[:90]}")
         self.generic_visit(node)
 
 
@@ -147,6 +177,39 @@ def test_auditor_accepts_a_wrapped_call():
     sample = (
         "async def f(self):\n"
         "    return await run_blocking(self.services.plex_server.sessions)\n"
+    )
+    auditor = _Auditor("sample.py", sample.splitlines())
+    auditor.visit(ast.parse(sample))
+    assert auditor.findings == []
+
+
+def test_auditor_flags_a_library_read_in_a_run_blocking_argument():
+    """The argument is evaluated on the loop, and .library fetches on first read."""
+    sample = (
+        "async def f(self):\n"
+        "    return await run_blocking(self.services.plex_server.library.sections)\n"
+    )
+    auditor = _Auditor("sample.py", sample.splitlines())
+    auditor.visit(ast.parse(sample))
+    assert auditor.findings, "auditor failed to flag server.library read on the loop"
+
+
+def test_auditor_accepts_a_library_read_inside_a_lambda():
+    sample = (
+        "async def f(self):\n"
+        "    server = self.services.plex_server\n"
+        "    return await run_blocking(lambda: server.library.sections())\n"
+    )
+    auditor = _Auditor("sample.py", sample.splitlines())
+    auditor.visit(ast.parse(sample))
+    assert auditor.findings == []
+
+
+def test_auditor_accepts_a_function_named_library_passed_to_run_blocking():
+    """portal.plex.library is a plain sync helper, not the plexapi property."""
+    sample = (
+        "async def f(server, kind):\n"
+        "    return await run_blocking(plexdata.library, server, kind)\n"
     )
     auditor = _Auditor("sample.py", sample.splitlines())
     auditor.visit(ast.parse(sample))
