@@ -1028,6 +1028,12 @@ docker exec plexbie sh -c 'grep "\"level\": \"ERROR\"" /app/logs/plexbie.log | t
 - **Discord Public Bot**: red while anyone with Plexbie's ID can add it to their server. See
   [Keep Plexbie to your server](#keep-plexbie-to-your-server).
 
+It also lists a **Proxy** when a reverse proxy on another LAN machine forwards visitors
+while `WEB_PUBLIC_URL` is blank and `TRUSTED_PROXIES` doesn't list it. Plexbie can't tell
+those visitors came over https, so sign-in cookies go out without `Secure` and no HSTS is
+sent. Set `WEB_PUBLIC_URL` to the site's https address, and add the proxy's address to
+`TRUSTED_PROXIES` (so each visitor gets their own sign-in limits).
+
 **Deploying a change**: rebuild the image and recreate the container. Tag the
 previous image first so there is a way back.
 

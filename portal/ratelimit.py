@@ -24,6 +24,11 @@ from aiohttp import web
 DEFAULT_TRUSTED = "127.0.0.0/8,::1/128,172.16.0.0/12"
 
 _warned: set = set()
+#: LAN proxies seen forwarding visitors without being trusted (Manage > Health lists them).
+#: Capped: any LAN device can send the headers, and one that keeps changing address
+#: mustn't grow it without end.
+_untrusted: set = set()
+_UNTRUSTED_MAX = 8
 
 
 def _warn_once(key: str, message: str) -> None:
@@ -112,6 +117,11 @@ def visitor_scheme(request: web.Request) -> Optional[str]:
     return scheme if scheme in ("http", "https") else None
 
 
+def untrusted_proxies() -> list:
+    """LAN proxies seen forwarding visitors that TRUSTED_PROXIES doesn't list."""
+    return sorted(_untrusted)
+
+
 def client_ip(request: web.Request) -> str:
     remote = request.remote or "?"
     if not trusted(remote):
@@ -121,9 +131,13 @@ def client_ip(request: web.Request) -> str:
             except ValueError:
                 private = False
             if private:
+                if len(_untrusted) < _UNTRUSTED_MAX:
+                    _untrusted.add(remote)
                 _warn_once(f"untrusted:{remote}",
                            f"A proxy at {remote} forwards visitors but isn't in TRUSTED_PROXIES, so every "
-                           f"visitor through it shares one set of sign-in limits; add it there")
+                           f"visitor through it shares one set of sign-in limits, and unless WEB_PUBLIC_URL "
+                           f"is the site's https address, sign-in cookies go out without Secure and no HSTS "
+                           f"is sent; add the proxy's address to TRUSTED_PROXIES and set WEB_PUBLIC_URL")
         return remote
     hops = [h.strip() for h in (request.headers.get("X-Forwarded-For") or "").split(",") if h.strip()]
     for hop in reversed(hops):

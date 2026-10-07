@@ -607,6 +607,16 @@ class Admin:
                                "detail": f"Give Plexbie's role {missing} in the admin channel, so each DM gets its own thread."
                                if missing else None})
                 checks.extend(home_health_items(self.bot, cfg))
+            from portal.ratelimit import untrusted_proxies
+            proxies = untrusted_proxies()
+            if proxies and not cfg.web_public_url:
+                # The site can't tell those visitors came over https, so it treats them as plain http.
+                named = ", ".join(proxies[:3]) + (f" and {len(proxies) - 3} more" if len(proxies) > 3 else "")
+                checks.append({"name": "Proxy", "ok": False, "ms": 0,
+                               "detail": f"A proxy at {named} forwards visitors, but WEB_PUBLIC_URL is "
+                                         "blank and TRUSTED_PROXIES doesn't list it, so sign-in cookies go out "
+                                         "without Secure and no HSTS is sent. Set WEB_PUBLIC_URL to the site's "
+                                         "https address and add the proxy's address to TRUSTED_PROXIES."})
             for client in (self.services.seerr, self.services.sonarr, self.services.radarr,
                            self.services.tautulli, self.services.sab):
                 if client.configured:

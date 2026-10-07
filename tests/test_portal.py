@@ -1890,6 +1890,79 @@ def test_forwarded_addresses_are_trusted_only_from_proxies_and_read_from_the_rig
     assert client_ip(cf_only) == "198.51.100.9"
 
 
+def test_a_proxy_that_isnt_trusted_is_named_in_the_log_with_both_settings():
+    """Behind a LAN proxy that isn't in TRUSTED_PROXIES and with WEB_PUBLIC_URL blank,
+    the site can't tell visitors came over https: cookies lose Secure, no HSTS."""
+    from portal import ratelimit as module
+
+    class Req:
+        def __init__(self, remote, headers):
+            self.remote, self.headers = remote, headers
+    said = []
+    real, module._warn_once = module._warn_once, lambda key, message: said.append(message)
+    try:
+        module.client_ip(Req("192.168.7.20", {"X-Forwarded-For": "203.0.113.7"}))
+    finally:
+        module._warn_once = real
+    assert len(said) == 1
+    assert "192.168.7.20" in said[0] and "TRUSTED_PROXIES" in said[0] and "WEB_PUBLIC_URL" in said[0]
+    assert "Secure" in said[0] and "HSTS" in said[0]
+
+
+def test_health_lists_a_proxy_that_isnt_trusted_while_there_is_no_public_address():
+    from portal import ratelimit
+    from portal.admin import Admin
+    from portal.data import Data
+
+    class Req:
+        def __init__(self, remote, headers):
+            self.remote, self.headers = remote, headers
+
+    def run(public):
+        services = FakeServices(Config())
+        cfg = services.config
+        cfg.plex_url = cfg.plex_token = None
+        cfg.discord_bot_token = None
+        cfg.web_public_url = public
+        return asyncio.run(Admin(Data(services)).health())
+    ratelimit.client_ip(Req("192.168.7.21", {"X-Forwarded-For": "203.0.113.8"}))
+    item = next((c for c in run("") if c["name"] == "Proxy"), None)
+    assert item is not None and not item["ok"], "a forwarding proxy with no public address is listed"
+    assert "192.168.7.21" in item["detail"] and "WEB_PUBLIC_URL" in item["detail"] and "TRUSTED_PROXIES" in item["detail"]
+    assert "Secure" in item["detail"] and "HSTS" in item["detail"]
+    assert not [c for c in run("https://plexbie.example.com") if c["name"] == "Proxy"], \
+        "with the public address set, cookies are Secure and HSTS is sent"
+
+
+def test_the_untrusted_proxy_list_stays_short_however_many_addresses_send_the_headers():
+    """Any LAN device can send forwarding headers, and one that keeps changing address
+    mustn't grow the list (or the Health item) without end."""
+    from portal import ratelimit
+    from portal.admin import Admin
+    from portal.data import Data
+
+    class Req:
+        def __init__(self, remote, headers):
+            self.remote, self.headers = remote, headers
+    saved = set(ratelimit._untrusted)
+    ratelimit._untrusted.clear()
+    try:
+        for n in range(1, 41):
+            ratelimit.client_ip(Req(f"fd00::{n:x}", {"X-Forwarded-For": "203.0.113.9"}))
+        assert len(ratelimit.untrusted_proxies()) == ratelimit._UNTRUSTED_MAX
+        services = FakeServices(Config())
+        cfg = services.config
+        cfg.plex_url = cfg.plex_token = None
+        cfg.discord_bot_token = None
+        cfg.web_public_url = ""
+        item = next(c for c in asyncio.run(Admin(Data(services)).health()) if c["name"] == "Proxy")
+        assert f"and {ratelimit._UNTRUSTED_MAX - 3} more" in item["detail"]
+        assert sum(a in item["detail"] for a in ratelimit.untrusted_proxies()) == 3
+    finally:
+        ratelimit._untrusted.clear()
+        ratelimit._untrusted.update(saved)
+
+
 def test_the_owner_is_remembered_by_account_id_when_plex_tv_is_down():
     from plugins.user_mgmt.models import PlexUser  # noqa: F401  (tables)
     from portal.auth import Auth
