@@ -41,6 +41,7 @@ webhook tests bind `127.0.0.1:18099` only for the duration of a test.
 | `test_kv_store.py` | No uniqueness on `(namespace, key)`, so `kv_set`'s select-then-insert could write two rows; `kv_get` then raised `MultipleResultsFound` forever and `media_cleanup` silently fell back to defaults, losing its exemption list while still deleting media. |
 | `test_config.py` | `BOT_OWNER_ID=novaora` — a username where a snowflake belonged — was discarded silently by `_int_or_none`, across 25 fields. Six more fields used a bare `int()` that crashed the whole bot on one typo. |
 | `test_cleanup_settings_load.py` | After a restart the cleanup cog held DEFAULT_CONFIG until its first load. `/cleanup config`, the panel's status and Run Scan buttons, and a failed database read all acted on those defaults: a save emptied the exemption list and the skipped libraries and turned a switched-off cleanup back on, and Run Scan went ahead against a stored "off". Every reader now loads first, and nothing is saved until the stored settings have loaded. A failed save puts memory back to what is stored, and a website change refused partway through changes nothing. |
+| `test_bookshelf_moves.py` | Multi-disc audiobooks were flattened by file name, so `CD2/01.mp3` silently replaced `CD1/01.mp3` before the source was deleted. A partly failed move still deleted the hint, announced the book and DM'd the requester, and the retry filed the rest as "Title (2)". |
 
 ## Conventions
 

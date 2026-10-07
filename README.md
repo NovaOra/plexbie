@@ -220,7 +220,17 @@ who's watching from one place instead of five.
 - Unwatched media can be reported and, optionally, deleted after a configurable
   period, with an exemption list and a dry-run mode.
 - Audiobook and ebook downloads are watched, waited on until they stop changing,
-  then renamed and filed into an Audiobookshelf-shaped library.
+  then renamed and filed into an Audiobookshelf-shaped library. A multi-disc
+  release whose tracks share names (`CD1/01.mp3`, `CD2/01.mp3`) is filed as
+  `Disc 01 - 01.mp3`, `Disc 02 - 01.mp3`, so no track replaces another. If any
+  file can't be moved, everything already moved is put back, the download and
+  its request details are kept, and nothing is announced until it files
+  completely. A file copied between disks is written as `<name>.plexbie-part`
+  and only gets its real name once whole. A book folder holding a hidden
+  `.plexbie_incomplete.json` isn't finished (it may already show on the shelf):
+  its files couldn't all be put back, or Plexbie stopped part-way, and the next
+  attempt moves them back and files the book again into the same folder. If you
+  delete that download instead, tidy the folder by hand, marker included.
 
 **Housekeeping**
 

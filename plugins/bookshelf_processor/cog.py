@@ -7,11 +7,15 @@ moves them into Audiobookshelf-compatible directory structures.
 Ported from the standalone bookshelf-processor Docker container.
 """
 
+import contextlib
+import errno
 import json
+import os
 import re
 import shutil
 import hashlib
 import zipfile
+from dataclasses import dataclass, field
 from html import escape as html_escape
 from pathlib import Path
 from datetime import datetime
@@ -849,6 +853,72 @@ def find_book_files(source: Path, media_type: str) -> list[Path]:
     return sorted(files)
 
 
+def _natural_key(value: str) -> list:
+    """Sort key that puts CD2 before CD10."""
+    return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", value)]
+
+
+def _repeated_names(book_files: list[Path]) -> set[str]:
+    """File names (casefolded) that more than one book file shares.
+
+    Casefolded because the library may be on a case-insensitive share (SMB),
+    where Track.mp3 and track.MP3 are the same file.
+    """
+    seen, repeated = set(), set()
+    for f in book_files:
+        name = f.name.casefold()
+        (repeated if name in seen else seen).add(name)
+    return repeated
+
+
+def plan_book_moves(source_path: Path, book_files: list[Path], media_type: str) -> list[tuple[Path, str]]:
+    """(source file, name in the destination) for every book file, in order.
+
+    The destination is one flat folder. Names are kept as they are unless two
+    files share one, as multi-disc releases do (CD1/01.mp3, CD2/01.mp3). Then
+    every file is renamed so none can replace another:
+
+    - audiobooks: "Disc NN - <name>". NN is the position of the file's folder in
+      natural order (the top level first), not a number read from the folder
+      name: Audiobookshelf reads "Disc NN" from file names but only orders by
+      it when the numbers have no gaps, so CD1 + CD3 must become 01 + 02.
+    - ebooks: "<folder> - <name>", because the folder ("retail", "converted")
+      is what tells the copies apart. Top-level files keep their names.
+
+    A renamed file that would still share a name with an earlier one (a/b/x and
+    "a - b"/x, or a top-level "retail - x" next to retail/x) gets " (2)", " (3)"
+    before its extension, so every planned name is unique.
+    """
+    if book_files == [source_path]:
+        return [(source_path, source_path.name)]
+    if not _repeated_names(book_files):
+        return [(f, f.name) for f in book_files]
+
+    def folder(f: Path) -> str:
+        return f.parent.relative_to(source_path).as_posix() if f.parent != source_path else ""
+
+    if media_type != "audiobook":
+        plan = [
+            (f, f"{sanitize_dirname(folder(f).replace('/', ' - '))} - {f.name}" if folder(f) else f.name)
+            for f in book_files
+        ]
+    else:
+        folders = sorted({folder(f) for f in book_files}, key=lambda name: (name != "", _natural_key(name)))
+        width = max(2, len(str(len(folders))))
+        disc = {name: str(index).zfill(width) for index, name in enumerate(folders, start=1)}
+        plan = [(f, f"Disc {disc[folder(f)]} - {f.name}") for f in book_files]
+
+    taken, unique = set(), []
+    for f, name in plan:
+        candidate, counter = name, 2
+        while candidate.casefold() in taken:
+            candidate = f"{Path(name).stem} ({counter}){Path(name).suffix}"
+            counter += 1
+        taken.add(candidate.casefold())
+        unique.append((f, candidate))
+    return unique
+
+
 def find_existing_covers(source: Path) -> list[Path]:
     """Find any cover images already in the source directory."""
     covers = []
@@ -925,22 +995,321 @@ def _item_signature(path: Path) -> tuple:
         return (-1, -1, -1)
 
 
-def _move_book_files(book_files, dest: Path) -> list:
-    """Blocking: move every book file into `dest`. Returns names that failed.
+#: Written into a book's destination folder before its files are moved in, and
+#: removed once the book is completely filed. While it is there the folder holds
+#: an unfinished attempt: it names the download and every planned move, so the
+#: next attempt can move those files back and start again in the same folder.
+MOVE_MARKER = ".plexbie_incomplete.json"
 
-    Failures are collected, not raised, because the caller must know whether the
-    source tree is safe to delete. Deleting it after a partial move destroys the
-    only copy of whatever did not make it across.
+
+@dataclass
+class PlaceResult:
+    """What _place_book did. On failure, `stranded` names files that could not be
+    moved back and are still in the destination."""
+    ok: bool
+    failed_file: str | None = None
+    error: str | None = None
+    stranded: list[str] = field(default_factory=list)
+
+
+#: Suffix of the temporary name a copy is written under. A file only gets its
+#: real name once it is complete, so a copy cut short by a restart is never
+#: mistaken for the file itself.
+PART_SUFFIX = ".plexbie-part"
+
+
+def _part_path(path: Path) -> Path:
+    return path.with_name(path.name + PART_SUFFIX)
+
+
+def _move_no_clobber(src: Path, target: Path) -> None:
+    """Blocking: move src to target, refusing to replace anything already there.
+
+    shutil.move silently replaces an existing target on POSIX, whether it renames
+    or copies. Like shutil.move this renames when it can and copies when it
+    cannot (another disk, or a share that refuses). The copy is written under a
+    temporary name and renamed to target only once it is complete and on disk,
+    and src is removed only after that. On any failure the copy is removed again
+    and src is left as it was.
     """
-    failed = []
-    for source_file in book_files:
+    # Not atomic: something could create target between this check and the
+    # rename. Python has no rename-without-replace (renameat2 RENAME_NOREPLACE),
+    # and target is in a folder only this book is being filed into.
+    if os.path.lexists(target):
+        raise FileExistsError(errno.EEXIST, "already exists in the destination", str(target))
+    try:
+        os.rename(src, target)
+        return
+    except OSError:
+        pass
+
+    part = _part_path(target)
+    try:
+        # The temporary name is ours alone; a leftover from a copy cut short is
+        # simply written over.
+        with open(src, "rb") as fin, open(part, "wb") as fout:
+            shutil.copyfileobj(fin, fout, 1 << 20)
+            fout.flush()
+            os.fsync(fout.fileno())
+        shutil.copystat(src, part)
+        if os.path.lexists(target):
+            raise FileExistsError(errno.EEXIST, "already exists in the destination", str(target))
+        os.rename(part, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            part.unlink(missing_ok=True)
+        raise
+    try:
+        os.unlink(src)
+    except BaseException:
+        # Leave one copy, not two: the new one is not in any list of moves.
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+        raise
+
+
+def _write_move_marker(dest: Path, source_path: Path, plan) -> None:
+    """Blocking: record the planned moves in dest (see MOVE_MARKER)."""
+    marker = dest / MOVE_MARKER
+    tmp = dest / f"{MOVE_MARKER}.tmp"
+    payload = {
+        "source": str(source_path),
+        "moves": [[str(src), name] for src, name in plan],
+        "started": datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        with open(tmp, "w") as handle:
+            json.dump(payload, handle)
+        os.replace(tmp, marker)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _read_move_marker(dest: Path) -> dict | None:
+    """Blocking: the MOVE_MARKER in dest, or None when there is none."""
+    try:
+        with open(dest / MOVE_MARKER) as handle:
+            marker = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return marker if isinstance(marker, dict) else None
+
+
+def _clear_move_marker(dest: Path) -> None:
+    """Blocking: mark the book in dest as completely filed."""
+    (dest / MOVE_MARKER).unlink(missing_ok=True)
+
+
+def _choose_destination(base_dest: Path, source_path: Path) -> Path:
+    """Blocking: base_dest, or "base (2)", "base (3)" ... when it holds another book.
+
+    A folder is usable when it does not exist, is empty, or holds this
+    download's own unfinished attempt, which is picked up rather than pushed
+    aside into a numbered copy.
+    """
+    dest, counter = base_dest, 2
+    while dest.exists() and any(dest.iterdir()):
+        marker = _read_move_marker(dest)
+        if marker and marker.get("source") == str(source_path):
+            break
+        dest = base_dest.parent / f"{base_dest.name} ({counter})"
+        counter += 1
+    return dest
+
+
+def _restore_moves(dest: Path, moves) -> list[str]:
+    """Blocking: move files back from dest to where they came from.
+
+    `moves` is (original path, name in dest) pairs. Returns the names that could
+    not be put back. Copies cut short are only ever under their temporary
+    PART_SUFFIX name, and those are deleted. A file present under its real name
+    in both places was copied whole but its original not yet removed; the copy
+    in dest is dropped, unless the two differ in size, when neither is touched.
+    """
+    stranded = []
+    for src, name in moves:
+        target = dest / name
         try:
-            shutil.move(str(source_file), str(dest / source_file.name))
-            logger.debug(f"Moved: {source_file.name}")
+            for part in (_part_path(target), _part_path(Path(src))):
+                if os.path.lexists(part):
+                    part.unlink()
+                    logger.warning(f"Removed an unfinished copy left by an earlier attempt: {part.name}")
+            if not os.path.lexists(target):
+                continue
+            if os.path.lexists(src):
+                if os.lstat(src).st_size != os.lstat(target).st_size:
+                    raise FileExistsError(errno.EEXIST, "a different file is at the original path", src)
+                target.unlink()
+                logger.warning(f"Removed a second copy left by an earlier attempt: {name}")
+                continue
+            Path(src).parent.mkdir(parents=True, exist_ok=True)
+            _move_no_clobber(target, Path(src))
         except Exception as e:
-            failed.append(source_file.name)
-            logger.error(f"Failed to move {source_file.name}: {e}")
-    return failed
+            stranded.append(name)
+            logger.error(f"Could not move {name} back to {src}: {e}; it is still in {dest}")
+    return stranded
+
+
+def _recover_earlier_attempt(dest: Path, source_path: Path) -> list[str] | None:
+    """Blocking: put back the files of this download's unfinished earlier attempt.
+
+    Returns None when dest holds no such attempt, otherwise the names that are
+    still stranded in dest (empty when everything went back). The marker stays,
+    so dest remains this download's folder until the next placement replaces it.
+    """
+    marker = _read_move_marker(dest)
+    if not marker or marker.get("source") != str(source_path):
+        return None
+    logger.warning(
+        f"Found an unfinished earlier attempt for {source_path.name} in {dest}; moving its files back first"
+    )
+    return _restore_moves(dest, marker.get("moves", []))
+
+
+def _log_stranded(source_path: Path, dest: Path, stranded: list[str]) -> None:
+    logger.error(
+        f"Not filed: {source_path.name}. {len(stranded)} file(s) from an earlier attempt could not "
+        f"be moved back from {dest} ({', '.join(stranded)}); the next attempt tries again."
+    )
+
+
+def _filing_record_path(source_path: Path) -> Path:
+    digest = hashlib.sha1(source_path.name.encode()).hexdigest()[:16]
+    return source_path.parent / f".plexbie_filing_{digest}.json"
+
+
+def _write_filing_record(source_path: Path, dest: Path, final: dict) -> None:
+    """Blocking: note, next to the download, where and as what it is being filed.
+
+    Without it a retry finds its earlier attempt only by working the metadata
+    out again. With no hint that comes from the files still in the download and
+    a live lookup, either of which can differ the second time, and the book
+    would be split across two folders. Best effort: without the record a retry
+    still finds the attempt whenever the metadata comes out the same.
+    """
+    record = _filing_record_path(source_path)
+    tmp = record.with_name(record.name + ".tmp")
+    try:
+        with open(tmp, "w") as handle:
+            json.dump({"source": str(source_path), "dest": str(dest), "final": final}, handle, default=str)
+        os.replace(tmp, record)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        logger.warning(f"Could not note where {source_path.name} is being filed: {e}")
+
+
+def _read_filing_record(source_path: Path) -> tuple[Path, dict] | None:
+    """Blocking: (dest, metadata) of this download's unfinished earlier attempt.
+
+    None unless the record exists and its folder still holds this download's
+    MOVE_MARKER; a record outliving its marker is stale and ignored.
+    """
+    try:
+        with open(_filing_record_path(source_path)) as handle:
+            record = json.load(handle)
+        if record.get("source") != str(source_path) or not isinstance(record.get("final"), dict):
+            return None
+        dest = Path(record["dest"])
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    marker = _read_move_marker(dest)
+    if not marker or marker.get("source") != str(source_path):
+        return None
+    return dest, record["final"]
+
+
+def _clear_filing_record(source_path: Path) -> None:
+    """Blocking: forget where the download was being filed."""
+    _filing_record_path(source_path).unlink(missing_ok=True)
+
+
+def _expire_orphan_filing_records(watch_dir: Path) -> int:
+    """Blocking: delete filing records whose download is gone. Returns the count.
+
+    A record is only left behind when a book did not finish filing; once the
+    download itself is removed there is nothing left for it to recover.
+    """
+    removed = 0
+    for candidate in watch_dir.glob(".plexbie_filing_*.json"):
+        try:
+            with open(candidate) as handle:
+                source = json.load(handle).get("source")
+        except (OSError, ValueError, AttributeError):
+            source = None
+        try:
+            if source and os.path.lexists(source):
+                continue
+            candidate.unlink()
+            removed += 1
+            logger.info(f"Removed the filing record of a download that is gone: {candidate.name}")
+        except OSError as e:
+            logger.debug(f"Could not remove filing record {candidate.name}: {e}")
+    return removed
+
+
+def _remove_empty_folders(folders) -> None:
+    """Blocking: rmdir each folder, deepest first, leaving any that are not empty."""
+    for folder in folders:
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
+
+
+def _place_book(plan, dest: Path, source_path: Path, library: Path) -> PlaceResult:
+    """Blocking: move every planned file into dest, or leave everything as it was.
+
+    Stops at the first file that cannot be moved, moves back the ones already
+    moved and removes the folders it created, so the download is intact for a
+    retry. Files that cannot be moved back stay listed in the MOVE_MARKER for
+    the next attempt. On success the marker stays until the caller has written
+    the cover and metadata. Any marker already in dest has been recovered by
+    then and is replaced.
+    """
+    resuming = os.path.lexists(dest / MOVE_MARKER)
+    created = []
+    folder = dest
+    while folder != library and folder != folder.parent and not folder.exists():
+        created.append(folder)
+        folder = folder.parent
+    dest.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _write_move_marker(dest, source_path, plan)
+    except Exception as e:
+        _remove_empty_folders(created)
+        return PlaceResult(False, error=str(e))
+
+    done = []
+    for src, name in plan:
+        try:
+            _move_no_clobber(src, dest / name)
+        except Exception as e:
+            rel = src.relative_to(source_path).as_posix() if src != source_path else src.name
+            if isinstance(e, FileExistsError):
+                logger.error(f"Not moving {rel}: {name} already exists in {dest}")
+                reason = "already exists in the destination"
+            else:
+                logger.error(f"Failed to move {rel} to {dest / name}: {e}")
+                reason = str(e)
+            break
+        done.append((str(src), name))
+        logger.debug(f"Moved: {name}")
+    else:
+        return PlaceResult(True)
+
+    if done:
+        logger.warning(f"Moving {len(done)} file(s) back to {source_path.name} after the failed move")
+    stranded = _restore_moves(dest, done)
+    # Retrying an attempt cut short after filing, the folder can still hold that
+    # attempt's cover and metadata.opf. Then the marker stays: without it the
+    # retry would take the folder for another book's and file into "Title (2)".
+    leftovers = resuming and any(p.name != MOVE_MARKER for p in dest.iterdir())
+    if not stranded and not leftovers:
+        _clear_move_marker(dest)
+        _remove_empty_folders(created)
+    return PlaceResult(False, rel, reason, stranded)
 
 
 def _adopt_existing_cover(existing_covers, dest: Path) -> bool:
@@ -1133,8 +1502,22 @@ async def process_item(
         except Exception as e:
             logger.warning(f"Failed to read hint file, falling back to extraction: {e}")
 
+    # An earlier attempt that did not finish (files that could not be moved back,
+    # or a restart part-way through) noted where it was filing this download.
+    # Put its files back first, so the plan below covers the whole book, and
+    # file into that same folder under the same metadata: worked out again from
+    # whatever is left in the download, it could differ and split the book.
+    earlier = await run_blocking(_read_filing_record, source_path)
+    if earlier:
+        dest, final = earlier
+        stranded = await run_blocking(_recover_earlier_attempt, dest, source_path)
+        if stranded:
+            _log_stranded(source_path, dest, stranded)
+            return False
+
     # 1. Find book files first
-    if source_path.is_file():
+    single_file = source_path.is_file()
+    if single_file:
         book_files = [source_path]
         existing_covers = []
     else:
@@ -1151,7 +1534,7 @@ async def process_item(
 
     embedded_cover_data = None
 
-    if not hint_used:
+    if not hint_used and not earlier:
         # 2. READ THE FILES - extract embedded metadata (this is our primary source)
         # Parses tags with mutagen and unzips EPUBs - reads every file.
         embedded = await run_blocking(extract_metadata_from_files, book_files)
@@ -1228,30 +1611,60 @@ async def process_item(
     logger.info(f"FINAL -> Author: {final['author']}, Title: {final['title']}, "
                 f"Series: {final.get('series')}, Index: {final.get('series_index')}")
 
-    # 4. Build destination path
+    # 4. Build destination path. A folder holding another book gets a numbered
+    # name; one holding this download's own unfinished attempt is reused.
     library = audiobook_lib if media_type == "audiobook" else ebook_lib
-    dest = build_destination(library, final)
+    if not earlier:
+        base_dest = build_destination(library, final)
+        dest = await run_blocking(_choose_destination, base_dest, source_path)
+        if dest != base_dest:
+            logger.warning(f"Destination exists, using: {dest}")
 
-    # Handle duplicate destinations
-    if dest.exists() and any(dest.iterdir()):
-        base_dest = dest
-        counter = 2
-        while dest.exists() and any(dest.iterdir()):
-            dest = base_dest.parent / f"{base_dest.name} ({counter})"
-            counter += 1
-        logger.warning(f"Destination exists, using: {dest}")
+        # The same unfinished attempt, found by its folder when the note beside
+        # the download is missing. Planned from the leftovers alone, the files
+        # put back would be deleted with the source, so look again first.
+        stranded = await run_blocking(_recover_earlier_attempt, dest, source_path)
+        if stranded:
+            _log_stranded(source_path, dest, stranded)
+            return False
+        if stranded is not None and not single_file:
+            book_files = await run_blocking(find_book_files, source_path, media_type)
+            if not book_files:
+                logger.warning(f"No valid {media_type} files found in {source_path.name}, skipping")
+                return False
 
-    await run_blocking(dest.mkdir, parents=True, exist_ok=True)
+    plan = plan_book_moves(source_path, book_files, media_type)
+    repeated = _repeated_names(book_files)
+    if repeated:
+        style = "'Disc NN - <name>'" if media_type == "audiobook" else "'<folder> - <name>'"
+        logger.info(
+            f"{len(repeated)} file name(s) repeat across sub-folders of {source_path.name}; "
+            f"filing every file as {style} so none replaces another"
+        )
 
     # 5. Move book files, off the event loop. An audiobook is routinely several GB
-    # across many files, and shutil.move falls back to a byte-for-byte copy
+    # across many files, and a move falls back to a byte-for-byte copy
     # whenever the rename cannot be done in place (which on a pooled or FUSE-backed share
     # happens whenever source and destination land on different disks). Run inline
     # this held the loop - and the Discord heartbeat - for the whole copy.
     #
-    # Failures are returned rather than raised: step 8 must not delete the source
-    # tree while any file still exists only there.
-    failed_moves = await run_blocking(_move_book_files, book_files, dest)
+    # All or nothing: if any file cannot be moved, the ones already moved are put
+    # back and nothing below runs. The hint is kept, nothing is announced, and
+    # the scan loop records the failure against the download as it was left.
+    await run_blocking(_write_filing_record, source_path, dest, final)
+    result = await run_blocking(_place_book, plan, dest, source_path, library)
+    if not result.ok:
+        what = (f"{result.failed_file} could not be moved to {dest}" if result.failed_file
+                else f"{dest} could not be prepared")
+        if result.stranded:
+            after = (f"{len(result.stranded)} file(s) could not be put back and are still in {dest} "
+                     f"({', '.join(result.stranded)}); the next attempt moves them back before filing.")
+        else:
+            after = ("Everything already moved was put back; the download and its hint are untouched "
+                     "and nothing was announced. It is tried again when the download changes or "
+                     "Plexbie restarts.")
+        logger.error(f"Not filed: {source_path.name}. {what}: {result.error}. {after}")
+        return False
 
     # 6. Handle cover art
     cover_done = False
@@ -1276,19 +1689,24 @@ async def process_item(
     if not cover_done:
         logger.warning(f"No cover art available for {final['title']}")
 
-    # 7. Generate metadata.opf
-    await run_blocking(generate_opf, final, dest / "metadata.opf")
+    # 7. Generate metadata.opf. Every file is already in place, so like the
+    # cover this is best effort: failing here would leave a whole book unfiled
+    # and unannounced over a file Audiobookshelf can do without.
+    try:
+        await run_blocking(generate_opf, final, dest / "metadata.opf")
+    except Exception as e:
+        logger.warning(f"Could not write metadata.opf for {final['title']}: {e}")
 
-    # 8. Clean up source - only when everything was successfully moved out of it.
-    # Deleting the source after a partial move permanently destroys the files that
-    # failed, since they exist nowhere else.
-    if failed_moves:
-        logger.error(
-            f"Keeping source {source_path} intact: {len(failed_moves)} file(s) failed "
-            f"to move ({', '.join(failed_moves)}). Resolve manually then re-run."
-        )
-    else:
-        await run_blocking(_remove_source, source_path)
+    # The book is completely filed. A restart before this point leaves the
+    # marker and the filing record; while the download is still in the watch
+    # folder, the retry moves everything back and files it again into this same
+    # folder. A single-file download has nothing left to retry from: its book
+    # stays complete in dest with the marker until someone removes it.
+    await run_blocking(_clear_move_marker, dest)
+    await run_blocking(_clear_filing_record, source_path)
+
+    # 8. Clean up source - every book file has been moved out of it.
+    await run_blocking(_remove_source, source_path)
 
     # 9. Clean up hint file if used
     if hint_used and hint_file.exists():
@@ -1499,6 +1917,7 @@ class BookshelfProcessorCog(commands.Cog):
             # reason to go looking for them on every 10-second tick.
             if sweep_hints:
                 await run_blocking(_expire_stale_hints, watch_dir)
+                await run_blocking(_expire_orphan_filing_records, watch_dir)
 
             for path in await run_blocking(lambda d=watch_dir: list(d.iterdir())):
                 if path.name.startswith("."):
@@ -1548,7 +1967,7 @@ class BookshelfProcessorCog(commands.Cog):
             settled.append((path, media_type, signature))
             del self.pending[path_str]
 
-        for path, media_type, signature in settled:
+        for path, media_type, _ in settled:
             try:
                 processed = await process_item(
                     path, media_type,
@@ -1561,11 +1980,13 @@ class BookshelfProcessorCog(commands.Cog):
                 processed = False
 
             if not processed and path.exists():
-                # Record the failure against the signature we processed, so this
-                # item is not reprocessed (and re-logged) on every scan forever.
+                # Record the failure against the item as processing left it, so
+                # it is not reprocessed (and re-logged) on every scan forever.
                 # One empty folder previously produced 30,931 processing cycles
-                # and 26 MB of log output.
-                self.failed[str(path)] = signature
+                # and 26 MB of log output. Not the signature from before: a
+                # failed attempt has already deleted the download's junk files,
+                # and that alone would look like a change worth retrying.
+                self.failed[str(path)] = await run_blocking(_item_signature, path)
                 logger.warning(
                     f"Not retrying {path.name} until its contents change "
                     f"(remove it from the watch directory to stop this notice)"
