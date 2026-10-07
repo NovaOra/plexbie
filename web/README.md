@@ -17,10 +17,14 @@ npm run build          # production build, no sample data
 npm test               # unit tests (vitest), against a stubbed fetch
 npm run dev:project    # the project site (plexbie.com)
 npm run build:project  # its static build, in dist-project/ (VITE_REPO_PUBLIC=false hides GitHub links)
-npx wrangler deploy --config cloudflare/wrangler.jsonc   # publish it (the maintainer's Cloudflare)
+npm ci --prefix cloudflare  # the pinned wrangler that deploys it (cloudflare/package.json)
+cloudflare/node_modules/.bin/wrangler deploy --config cloudflare/wrangler.jsonc   # publish it (the maintainer's Cloudflare)
 node scripts/a11y.mjs  # axe accessibility audit against the dev server
 node scripts/demo-gifs.mjs out/  # click through the README demos and save their frames
 ```
+
+Every other wrangler command that uses the Cloudflare login (`secret put`,
+`r2 object put`, `d1 execute`) goes through the same pinned copy, from `web/`.
 
 Add `?demo` to any dev URL for demo mode: every title, author and blurb is made up and
 covers are drawn in code, so recordings show no real artwork. `demo-gifs.mjs` prints the

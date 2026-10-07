@@ -38,6 +38,7 @@ requirements-dev.txt
 
 # The website is built inside the image (see the Dockerfile's web stage)
 web/node_modules/
+web/cloudflare/node_modules/
 web/dist/
 web/dist-preview/
 web/dist-project/

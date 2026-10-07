@@ -39,3 +39,9 @@ updates:
     schedule: {interval: weekly}
     groups:
       website: {patterns: ["*"]}
+  # The wrangler that deploys the Cloudflare Workers (web/cloudflare), not in the image.
+  - package-ecosystem: npm
+    directory: /web/cloudflare
+    schedule: {interval: weekly}
+    groups:
+      cloudflare: {patterns: ["*"]}

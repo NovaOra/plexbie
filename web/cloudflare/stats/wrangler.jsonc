@@ -3,7 +3,8 @@
   // bot: Cloudflare sends that path here instead of down the tunnel. Cloudflare Access
   // (team novaora) lets only the maintainer in, and the Worker checks Access's token
   // itself too. No workers.dev address, which would skip Access.
-  // Deploy: `npx wrangler deploy --config cloudflare/stats/wrangler.jsonc` from web/.
+  // Deploy: `cloudflare/node_modules/.bin/wrangler deploy --config cloudflare/stats/wrangler.jsonc`
+  // from web/, after `npm ci --prefix cloudflare` (the pinned wrangler).
   "name": "plexbie-stats",
   "main": "worker.js",
   "compatibility_date": "2026-10-01",

@@ -86,7 +86,7 @@ async function load(env, days, site) {
 }
 
 // ---- GitHub --------------------------------------------------------------------------
-// A fine-grained token (`npx wrangler secret put GITHUB_TOKEN --config cloudflare/stats/wrangler.jsonc`)
+// A fine-grained token (`cloudflare/node_modules/.bin/wrangler secret put GITHUB_TOKEN --config cloudflare/stats/wrangler.jsonc`)
 // for the repos in REPOS, with "Administration: Read-only": GitHub keeps traffic behind it.
 
 const SCHEMA = [

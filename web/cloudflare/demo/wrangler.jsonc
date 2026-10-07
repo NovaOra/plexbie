@@ -1,7 +1,8 @@
 {
   // demo.plexbie.com: the household website in demo mode, for anyone to try. Invented
   // people and titles, code-drawn covers, nothing sent anywhere (no API behind it).
-  // `npm run build:demo`, then `npx wrangler deploy --config cloudflare/demo/wrangler.jsonc` from web/.
+  // `npm run build:demo`, then `cloudflare/node_modules/.bin/wrangler deploy --config
+  // cloudflare/demo/wrangler.jsonc` from web/ (`npm ci --prefix cloudflare` installs it).
   "name": "plexbie-demo",
   "compatibility_date": "2026-10-01",
   "assets": {

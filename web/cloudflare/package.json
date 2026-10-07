@@ -1,0 +1,8 @@
+{
+  "name": "plexbie-cloudflare",
+  "private": true,
+  "description": "The wrangler that deploys the Cloudflare Workers in this folder, pinned. Not part of the bot's image.",
+  "devDependencies": {
+    "wrangler": "4.148.0"
+  }
+}
