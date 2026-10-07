@@ -221,3 +221,38 @@ def test_the_preview_carries_sonarrs_reasons_and_the_choices():
     assert [e["label"] for e in p["options"]["episodes"]] == ["S01E01", "S01E02", "S01E03"]
     assert [q["name"] for q in p["options"]["qualities"]] == ["WEBDL-1080p", "WEBDL-2160p"] and p["series"]["id"] == 139
     assert first["qualityId"] == 18 and "_raw" not in first
+
+
+def test_manage_says_which_app_it_couldnt_reach():
+    """Sonarr down looked the same as nothing blocked: an empty list. Manage → Health
+    now hears which app it couldn't ask, so it can say so instead."""
+    from portal.actions import Actions
+
+    class Down(Arr):
+        async def queue(self, **params):
+            raise ConnectionError("http://sonarr:8989/api/v3/queue?apikey=secret refused")
+
+    async def body():
+        actions = Actions(bot=None, services=Services(Down(_folder(), GOOD)), data=None, public_url="")
+        down = await actions.blocked_list({"user": {"id": "1"}})
+        up = await Actions(bot=None, services=Services(Arr(_folder(), GOOD)), data=None, public_url="").blocked_list({"user": {"id": "1"}})
+        return down, up
+    down, up = _db(body)
+    assert down["rows"] == [] and down["errors"] == {"sonarr": "Couldn't reach Sonarr just now."}
+    assert "secret" not in str(down), "the error never carries the address or its key"
+    assert len(up["rows"]) == 1 and up["errors"] == {}, "Radarr isn't set up, so it isn't an error"
+
+
+def test_looking_again_never_uses_up_the_admin_actions():
+    """Manage asks for this list again while Health is open. Those asks must never use
+    up the hourly allowance Approve, Decline and Import share."""
+    from portal.actions import LIMITS, Actions
+
+    async def body():
+        actions = Actions(bot=None, services=Services(Arr(_folder(), GOOD)), data=None, public_url="")
+        for _ in range(LIMITS["admin"][0] + 1):
+            await actions.blocked_list({"user": {"id": "1"}})
+        actions.limit("1", "admin")  # an admin action still goes through
+        return actions
+    actions = _db(body)
+    assert len(actions._hits["admin:1"]) == 1

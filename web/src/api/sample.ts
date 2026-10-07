@@ -521,7 +521,7 @@ threads.h4 = [{ id: "e9", at: at(8), by: "Plexbie", kind: "note", text: BLOCKED_
 const sampleBlocked = { app: "sonarr" as const, downloadId: "SABnzbd_nzo_demo" };
 export const adminBlocked = () => wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952,
   release: "Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"], ticket: "h4",
-  messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."] }] });
+  messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."] }], errors: {} });
 const RADAR_TITLES = ["Moon Rocket", "Molten Terror", "Bridge of Death", "Flight to Destruction", "Murder Car", "Hills of Death",
   "Camouflaged Destruction", "The Enemy Planet", "Battle in the Stratosphere", "Mass Execution", "Planned Pursuit", "Death of the Moon Man"];
 export const sampleEpisodes = RADAR_TITLES.map((title, i) => ({ id: 700 + i + 1, label: `S01E${String(i + 1).padStart(2, "0")}`, season: 1,

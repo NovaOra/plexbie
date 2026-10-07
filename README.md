@@ -609,7 +609,15 @@ so the household can do everything above without Discord:
   hold; a typed number of days is saved when you leave the field or press
   Enter) and keep titles forever, post as Plexbie, see who brought whom and
   the live watch party, and check service health. Each command above has its
-  counterpart there, and both sides run the same code.
+  counterpart there, and both sides run the same code. Left open, Manage keeps
+  itself current: the section on screen and the counts beside it are asked for
+  again every minute while the page is visible, and when you come back to it
+  (pending Plex invites only on opening Invites and coming back, and the
+  downloads waiting on Health at most every five minutes, so neither leans on
+  plex.tv or the admin action limit). If Plexbie can't be reached, what's on screen stays, with "Couldn't refresh,
+  last updated…" and Try again; a list that couldn't load says so rather than
+  looking empty, and Health says when Sonarr or Radarr couldn't be asked about
+  downloads they won't import by themselves.
 - **Invite links** let someone without Discord join: single use, expiring,
   optionally locked to an email, stored only as a SHA-256. A locked link works
   only for the Plex account with that email, once the person has confirmed it

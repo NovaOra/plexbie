@@ -47,8 +47,10 @@ def _ep(e: dict) -> str:
     return f"S{int(e.get('seasonNumber') or 0):02d}E{int(e.get('episodeNumber') or 0):02d}"
 
 
-async def blocked(services) -> List[dict]:
-    """Every blocked download in Sonarr and Radarr right now, one entry per download."""
+async def blocked(services, unreachable: Optional[Dict[str, str]] = None) -> List[dict]:
+    """Every blocked download in Sonarr and Radarr right now, one entry per download.
+    `unreachable`, when given, gets each app whose queue couldn't be read and why, so an
+    empty list because Sonarr is down doesn't pass for nothing to look at."""
     out: List[dict] = []
     for app in APPS:
         client = _client(services, app)
@@ -59,6 +61,8 @@ async def blocked(services) -> List[dict]:
             records = await client.queue(**extra)
         except Exception as e:
             logger.info(f"Blocked imports: couldn't read {client.name}'s queue: {e}")
+            if unreachable is not None:
+                unreachable[app] = f"Couldn't reach {client.name} just now."
             continue
         groups: Dict[str, List[dict]] = {}
         for r in records:

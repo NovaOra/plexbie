@@ -875,14 +875,17 @@ class Actions:
             raise web.HTTPNotFound(text='{"error":"No such download."}', content_type="application/json")
 
     async def blocked_list(self, user: dict) -> dict:
-        """Manage → Health: every download Sonarr/Radarr won't import by themselves."""
+        """Manage → Health: every download Sonarr/Radarr won't import by themselves, and
+        which of them couldn't be asked (`errors`, by app)."""
         from core import blocked_imports
-        self.limit(user["user"]["id"], "admin")
-        rows = []
-        for b in await blocked_imports.blocked(self.services):
+        # A read the page repeats while it's open: counted with the other lookups, never
+        # against the admin actions, or leaving Health open would block Approve.
+        self.limit(user["user"]["id"], "lookup")
+        rows, errors = [], {}
+        for b in await blocked_imports.blocked(self.services, errors):
             rows.append({k: b[k] for k in ("app", "downloadId", "title", "year", "release", "messages", "episodes")}
                         | {"ticket": await blocked_imports.ticket_for(b["app"], b["downloadId"])})
-        return {"rows": rows}
+        return {"rows": rows, "errors": errors}
 
     async def blocked_preview(self, user: dict, app: str, download_id: str) -> dict:
         """What's in it and what looks off, for an admin to look at before importing."""

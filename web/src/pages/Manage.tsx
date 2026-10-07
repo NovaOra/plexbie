@@ -54,6 +54,11 @@ interface ManageState {
   failed: Partial<Record<Section, boolean>>;
 }
 const ManageCtx = createContext<ManageState | null>(null);
+/** What each tab shows (most show only their own section). */
+const SHOWS: Partial<Record<Section, Section[]>> = { requests: ["requests", "help"], invites: ["invites", "plexinvites"] };
+const shows = (t: Section) => SHOWS[t] ?? [t];
+/** What the overview and the tab bar count, kept fresh whichever tab is open. */
+const COUNTED: Section[] = ["requests", "all", "tickets", "joins", "cleanup", "messages", "health"];
 const useManage = () => useContext(ManageCtx)!;
 
 /** A tiny tap on phones that support it; silence everywhere else. */
@@ -97,12 +102,14 @@ function useAct() {
 /**
  * Search as you type: asks once typing pauses for `ms`, and keeps only the
  * answer for the words in the box now, so a slow reply to "star" never
- * replaces the one for "star wars". `fetcher` should settle with a fallback
- * rather than throw. Empty words clear the results; `found` keeps the last
- * answer on screen while `searching` says a newer one is on its way.
+ * replaces the one for "star wars". Empty words clear the results; `found`
+ * keeps the last answer on screen while `searching` says a newer one is on
+ * its way. When `fetcher` fails, `failed` says so (never an empty answer,
+ * which would read as "nothing found") and `retry` asks again.
  */
 function useDebouncedSearch<T>(words: string, fetcher: (words: string) => Promise<T>, ms: number) {
-  const [got, setGot] = useState<{ words: string; found: T } | null>(null);
+  const [got, setGot] = useState<{ words: string; found: T | null } | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const fetchLatest = useRef(fetcher);
   useEffect(() => { fetchLatest.current = fetcher; });
   if (!words && got) setGot(null);
@@ -110,11 +117,37 @@ function useDebouncedSearch<T>(words: string, fetcher: (words: string) => Promis
     if (!words) return;
     let current = true;
     const t = window.setTimeout(() => {
-      void fetchLatest.current(words).then((found) => { if (current) setGot({ words, found }); });
+      void fetchLatest.current(words).then(
+        (found) => { if (current) setGot({ words, found }); },
+        () => { if (current) setGot({ words, found: null }); });
     }, ms);
     return () => { current = false; window.clearTimeout(t); };
-  }, [words, ms]);
-  return { found: words && got ? got.found : null, searching: !!words && got?.words !== words };
+  }, [words, ms, attempt]);
+  const answered = !!words && got?.words === words;
+  const retry = () => { setGot(null); setAttempt((a) => a + 1); };
+  return { found: words && got ? got.found : null, searching: !!words && !answered, failed: answered && got.found === null, retry };
+}
+
+/**
+ * Loads one thing and keeps what it last got: a reload that fails leaves that on
+ * screen, with `failed` and when it was loaded (`at`), rather than swapping it for
+ * an error, and an answer to an older ask is dropped. Loads again when `deps`
+ * change, and on `reload`. For one thing per component: key it by what it loads.
+ */
+function useKept<T>(load: () => Promise<T>, deps: unknown[]) {
+  const [state, setState] = useState<{ data?: T; at?: number; failed: boolean }>({ failed: false });
+  const asks = useRef(0);
+  const loadLatest = useRef(load);
+  useEffect(() => { loadLatest.current = load; });
+  const reload = useCallback(() => {
+    const n = ++asks.current;
+    return loadLatest.current().then(
+      (data) => { if (n === asks.current) setState({ data, at: Date.now(), failed: false }); },
+      () => { if (n === asks.current) setState((s) => ({ ...s, failed: true })); });
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void reload(); }, deps);
+  return { ...state, reload };
 }
 
 /* ============================================================ primitives */
@@ -262,6 +295,42 @@ function Tick({ value }: { value: number | string }) {
         </motion.span>
       </AnimatePresence>
     </span>
+  );
+}
+
+/** Try again, spinning (and not pressable twice) until the ask it starts has settled. */
+function RetryButton({ onRetry, quiet = false }: { onRetry: () => unknown; quiet?: boolean }) {
+  const [retrying, setRetrying] = useState(false);
+  const retry = () => {
+    setRetrying(true);
+    void Promise.resolve(onRetry()).catch(() => undefined).finally(() => setRetrying(false));
+  };
+  return (
+    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn`} onClick={retry} disabled={retrying}>
+      <RefreshCw size={16} aria-hidden className={retrying ? "m-spin" : undefined} /> Try again
+    </button>
+  );
+}
+
+/** A load failed with nothing to show: say so (never an empty list, which would be a false answer) and offer another go. */
+function LoadFailed({ text, onRetry }: { text: string; onRetry: () => unknown }) {
+  return (
+    <div className="m-failed" role="alert">
+      <p className="field__error">{text}</p>
+      <RetryButton onRetry={onRetry} />
+    </div>
+  );
+}
+
+/** A refresh failed over what's already on screen: keep it, say how old it is, and offer another go. */
+function Stale({ at, onRetry }: { at?: number; onRetry: () => unknown }) {
+  const when = at ? new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : null;
+  return (
+    <div className="m-stale" role="status">
+      <CircleAlert size={16} aria-hidden />
+      <span>Couldn’t refresh{when ? `, last updated ${when}` : ""}.</span>
+      <RetryButton onRetry={onRetry} quiet />
+    </div>
   );
 }
 
@@ -787,16 +856,13 @@ function MatchPicker({ person, disabled, onMatch }: { person: AdminPerson; disab
 function LinkSheet({ person, onClose, onPick }: {
   person: AdminPerson; onClose: () => void; onPick: (m: { id: string; name: string }) => Promise<void>;
 }) {
-  const [members, setMembers] = useState<{ id: string; name: string; username: string }[] | null>(null);
+  const res = useLoad(() => api.linkCandidates().then((r) => r.discord), []);
+  const members = res.data ?? null;
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   // Straight into the search box with a mouse; on a phone that would open the
   // keyboard over the list of people you're meant to tap.
   const finePointer = typeof matchMedia === "function" && matchMedia("(pointer: fine)").matches;
-
-  useEffect(() => {
-    api.linkCandidates().then((r) => setMembers(r.discord), () => setMembers([]));
-  }, []);
 
   const q = query.trim().toLowerCase();
   const shown = (members ?? []).filter((m) => !q || `${m.name} ${m.username}`.toLowerCase().includes(q));
@@ -806,7 +872,8 @@ function LinkSheet({ person, onClose, onPick }: {
       <p className="muted">Pick who this Plex account belongs to.{person.tracked === false ? " Linking also starts tracking them for inactivity." : ""}</p>
       <SearchField label="Find a Discord member" value={query} onChange={setQuery} className="m-sheet__search" autofocus={finePointer} />
       <ul className="m-sheet__list">
-        {members === null ? <li className="muted">Loading members…</li> : null}
+        {res.error ? <li><LoadFailed text="Couldn’t load the server’s members." onRetry={res.reload} /></li>
+          : members === null ? <li className="muted">Loading members…</li> : null}
         {members && !shown.length ? <li className="muted">{members.length ? "Nobody matches." : "Everyone in the server is already linked."}</li> : null}
         {shown.map((m) => (
           <li key={m.id}>
@@ -1319,12 +1386,14 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
 function ArrFinder({ app, onPick }: { app: "sonarr" | "radarr"; onPick: (item: ArrItem) => void }) {
   const [q, setQ] = useState("");
   const words = q.trim().length < 2 ? "" : q.trim();
-  const { found: rows, searching } = useDebouncedSearch(words, (w) => api.arrLibrary(app, w).then((x) => x.rows).catch((): ArrItem[] => []), 250);
+  const { found: rows, searching, failed, retry } = useDebouncedSearch(words, (w) => api.arrLibrary(app, w).then((x) => x.rows), 250);
   return (
     <div className="m-blocked__finder">
       <input className="m-select" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
         placeholder={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} aria-label={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} />
-      {searching ? <p className="muted">Searching…</p> : rows ? (rows.length ? (
+      {searching ? <p className="muted">Searching…</p> : failed ? (
+        <LoadFailed text={`Couldn’t search ${app === "sonarr" ? "Sonarr" : "Radarr"} just now.`} onRetry={retry} />
+      ) : rows ? (rows.length ? (
         <ul>{rows.map((r) => <li key={r.id}><button type="button" className="btn btn--quiet m-btn" onClick={() => onPick(r)}>{r.title}{r.year ? ` (${r.year})` : ""}</button></li>)}</ul>
       ) : <p className="muted">Nothing in {app === "sonarr" ? "Sonarr" : "Radarr"} by that name.</p>) : null}
     </div>
@@ -1338,16 +1407,28 @@ function bytes(n: number): string {
 }
 
 /** Manage → Health: every download waiting for an admin to look at it. */
-function BlockedList() {
-  const [rows, setRows] = useState<BlockedRow[] | null>(null);
+function BlockedList({ checks }: { checks: number }) {
+  const { data } = useManage();
   const [open, setOpen] = useState<string | null>(null);
-  const load = useCallback(() => api.adminBlocked().then((x) => setRows(x.rows)).catch(() => setRows([])), []);
-  useEffect(() => { void load(); }, [load]);
-  if (!rows?.length) return null;
+  // Asked on opening Health and on "Check again" (`checks`), and with the services at most
+  // every five minutes while the page stays open: each ask reads Sonarr's and Radarr's queues.
+  const asked = useRef(0);
+  const res = useKept(() => { asked.current = Date.now(); return api.adminBlocked(); }, [checks]);
+  const load = res.reload;
+  useEffect(() => { if (Date.now() - asked.current > 300_000) void load(); }, [data.health, load]);
+  if (!res.data) return res.failed ? <section className="section"><LoadFailed text="Couldn’t check for blocked downloads." onRetry={load} /></section> : null;
+  const rows: BlockedRow[] = res.data.rows;
+  // Sonarr or Radarr not answering: a download it won't import by itself couldn't show here.
+  const unreachable = (["sonarr", "radarr"] as const).filter((app) => res.data?.errors?.[app]);
+  if (!rows.length && !unreachable.length && !res.failed) return null;
   return (
     <section className="section">
       <div className="m-head"><h2>Waiting for you to look</h2></div>
-      <ul className="m-cards">
+      {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
+      {unreachable.map((app) => (
+        <p key={app} className="field__error">Couldn’t reach {app === "sonarr" ? "Sonarr" : "Radarr"} just now, so a download it won’t import by itself can’t show here.</p>
+      ))}
+      {!rows.length ? null : <ul className="m-cards">
         {rows.map((r) => {
           const key = `${r.app}:${r.downloadId}`;
           return (
@@ -1360,7 +1441,7 @@ function BlockedList() {
             </li>
           );
         })}
-      </ul>
+      </ul>}
     </section>
   );
 }
@@ -1368,16 +1449,18 @@ function BlockedList() {
 function HealthTab() {
   const { data, refresh } = useManage();
   const [spinning, setSpinning] = useState(false);
+  const [checks, setChecks] = useState(0);
   const rows = data.health;
   if (!rows) return <div className="skeleton" style={{ height: 200 }} />;
   const again = async () => {
     setSpinning(true);
+    setChecks((c) => c + 1);
     await refresh("health");
     setSpinning(false);
   };
   return (
     <>
-    <BlockedList />
+    <BlockedList checks={checks} />
     <section className="section">
       <div className="m-head">
         <h2>Services</h2>
@@ -1881,10 +1964,10 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
   // Its own flag: Done and the ticket buttons share `busy` and would clear a send's.
   const [sending, setSending] = useState(false);
   const sendingNow = useRef(false);
-  const [version, setVersion] = useState(0);
   const [text, setText] = useState("");
-  const res = useLoad<LoggedMessage[]>(() => api.conversation(person.id), [person.id, version]);
-  const reload = () => { setVersion((v) => v + 1); void refresh("messages"); };
+  // Loaded again when something new arrives (the page refreshes the people every minute).
+  const res = useKept<LoggedMessage[]>(() => api.conversation(person.id), [person.last.at]);
+  const reload = () => { void res.reload(); void refresh("messages"); };
   const me = session?.user.name ?? "you";
   const discord = person.id.startsWith("d");
   const send = async (e: React.FormEvent) => {
@@ -1930,7 +2013,9 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
         </button>
       </header>
       <div className="m-chat__body">
-        {res.loading ? <div className="skeleton" style={{ height: 160 }} /> : null}
+        {res.data ? (res.failed ? <Stale at={res.at} onRetry={res.reload} /> : null)
+          : res.failed ? <LoadFailed text={`Couldn’t load the messages with ${person.name}.`} onRetry={res.reload} />
+          : <div className="skeleton" style={{ height: 160 }} />}
         {(res.data ?? []).map((m) => {
           const day = dayLabel(m.at);
           const showDay = day !== lastDay;
@@ -2058,20 +2143,30 @@ const showing = (show: Show, r: AdminRequestRow) =>
 function AllRequestsTab() {
   const { data, failed } = useManage();
   const [show, setShow] = useState<Show>(() => ((data.all?.counts?.stuck ?? 0) > 0 ? "stuck" : "everything"));
-  // Every request since No. 0001, loaded when asked for (the list opens on the last 30 days).
+  // Every request since No. 0001, loaded when asked for (the list opens on the last 30 days),
+  // and again each time the page refreshes the last 30 days, so it's never older than them.
+  const [everything, setEverything] = useState(false);
   const [history, setHistory] = useState<AdminAllRequests | null>(null);
-  const [loadingAll, setLoadingAll] = useState(false);
-  const loadAll = () => {
-    setLoadingAll(true);
-    void api.adminAll("", true).then((h) => { setHistory(h); setShow("everything"); }).catch(() => undefined).finally(() => setLoadingAll(false));
-  };
+  const [historyFailed, setHistoryFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!everything) return;
+    let current = true;
+    api.adminAll("", true).then(
+      (h) => { if (current) { setHistory(h); setHistoryFailed(false); } },
+      () => { if (current) setHistoryFailed(true); });
+    return () => { current = false; };
+  }, [everything, data.all, attempt]);
+  const loadAll = () => { setEverything(true); setShow("everything"); };
+  const loadAllAgain = () => { setHistoryFailed(false); setAttempt((a) => a + 1); };
+  const backToRecent = () => { setEverything(false); setHistory(null); setHistoryFailed(false); };
+  const loadingAll = everything && !history && !historyFailed;
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(null);
 
   // Searching asks the bot (it reaches every request ever, not only the ones listed).
   const words = q.trim();
-  const { found, searching } = useDebouncedSearch(words,
-    (w) => api.adminAll(w).catch((): AdminAllRequests => ({ rows: [], counts: null, query: w })), 300);
+  const { found, searching, failed: searchFailed, retry } = useDebouncedSearch(words, (w) => api.adminAll(w), 300);
 
   const recent = data.all;
   if (!recent) return failed.all ? null : <p className="muted">Loading…</p>;
@@ -2101,7 +2196,7 @@ function AllRequestsTab() {
           </select>
         ) : null}
       </div>
-      {words ? (
+      {words && searchFailed ? <LoadFailed text="Couldn’t search just now." onRetry={retry} /> : words ? (
         <p className="muted m-all__count" role="status">
           {searching || !found ? "Searching…" : `${found.rows.length === 0 ? "Nothing" : found.rows.length === 1 ? "1 request" : `${found.rows.length} requests`} found`}
         </p>
@@ -2117,8 +2212,11 @@ function AllRequestsTab() {
       ) : null}
       {!words ? (
         <div className="m-all__more">
+          {history && historyFailed ? <Stale onRetry={loadAllAgain} /> : null}
           {history ? (
-            <button type="button" className="btn btn--quiet m-btn" onClick={() => setHistory(null)}>Back to the last 30 days</button>
+            <button type="button" className="btn btn--quiet m-btn" onClick={backToRecent}>Back to the last 30 days</button>
+          ) : historyFailed ? (
+            <LoadFailed text="Couldn’t load every request." onRetry={loadAllAgain} />
           ) : (
             <button type="button" className="btn m-btn" disabled={loadingAll} onClick={loadAll}>
               {loadingAll ? "Loading every request…" : `Every request since No. 0001${recent.total ? ` · ${recent.total}` : ""}`}
@@ -2194,16 +2292,15 @@ function RequestFixes({ kind, busy, disabled, byName = false, onSearch }: {
 function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const { refresh, toast, readOnly } = useManage();
   const { busy, act } = useAct();
-  const [r, setR] = useState<AdminRequestDetail | null>(null);
-  const [gone, setGone] = useState(false);
+  const res = useKept<AdminRequestDetail>(() => api.adminRequest(id), [id]);
+  const r = res.data ?? null;
   const [writing, setWriting] = useState(false);
   const [note, setNote] = useState("");
   const [tell, setTell] = useState(false);
   const [message, setMessage] = useState("");
   const [, setParams] = useSearchParams();
   const titleId = useId();
-  const load = useCallback(() => api.adminRequest(id).then(setR).catch(() => setGone(true)), [id]);
-  useEffect(() => { void load(); }, [load]);
+  const load = res.reload;
 
   const after = () => { window.setTimeout(() => { void load(); void refresh("all"); void refresh("help"); }, 900); };
   const search = async (how: SearchHow) => {
@@ -2228,8 +2325,9 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   return (
     <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet"
       title={r ? <>{r.title.title}{seasonsLabel(r.seasons) ? <span className="muted"> · {seasonsLabel(r.seasons)}</span> : null}</> : "Request"}>
-      {gone ? <p className="field__error">Couldn’t load this request.</p> : !r ? <p className="muted">Loading…</p> : (
+      {!r ? (res.failed ? <LoadFailed text="Couldn’t load this request." onRetry={load} /> : <p className="muted">Loading…</p>) : (
         <div className="m-reqsheet__body">
+          {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
           <p className="m-card__eyebrow">No. {formatSlot(r.slot)} · {KIND_LABEL[r.title.kind] ?? r.title.kind} · asked {since(r.requestedAt)} by {r.requester} · via {r.via}</p>
           <Journey stage={r.stage} kind={r.title.kind} />
           <LiveProgress stage={r.stage} progress={r.progress} />
@@ -2387,15 +2485,14 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const { refresh, toast, readOnly } = useManage();
   const { session } = useSession();
   const { busy, act } = useAct();
-  const [t, setT] = useState<AdminTicketDetail | null>(null);
-  const [gone, setGone] = useState(false);
+  const res = useKept<AdminTicketDetail>(() => api.adminTicket(id), [id]);
+  const t = res.data ?? null;
   const [kind, setKind] = useState<"note" | "reply">("note");
   const [text, setText] = useState("");
   const [solving, setSolving] = useState(false);
   const [last, setLast] = useState("");
   const titleId = useId();
-  const load = useCallback(() => api.adminTicket(id).then(setT).catch(() => setGone(true)), [id]);
-  useEffect(() => { void load(); }, [load]);
+  const load = res.reload;
   const after = () => { void load(); window.setTimeout(() => { void refresh("tickets"); void refresh("all"); void refresh("help"); }, 600); };
 
   const run = async (key: string, call: () => Promise<Ack>, done: string) => {
@@ -2412,7 +2509,9 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const search = (how: SearchHow) =>
     run(how, () => ({ again: api.helpSearch, episodes: api.helpEpisodes, name: api.helpByName }[how])(id), SEARCHING[how]);
 
-  if (gone) return <BottomSheet titleId={titleId} onClose={onClose} title="Ticket"><p className="field__error">Couldn’t load this ticket.</p></BottomSheet>;
+  if (!t && res.failed) {
+    return <BottomSheet titleId={titleId} onClose={onClose} title="Ticket"><LoadFailed text="Couldn’t load this ticket." onRetry={load} /></BottomSheet>;
+  }
   const state = t ? ticketState(t) : null;
   const video = t && ["tv", "movie"].includes(t.kind);
   const mine = t?.owner && t.owner === session?.user.name;
@@ -2421,6 +2520,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
       title={t ? <>{t.title}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</> : "Ticket"}>
       {!t ? <p className="muted">Loading…</p> : (
         <div className="m-reqsheet__body">
+          {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
           <p className="m-card__eyebrow">No. {formatSlot(t.slot)} · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p>
           <div className="m-ticket__tags">
             <span className={`m-pill m-pill--${state!.tone}`}>{state!.label}</span>
@@ -2536,16 +2636,17 @@ function Overview({ go, failed }: { go: (t: Section) => void; failed: Partial<Re
   const { down = 0, joins, tickets } = waiting(data);
   // Pink and pulsing ("hot") only for what's wrong right now: a service down, or
   // someone asking for help. Waiting work gets a quiet dot, so the tiles still rank.
-  const health = services === undefined
-    ? failed.health
-      ? { label: "Couldn’t check services", value: "?", hot: true, icon: <CircleAlert size={18} aria-hidden /> }
-      : { label: "Services", value: undefined, hot: false, icon: <CircleDot size={18} aria-hidden /> }
+  // A failed check says so, never the last answer ("Services up 5/5" from an hour ago).
+  const health = failed.health
+    ? { label: "Couldn’t check services", value: "?", hot: true, icon: <CircleAlert size={18} aria-hidden /> }
+    : services === undefined
+      ? { label: "Services", value: undefined, hot: false, icon: <CircleDot size={18} aria-hidden /> }
     : !services.length
       ? { label: "No services set up", value: "–", hot: false, icon: <CircleDot size={18} aria-hidden /> }
       : down
         ? { label: "Services down", value: down, hot: true, icon: <CircleAlert size={18} aria-hidden /> }
         : { label: "Services up", value: `${services.length}/${services.length}`, hot: false, icon: <CircleCheck size={18} aria-hidden /> };
-  const tiles: { id: Section; label: string; value: number | string | undefined; hot: boolean; waiting?: boolean; icon: ReactNode }[] = [
+  const counted: { id: Section; label: string; value: number | string | undefined; hot: boolean; waiting?: boolean; icon: ReactNode }[] = [
     { id: "requests", label: "Requests waiting", value: data.requests?.pending.length, hot: false, waiting: !!data.requests?.pending.length,
       icon: <Inbox size={18} aria-hidden /> },
     { id: "tickets", label: "Open tickets", value: data.tickets ? tickets : undefined, hot: !!tickets, icon: <LifeBuoy size={18} aria-hidden /> },
@@ -2553,6 +2654,9 @@ function Overview({ go, failed }: { go: (t: Section) => void; failed: Partial<Re
     { id: "cleanup", label: "Leaving this week", value: data.cleanup?.warning.length, hot: false, waiting: !!data.cleanup?.warning.length, icon: <Hourglass size={18} aria-hidden /> },
     { id: "health", ...health },
   ];
+  const tiles = counted.map((t) => (t.id !== "health" && failed[t.id] && t.value !== undefined
+    // Its refresh failed: not the last count (an hour-old "Requests waiting 3"), but that it's unknown.
+    ? { ...t, value: "?", hot: false, waiting: false, label: `${t.label} · couldn’t refresh` } : t));
   return (
     <div className="m-overview">
       {tiles.map((t) => (
@@ -2630,19 +2734,32 @@ export function Manage() {
 
   const [data, setData] = useState<Store>({});
   const [failed, setFailed] = useState<Partial<Record<Section, boolean>>>({});
+  // When each section last loaded, for "Couldn't refresh, last updated 14:32".
+  const [loadedAt, setLoadedAt] = useState<Partial<Record<Section, number>>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(1);
 
+  // Each section's newest ask (`n`) and when it went. An answer to an older ask, or to one
+  // sent before a change made here, is dropped, so a slow reply never puts back what's
+  // already been decided.
+  const asks = useRef<Partial<Record<Section, { n: number; at: number }>>>({});
   const refresh = useCallback(async (s: Section) => {
+    const n = (asks.current[s]?.n ?? 0) + 1;
+    asks.current[s] = { n, at: Date.now() };
+    const latest = () => asks.current[s]?.n === n;
     try {
       const d = await api.admin<unknown>(s);
+      if (!latest()) return;
       setData((prev) => ({ ...prev, [s]: d }));
       setFailed((f) => ({ ...f, [s]: false }));
+      setLoadedAt((at) => ({ ...at, [s]: Date.now() }));
     } catch {
-      setFailed((f) => ({ ...f, [s]: true }));
+      if (latest()) setFailed((f) => ({ ...f, [s]: true }));
     }
   }, []);
   const patch = useCallback(<K extends Section>(s: K, fn: (d: NonNullable<Store[K]>) => NonNullable<Store[K]>) => {
+    const ask = asks.current[s];
+    if (ask) ask.n += 1;
     setData((prev) => (prev[s] ? { ...prev, [s]: fn(prev[s] as NonNullable<Store[K]>) } : prev));
   }, []);
   const dismiss = useCallback((id: number) => setToasts((all) => all.filter((t) => t.id !== id)), []);
@@ -2652,12 +2769,34 @@ export function Manage() {
   }), []);
 
   const admin = !!session?.admin;
+  /** Asks again for what wasn't asked for in the last few seconds (coming back fires both focus and visibilitychange). */
+  const freshen = useCallback((sections: Section[]) => {
+    sections.forEach((s) => { if (Date.now() - (asks.current[s]?.at ?? 0) > 10_000) void refresh(s); });
+  }, [refresh]);
+  const shown = useRef(tab);
   useEffect(() => {
     if (!admin) return;
     SECTIONS.forEach((s) => void refresh(s));
-    const t = window.setInterval(() => { if (!document.hidden) void refresh("health"); }, 60_000);
-    return () => window.clearInterval(t);
-  }, [admin, refresh]);
+    // Kept current while it's open: what's on screen and what the overview and tab bar
+    // count, every minute while the page is visible, and again on coming back to it.
+    // Pending Plex invites mean signing in to plex.tv: asked on opening Invites and on
+    // coming back, not every minute.
+    const due = (poll: boolean) => [...new Set([...shows(shown.current), ...COUNTED])].filter((s) => !poll || s !== "plexinvites");
+    const tick = () => { if (!document.hidden) freshen(due(false)); };
+    const t = window.setInterval(() => { if (!document.hidden) freshen(due(true)); }, 60_000);
+    document.addEventListener("visibilitychange", tick);
+    window.addEventListener("focus", tick);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+      window.removeEventListener("focus", tick);
+    };
+  }, [admin, refresh, freshen]);
+  // A tab opened later shows what's true now, not what was true when the page loaded.
+  useEffect(() => {
+    shown.current = tab;
+    if (admin) freshen(shows(tab));
+  }, [admin, tab, freshen]);
 
   if (!admin) {
     return <div className="shell page"><p className="muted">This page is for admins.</p></div>;
@@ -2675,6 +2814,8 @@ export function Manage() {
   /** "All requests · 2 stuck"; everything else counts what's waiting. */
   const word = (t: Section) => (t === "all" ? "stuck" : t === "tickets" ? "open" : t === "messages" ? "new" : "waiting");
   const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed };
+  // A refresh of this tab failed over what's already on screen: say so, and how old it is.
+  const stale = shows(tab).filter((s) => failed[s] && data[s]);
 
   return (
     <ManageCtx.Provider value={ctx}>
@@ -2688,24 +2829,23 @@ export function Manage() {
         <div className="m-tabbar request-bar" ref={panel} role="group" aria-label="Manage">
           <select className="select" value={tab} aria-label="Section" onChange={(e) => go(e.target.value as Section)}>
             {TABS.map((t) => (
-              <option key={t.id} value={t.id}>{counts[t.id] ? `${t.label} · ${counts[t.id]} ${word(t.id)}` : t.label}</option>
+              <option key={t.id} value={t.id}>{counts[t.id] ? `${t.label} · ${failed[t.id] ? "couldn’t refresh" : `${counts[t.id]} ${word(t.id)}`}` : t.label}</option>
             ))}
           </select>
           {TABS.filter((t) => t.id !== tab && counts[t.id]).map((t) => (
             <button key={t.id} type="button" className={`m-waiting${t.id === "health" || t.id === "cleanup" ? " is-hot" : ""}`}
               onClick={() => go(t.id)}>
-              {t.label} <span className="m-badge"><Tick value={counts[t.id]!} /></span>
+              {t.label} <span className="m-badge"><Tick value={failed[t.id] ? "?" : counts[t.id]!} /></span>
             </button>
           ))}
         </div>
 
         <div role="region" id="m-panel" aria-label={TABS.find((t) => t.id === tab)?.label ?? "Manage"}>
           {failed[tab] && !data[tab] ? (
-            <div className="m-failed">
-              <p className="field__error">Couldn’t load this. Plexbie may be restarting.</p>
-              <button type="button" className="btn m-btn" onClick={() => void refresh(tab)}><RefreshCw size={16} aria-hidden /> Try again</button>
-            </div>
+            <LoadFailed text="Couldn’t load this. Plexbie may be restarting." onRetry={() => refresh(tab)} />
           ) : (
+            <>
+            {stale.length ? <Stale at={Math.min(...stale.map((s) => loadedAt[s] ?? 0)) || undefined} onRetry={() => Promise.all(stale.map((s) => refresh(s)))} /> : null}
             <motion.div
               key={tab}
               initial={reduced ? { opacity: 0 } : { opacity: 0, transform: "translateY(6px)" }}
@@ -2714,6 +2854,7 @@ export function Manage() {
             >
               {tab === "requests" ? <RequestsTab /> : tab === "all" ? <AllRequestsTab /> : tab === "tickets" ? <TicketsTab /> : tab === "joins" ? <JoinsTab /> : tab === "invites" ? <InvitesTab /> : tab === "people" ? <PeopleTab /> : tab === "cleanup" ? <CleanupTab /> : tab === "discord" ? <DiscordTab /> : tab === "messages" ? <MessagesTab /> : <HealthTab />}
             </motion.div>
+            </>
           )}
         </div>
       </div>

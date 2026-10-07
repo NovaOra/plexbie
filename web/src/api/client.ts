@@ -169,7 +169,8 @@ export const api = {
     SAMPLE ? sample.adminRequest(key) : call(`/admin/request/${enc(key)}`),
   requestTicket: (key: string, note: string, tell: boolean, message = ""): Promise<Ack & { help: { id: string; reason: string } }> =>
     SAMPLE ? sample.requestTicket(key, note, tell, message) : post(`/admin/request/${enc(key)}/ticket`, { note, tell, message }),
-  adminBlocked: (): Promise<{ rows: BlockedRow[] }> =>
+  /** `errors` names Sonarr or Radarr when it couldn't be asked (older bots leave it out). */
+  adminBlocked: (): Promise<{ rows: BlockedRow[]; errors?: Partial<Record<BlockedRow["app"], string>> }> =>
     SAMPLE ? sample.adminBlocked() : call("/admin/blocked"),
   blockedPreview: (app: string, downloadId: string): Promise<BlockedPreview> =>
     SAMPLE ? sample.blockedPreview() : call(`/admin/blocked/${enc(app)}/${enc(downloadId)}`),
