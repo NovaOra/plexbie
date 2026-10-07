@@ -18,6 +18,8 @@ grouped under. It is not a typo fix; the two spellings are genuinely different
 identifiers from different systems.
 """
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -134,3 +136,53 @@ def load_aliases(path: Optional[Path] = None) -> Dict[str, str]:
         return {}
     aliases = data.get("aliases", {})
     return aliases if isinstance(aliases, dict) else {}
+
+
+def load_streaks(path: Optional[Path] = None, strict: bool = False) -> Dict[str, dict]:
+    """Read the watch streaks, or {} if there is no file yet.
+
+    A file that cannot be read or parsed is logged and read as {}, which suits
+    callers that only show streaks. With `strict`, it raises instead (OSError or
+    ValueError): the hourly update writes back what it read, and reading a
+    half-written file as {} would replace everyone's history with today's.
+
+    Blocking (it reads a file), so call it via run_blocking from an async context.
+    """
+    target = path or STREAKS_FILE
+    try:
+        streaks = json.loads(target.read_text())
+        if not isinstance(streaks, dict):
+            raise ValueError(f"expected an object, found {type(streaks).__name__}")
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        if strict:
+            raise
+        logger.error(f"Could not read watch streaks from {target}: {e}")
+        return {}
+    return streaks
+
+
+def save_streaks(streaks: Dict[str, dict], path: Optional[Path] = None) -> None:
+    """Write the watch streaks in one step.
+
+    Writes a temp file beside it and os.replace()s it into place, so a crash or
+    a full disk mid-write leaves the previous file whole rather than truncated.
+    Each save gets its own temp file: the hourly update and a refresh after a
+    watch can overlap, and two writers sharing one would mix their output.
+    Blocking, so call it via run_blocking from an async context.
+    """
+    target = path or STREAKS_FILE
+    fd, name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    tmp = Path(name)
+    try:
+        # mkstemp makes the file 0600; keep the file readable as before.
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, "w") as f:
+            json.dump(streaks, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise

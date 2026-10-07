@@ -269,8 +269,8 @@ def test_alias_lookups_reuse_one_parse():
         path = Path(tmp) / "user_aliases.json"
         path.write_text('{"aliases": {"alt": "primary"}}')
 
-        original = module.USER_ALIASES_FILE
-        module.USER_ALIASES_FILE = path
+        original = module.ALIASES_FILE
+        module.ALIASES_FILE = path
         try:
             cog = _watch_tracking_cog()
             first = cog._load_aliases()
@@ -281,7 +281,7 @@ def test_alias_lookups_reuse_one_parse():
                 "on the event loop, once per user, every 10 seconds"
             )
         finally:
-            module.USER_ALIASES_FILE = original
+            module.ALIASES_FILE = original
 
 
 def test_editing_the_alias_file_still_takes_effect():
@@ -292,8 +292,8 @@ def test_editing_the_alias_file_still_takes_effect():
         path = Path(tmp) / "user_aliases.json"
         path.write_text('{"aliases": {"alt": "primary"}}')
 
-        original = module.USER_ALIASES_FILE
-        module.USER_ALIASES_FILE = path
+        original = module.ALIASES_FILE
+        module.ALIASES_FILE = path
         try:
             cog = _watch_tracking_cog()
             assert cog._load_aliases() == {"alt": "primary"}
@@ -303,21 +303,21 @@ def test_editing_the_alias_file_still_takes_effect():
             path.write_text('{"aliases": {"alt": "primary", "other": "second"}}')
             assert cog._load_aliases() == {"alt": "primary", "other": "second"}
         finally:
-            module.USER_ALIASES_FILE = original
+            module.ALIASES_FILE = original
 
 
 def test_a_missing_alias_file_is_not_an_error():
     from plugins.watch_tracking import cog as module
 
     with tempfile.TemporaryDirectory() as tmp:
-        original = module.USER_ALIASES_FILE
-        module.USER_ALIASES_FILE = Path(tmp) / "absent.json"
+        original = module.ALIASES_FILE
+        module.ALIASES_FILE = Path(tmp) / "absent.json"
         try:
             cog = _watch_tracking_cog()
             assert cog._load_aliases() == {}
             assert cog._resolve_alias("someone") == "someone"
         finally:
-            module.USER_ALIASES_FILE = original
+            module.ALIASES_FILE = original
 
 
 def test_a_corrupt_alias_file_is_retried_not_cached():
@@ -328,8 +328,8 @@ def test_a_corrupt_alias_file_is_retried_not_cached():
         path = Path(tmp) / "user_aliases.json"
         path.write_text("{ not json")
 
-        original = module.USER_ALIASES_FILE
-        module.USER_ALIASES_FILE = path
+        original = module.ALIASES_FILE
+        module.ALIASES_FILE = path
         try:
             cog = _watch_tracking_cog()
             assert cog._load_aliases() == {}
@@ -338,7 +338,7 @@ def test_a_corrupt_alias_file_is_retried_not_cached():
             path.write_text('{"aliases": {"alt": "primary"}}')
             assert cog._load_aliases() == {"alt": "primary"}
         finally:
-            module.USER_ALIASES_FILE = original
+            module.ALIASES_FILE = original
 
 
 # ===================================================================

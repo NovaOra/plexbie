@@ -7,7 +7,6 @@ Blocking work (Plex, files) goes through run_blocking; network reads share the
 portal cache so many viewers cost no more than one.
 """
 import asyncio
-import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote, urlencode
@@ -25,7 +24,7 @@ from portal import cleanup as cleanupdata
 from portal import plex as plexdata
 from portal.cache import TTLCache
 from portal.progress import Progress
-from utils.standings import STREAKS_FILE, load_aliases, resolve_alias, standings
+from utils.standings import load_aliases, load_streaks, resolve_alias, standings
 
 logger = get_logger(__name__)
 
@@ -66,13 +65,6 @@ def _iso(epoch_or_iso: Any) -> str:
         except ValueError:
             pass
     return datetime.now(timezone.utc).isoformat()
-
-
-def _read_streaks() -> Dict[str, dict]:
-    try:
-        return json.loads(STREAKS_FILE.read_text())
-    except (OSError, ValueError):
-        return {}
 
 
 class Data:
@@ -650,7 +642,7 @@ class Data:
 
     async def community(self, user_id: Optional[int], plex_name: Optional[str] = None) -> dict:
         board, aliases = await self._leaderboard()
-        streaks = await run_blocking(_read_streaks)
+        streaks = await run_blocking(load_streaks)
         try:
             playing = await self._now_playing()
         except Exception:

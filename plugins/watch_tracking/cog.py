@@ -12,7 +12,7 @@ from core.blocking import run_blocking
 from utils.formatting import episode_label
 from utils.embeds import truncate_field
 from utils.board_clock import BoardClock
-from utils.standings import STREAKS_FILE, ALIASES_FILE, merge_aliased_users
+from utils.standings import STREAKS_FILE, ALIASES_FILE, load_streaks, merge_aliased_users, save_streaks
 from core.logging import get_logger
 from core.services import BotServices
 from database.session import get_session
@@ -22,11 +22,6 @@ from plugins.watch_party.models import WatchPartyCredit
 from core.discord_lookup import home_guild
 
 logger = get_logger(__name__)
-
-
-# Storage files
-#: Imported so there is one definition of this path - utils.standings owns it.
-USER_ALIASES_FILE = ALIASES_FILE
 
 
 def _collect_watched_today(plex):
@@ -204,7 +199,7 @@ class WatchTrackingCog(commands.Cog):
                             display_name = member.nick if member.nick else member.name
                             self._username_cache[user.plex_username] = display_name
                             continue
-                except:
+                except Exception:
                     pass
 
                 # Fallback to stored Discord username
@@ -236,7 +231,7 @@ class WatchTrackingCog(commands.Cog):
         takes effect without a restart. The steady-state cost is one stat().
         """
         try:
-            stat = USER_ALIASES_FILE.stat()
+            stat = ALIASES_FILE.stat()
         except OSError:
             # Missing or unreadable: no aliases, and nothing to invalidate against.
             self._aliases_stamp = None
@@ -248,7 +243,7 @@ class WatchTrackingCog(commands.Cog):
             return self._aliases_cache
 
         try:
-            data = json.loads(USER_ALIASES_FILE.read_text())
+            data = json.loads(ALIASES_FILE.read_text())
             self._aliases_cache = data.get('aliases', {}) or {}
             self._aliases_stamp = stamp
         except Exception as e:
@@ -452,11 +447,15 @@ class WatchTrackingCog(commands.Cog):
                 return
 
         try:
-            # Load and update streaks
+            # Load and update streaks. A file that is there but unreadable is
+            # left alone: reading it as {} would write today's state over
+            # everyone's history.
             try:
-                streaks = json.loads(STREAKS_FILE.read_text())
-            except:
-                streaks = {}
+                streaks = await run_blocking(load_streaks, STREAKS_FILE, strict=True)
+            except (OSError, ValueError) as e:
+                logger.error(f"Could not read watch streaks from {STREAKS_FILE}; "
+                             f"leaving the file as it is until it can be read: {e}")
+                return
 
             today = datetime.now().date().isoformat()
             yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
@@ -510,7 +509,7 @@ class WatchTrackingCog(commands.Cog):
                     f"{', '.join(repr(g) for g in sorted(ghosts))}"
                 )
 
-            STREAKS_FILE.write_text(json.dumps(streaks, indent=2))
+            await run_blocking(save_streaks, streaks, STREAKS_FILE)
 
         except Exception as e:
             logger.error(f"Error calculating watch streaks: {e}")
@@ -524,10 +523,7 @@ class WatchTrackingCog(commands.Cog):
 
         try:
             # Load existing streaks from file
-            try:
-                streaks = json.loads(STREAKS_FILE.read_text())
-            except:
-                streaks = {}
+            streaks = await run_blocking(load_streaks, STREAKS_FILE)
 
             if streaks:
                 await self._post_streaks_update(streaks, started)

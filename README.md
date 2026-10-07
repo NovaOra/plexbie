@@ -1075,6 +1075,17 @@ from the defaults (on, in practice mode), so set it up again on Manage → Clean
 docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config/plexbie.db'); db.execute(\"DELETE FROM key_value_store WHERE namespace = 'media_cleanup' AND key = 'config'\"); db.commit()"
 ```
 
+**Watch streaks that won't load**: if the log keeps saying `Could not read watch
+streaks from config/watch_streaks.json`, the file isn't valid JSON (edited by hand,
+or copied in part). Streaks then stop counting: the streaks board stops updating
+and keeps its last numbers, and the website shows no streaks. The file is left as
+it is so the history in it isn't lost.
+Repair it, or move it aside to start every streak again from the next watch:
+
+```bash
+docker exec plexbie mv /app/config/watch_streaks.json /app/config/watch_streaks.json.bad
+```
+
 ---
 
 ## Security

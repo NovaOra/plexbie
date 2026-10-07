@@ -61,10 +61,6 @@ KNOWN_SITES = {
     "plugins/new_media_added/cog.py::_send_requester_availability_dm::save_tracking_data()": "2.7 ms per DM",
     "webhooks/radarr_handler.py::_handle_grab::save_tracking_data()": "2.7 ms per grab",
     "webhooks/sonarr_handler.py::_handle_grab::save_tracking_data()": "2.7 ms per grab",
-    # watch_tracking small files: watch_streaks.json 912 B.
-    "plugins/watch_tracking/cog.py::update_watch_streaks::read_text": "0.22 ms",
-    "plugins/watch_tracking/cog.py::update_watch_streaks::write_text": "0.32 ms",
-    "plugins/watch_tracking/cog.py::update_streaks_display::read_text": "0.22 ms",
     # user_aliases.json: a stat per call, re-read only when mtime/size change.
     "plugins/watch_tracking/cog.py::update_now_watching::_get_display_name()": "0.06 ms stat",
     "plugins/watch_tracking/cog.py::update_leaderboard::_get_display_name()": "0.06 ms stat",
