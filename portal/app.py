@@ -622,7 +622,8 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
 
         # iPhones: a member's own SideStore/AltStore source, and the build it points at.
         # Both are reached by the token alone (those apps send no sign-in), and both
-        # look the person up again every time: once they're off Plex, it stops.
+        # look the person up again every time: once they're off Plex, or they've
+        # replaced the address, it stops.
         def site(request) -> str:
             from core.config import public_url
             from portal.auth import Auth
@@ -630,17 +631,18 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return public.rstrip("/") if public else f"{Auth.base_url(request).split('://', 1)[0]}://{request.host}"
 
         async def still_member(token: str) -> bool:
-            s = app_release.source_session(services.config.web_session_secret, token)
+            s = await app_release.source_check(services.config.web_session_secret, token)
             if s is None or auth is None:
                 return False
-            return bool((await auth.describe(s)).get("member"))
+            return bool((await auth.describe({"via": s["via"], "id": s["id"]})).get("member"))
 
         async def app_ios_source_link(request):
-            await body(request)
+            payload = await body(request)
             user = await member(request)
             if auth is None:
                 return _err(404, "iPhone installs aren't set up here.")
-            url = f"{site(request)}/app-source/{app_release.source_token(services.config.web_session_secret, user)}.json"
+            version = await app_release.source_version(user, renew=payload.get("renew") is True)
+            url = f"{site(request)}/app-source/{app_release.source_token(services.config.web_session_secret, user, version)}.json"
             from urllib.parse import quote
             return web.json_response({"url": url, "sidestore": f"sidestore://source?url={quote(url, safe='')}",
                                       "altstore": f"altstore://source?url={quote(url, safe='')}"},

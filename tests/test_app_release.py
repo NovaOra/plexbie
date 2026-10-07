@@ -131,9 +131,10 @@ def test_an_iphone_build_is_offered_only_when_it_checks_out():
 
 
 def test_a_source_token_names_the_sign_in_and_nothing_else_passes():
-    from portal.auth import sign
+    from portal.auth import sign, unsign
     token = app_release.source_token(SECRET, {"user": {"id": "42", "name": "Pat", "via": "discord"}})
-    assert app_release.source_session(SECRET, token) == {"via": "discord", "id": "42", "name": "Pat"}
+    assert app_release.source_session(SECRET, token) == {"via": "discord", "id": "42", "v": 0}
+    assert "name" not in unsign(SECRET, token), "the address doesn't carry the member's name"
     assert app_release.source_session("x" * 40, token) is None
     old = app_release.source_token(SECRET, {"user": {"id": "42", "via": "plex"}}, now=time.time() - app_release.SOURCE_DAYS * 86400 - 1)
     assert app_release.source_session(SECRET, old) is None, "run out"
@@ -144,6 +145,35 @@ def test_a_source_token_names_the_sign_in_and_nothing_else_passes():
     assert app_release.ipa_for(True, "plexbie-1.5.0.ipa", folder).read_bytes() == IPA
     assert app_release.ipa_for(False, "plexbie-1.5.0.ipa", folder) is None
     assert app_release.ipa_for(True, "../latest.json", folder) is None and app_release.ipa_for(True, "plexbie-1.4.0.ipa", folder) is None
+
+
+def test_replacing_an_iphone_source_ends_the_older_addresses():
+    """A member can replace their source address (a copy got out, say): every address
+    made for them before stops, and nobody else's does. Addresses made before
+    replacing existed keep working until the member's first replacement."""
+    from portal.auth import sign
+    from test_portal import _init
+    pat = {"user": {"id": "42", "name": "Pat", "via": "discord"}}
+    sam = {"user": {"id": "7", "name": "Sam", "via": "discord"}}
+
+    async def made(user, renew=False):
+        return app_release.source_token(SECRET, user, await app_release.source_version(user, renew=renew))
+
+    async def scenario():
+        await _init(Path(tempfile.mkdtemp()) / "p.db")
+        older = sign(SECRET, {"p": "iossrc", "typ": "iossrc", "via": "discord", "id": "42", "name": "Pat",
+                              "exp": int(time.time() + 3600)})
+        tokens = [older, await made(pat), await made(pat), await made(sam)]
+        before = [await app_release.source_check(SECRET, t) for t in tokens]
+        tokens.append(await made(pat, renew=True))
+        after = [await app_release.source_check(SECRET, t) for t in tokens]
+        again = await made(pat, renew=True)
+        return before, after, [await app_release.source_check(SECRET, t) is not None for t in (tokens[-1], again)]
+    before, after, again = asyncio.run(scenario())
+    assert before[0] == before[1] == {"via": "discord", "id": "42", "v": 0} and all(before), before
+    assert [a is not None for a in after] == [False, False, False, True, True], after
+    assert after[4] == {"via": "discord", "id": "42", "v": 1}
+    assert again == [False, True], "each replacement ends the one before"
 
 
 def test_the_source_lists_the_newest_build_in_sidestores_format():
@@ -179,10 +209,12 @@ def test_iphone_sources_are_for_members_and_end_when_they_leave():
             return page
 
         async def describe(self, s):
-            assert s == {"via": "plex", "id": "1", "name": "Pat"}
+            assert (s["via"], s["id"]) == ("plex", "1")
             return {**MEMBER, "member": still["member"]}
 
     async def scenario(user):
+        from test_portal import _init
+        await _init(Path(tempfile.mkdtemp()) / "p.db")
         services = FakeServices(Config())
         services.config.web_session_secret = SECRET
 
@@ -208,13 +240,20 @@ def test_iphone_sources_are_for_members_and_end_when_they_leave():
             after = (await client.get("/" + path)).status, (await client.get("/" + dl)).status
             still["member"] = True
             forged = (await client.get("/app-source/not.a-token.json")).status
-            return made.status, first, (after, forged)
+            same = await (await client.post("/api/app/ios-source", headers=OK_HEADERS, data="{}")).json()
+            renewed = await client.post("/api/app/ios-source", headers=OK_HEADERS, data='{"renew": true}')
+            new = (await renewed.json())["url"].split("://", 1)[1].split("/", 1)[1]
+            replaced = ((await client.get("/" + path)).status, (await client.get("/" + dl)).status,
+                        (await client.get("/" + same["url"].split("://", 1)[1].split("/", 1)[1])).status,
+                        (await client.get("/" + new)).status)
+            return made.status, first, (after, forged, replaced)
         finally:
             await client.close()
     try:
         made, first, rest = asyncio.run(scenario(MEMBER))
         assert made == 200 and first == (200, 200, IPA), (made, first)
-        assert rest == ((410, 410), 410), "removed from Plex: no source, no download"
+        assert rest[:2] == ((410, 410), 410), "removed from Plex: no source, no download"
+        assert rest[2] == (410, 410, 410, 200), "a replaced address ends, with every one made before it"
         assert asyncio.run(scenario(OUTSIDER))[0] == 403 and asyncio.run(scenario(None))[0] == 401
     finally:
         app_release.APP_DIR = saved

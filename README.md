@@ -702,6 +702,10 @@ with any Plexbie: members type your address when they sign in.
   - a personal **SideStore/AltStore** source for iPhones. iPhones install the app
     that way, signed with each member's own free Apple ID, so the iPhone app has no
     alerts of its own; members turn on the website's alerts from Safari instead.
+    The source stops working once someone is no longer on your Plex. If a member's
+    address gets out, **Replace the address** on their Alerts page ends it, and
+    every older one, at once (they then add Plexbie's source again); addresses made
+    before this button existed keep working until the member first uses it.
 - **Alerts:** members turn on the website's alerts (on Android, and on iPhone from
   Safari with the site on the Home Screen), which your install sends itself. The
   app's own alerts go through the Plexbie project's Expo account, so they're off

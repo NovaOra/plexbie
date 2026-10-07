@@ -146,19 +146,28 @@ export function AppDownload() {
 /** iPhones can't install apps from a website, so Plexbie for iPhone comes through
  *  SideStore (or AltStore): it installs the app under the member's own Apple ID and
  *  keeps it signed. Each member gets their own source address, which SideStore checks
- *  for updates; it stops working if they're no longer on the household's Plex. */
+ *  for updates; it stops working if they're no longer on the household's Plex, or
+ *  once they replace it (a copy got out, say). */
 export function IphoneApp() {
   const [app, setApp] = useState<AppRelease | null>(null);
   const [busy, setBusy] = useState(false);
+  const [armed, setArmed] = useState(false);
   const [note, setNote] = useState("");
   useEffect(() => {
     let live = true;
     api.appLatest().then((a) => { if (live) setApp(a); }).catch(() => undefined);
     return () => { live = false; };
   }, []);
+  // An unanswered "press again" lapses, so a later stray tap can't replace the address.
+  useEffect(() => {
+    if (!armed) return;
+    const t = window.setTimeout(() => { setArmed(false); setNote(""); }, 8000);
+    return () => window.clearTimeout(t);
+  }, [armed]);
   if (!app?.ios) return null;
 
   const source = async (then: "sidestore" | "altstore" | "copy") => {
+    setArmed(false);
     setBusy(true);
     setNote("");
     try {
@@ -172,6 +181,26 @@ export function IphoneApp() {
       }
     } catch {
       setNote("Couldn’t get your address just now. Try again in a moment.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Pressed twice: the first press only asks, since the old address stops at once.
+  const replace = async () => {
+    if (!armed) {
+      setArmed(true);
+      setNote("Press again to replace it. Your current address stops working at once, on every iPhone that has it.");
+      return;
+    }
+    setArmed(false);
+    setBusy(true);
+    setNote("");
+    try {
+      await api.appIosSource(true);
+      setNote("Replaced. Your old address no longer works. In SideStore or AltStore, remove Plexbie’s source, then add it again with the buttons above.");
+    } catch {
+      setNote("Couldn’t replace your address just now. Try again in a moment.");
     } finally {
       setBusy(false);
     }
@@ -214,6 +243,10 @@ export function IphoneApp() {
           </button>
           <button type="button" className="btn m-btn" disabled={busy} onClick={() => void source("copy")}>
             <Copy size={18} aria-hidden /> Copy the address
+          </button>
+          <button type="button" className="btn m-btn" disabled={busy} onClick={() => void replace()}
+            onBlur={() => { if (armed) { setArmed(false); setNote(""); } }}>
+            {armed ? "Press again to replace" : "Replace the address"}
           </button>
         </div>
         <p className="muted app-fine">

@@ -2580,7 +2580,7 @@ def test_only_a_sign_in_cookie_is_a_sign_in():
     assert auth.session(as_cookie(source)) is None, "an iPhone source URL is not a sign-in"
     assert auth.session(as_cookie(untyped)) is None
     assert auth.session(as_cookie(typed))["id"] == "42"
-    assert app_release.source_session(cfg.web_session_secret, source) == {"via": "discord", "id": "42", "name": "Pat"}
+    assert app_release.source_session(cfg.web_session_secret, source) == {"via": "discord", "id": "42", "v": 0}
 
 
 def test_no_cookie_passes_for_another():

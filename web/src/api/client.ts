@@ -67,10 +67,11 @@ export const api = {
   /** A download link for the app, good for ten minutes. */
   appDownloadLink: (): Promise<{ url: string; version: string }> =>
     SAMPLE ? sample.wait({ url: "#", version: "1.5.0" }, 300) : post("/app/download-link"),
-  /** This member's own SideStore/AltStore source for the iPhone app. */
-  appIosSource: (): Promise<IosSource> =>
+  /** This member's own SideStore/AltStore source for the iPhone app. With renew, a new
+   *  address that ends every one given out before it. */
+  appIosSource: (renew = false): Promise<IosSource> =>
     SAMPLE ? sample.wait({ url: "https://plexbie.example/app-source/sample.json", sidestore: "#", altstore: "#" }, 300)
-      : post("/app/ios-source"),
+      : post("/app/ios-source", renew ? { renew: true } : {}),
   search: (q: string, kind: MediaKind): Promise<Title[]> =>
     SAMPLE ? sample.search(q, kind) : call(`/search?${new URLSearchParams({ q, kind })}`),
   title: (kind: MediaKind, id: string): Promise<Title> =>

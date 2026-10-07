@@ -14,6 +14,8 @@ members install with SideStore or AltStore under their own Apple ID. Each member
 gets their own source address (a signed token, good for SOURCE_DAYS), which those
 apps check for updates; the source and its download re-check, every time, that
 the person is still a member, so removing someone from Plex ends their updates.
+A member can also replace their address (a copy got out, say): it carries a
+version kept per member, and replacing it bumps that, so every older one stops.
 """
 import json
 import re
@@ -38,6 +40,7 @@ VERSION = re.compile(r"\d{1,3}\.\d{1,3}\.\d{1,3}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 BUNDLE_ID = "com.plexbie.app"
 ANNOUNCED = ("app_release", "announced")      # the versionCode app users were last told about
+SOURCES = "app_release"                        # "source:<via>:<id>": a member's source version
 
 
 def _read(folder: Path) -> Optional[Dict[str, Any]]:
@@ -108,20 +111,51 @@ def apk_for(secret: str, token: str, folder: Optional[Path] = None) -> Optional[
     return apk if apk.is_file() else None
 
 
-def source_token(secret: str, user: Dict[str, Any], now: Optional[float] = None) -> str:
+def source_token(secret: str, user: Dict[str, Any], version: int = 0, now: Optional[float] = None) -> str:
     """A member's own SideStore/AltStore source address (its token part). It names the
-    sign-in they asked with, so each fetch can check that person is still a member."""
+    sign-in they asked with, so each fetch can check that person is still a member,
+    and the member's source version (source_version), so replacing it ends this one."""
     u = user["user"]
-    return sign(secret, {"p": "iossrc", "typ": "iossrc", "via": u.get("via"), "id": str(u["id"]), "name": u.get("name"),
+    return sign(secret, {"p": "iossrc", "typ": "iossrc", "via": u.get("via"), "id": str(u["id"]), "v": version,
                          "exp": int((now or time.time()) + SOURCE_DAYS * 86400)})
 
 
 def source_session(secret: str, token: str) -> Optional[Dict[str, Any]]:
-    """The sign-in a source token names (to look the person up again), if it's good."""
+    """The sign-in and version a source token names, if its signature is good. An
+    address made before versions existed counts as version 0."""
     payload = unsign(secret, token)
     if not payload or payload.get("p") != "iossrc" or payload.get("via") not in ("discord", "plex") or not payload.get("id"):
         return None
-    return {"via": payload["via"], "id": str(payload["id"]), "name": payload.get("name")}
+    version = payload.get("v", 0)
+    if not isinstance(version, int) or isinstance(version, bool):
+        return None
+    return {"via": payload["via"], "id": str(payload["id"]), "v": version}
+
+
+def _source_key(via: Any, uid: Any) -> str:
+    return f"source:{via}:{uid}"
+
+
+async def source_version(user: Dict[str, Any], renew: bool = False) -> int:
+    """A member's current source version (0 until they first replace their address);
+    with renew, the next one, which ends every address made before it."""
+    u = user["user"]
+    key = _source_key(u.get("via"), u["id"])
+    current = await kv_get(SOURCES, key)
+    current = current if isinstance(current, int) else 0
+    if renew:
+        current += 1
+        await kv_set(SOURCES, key, current)
+    return current
+
+
+async def source_check(secret: str, token: str) -> Optional[Dict[str, Any]]:
+    """source_session, if the token is also the member's current version (not replaced)."""
+    s = source_session(secret, token)
+    if s is None:
+        return None
+    current = await kv_get(SOURCES, _source_key(s["via"], s["id"]))
+    return s if s["v"] == (current if isinstance(current, int) else 0) else None
 
 
 def ipa_for(token_ok: bool, file: str, folder: Optional[Path] = None) -> Optional[Path]:
