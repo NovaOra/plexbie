@@ -210,6 +210,20 @@ who's watching from one place instead of five.
   whoever an old email or name now points at. Every Tautulli user is read, page by
   page, up to 5,000 (past that the log says so); a name two Tautulli users share (ignoring case) matches neither,
   and the log says so.
+- Someone who has never watched anything is treated the same: warned, then
+  removed, with the same exemptions. So is a tracked person still shared with
+  whom Tautulli doesn't list at all (this needs a plex.tv sign-in, to tell who
+  is still shared with). Their clock counts from when Plexbie started tracking
+  them, but never from before the first daily check of a Plexbie version that
+  does this, so everyone already on the server then gets a full period. A
+  Tautulli that can't be reached is never read as "never watched": that day's
+  check is skipped. Nor are invites not accepted yet, people already off the
+  share, a name two Tautulli users share, or anyone whose Keep History is off
+  in Tautulli: those are left alone.
+- Because of that shared starting point, everyone already on the server with
+  no watch history is warned on the same day and falls due on the same day. If
+  that is more people than one pass removes by itself (see the brakes below),
+  nobody is removed and the admins are asked to remove them in Manage → People.
 - The warning goes by Discord DM; when their DMs are closed (or they have no
   Discord), by phone/browser alert or email instead. If none of those reaches
   them, the admins are told (admin channel and phone alerts; Manage → Messages

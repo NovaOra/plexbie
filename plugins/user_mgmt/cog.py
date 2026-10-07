@@ -11,6 +11,7 @@ from plexapi.exceptions import NotFound as PlexNotFound
 from sqlalchemy import delete, func, select, update
 
 from core.blocking import run_blocking
+from core.clients import USERS_TABLE_PAGE, USERS_TABLE_PAGES
 from core.plex_account import can_sign_in, owner_account
 from core.permissions import AdminOnlyView, require_admin
 from core.logging import get_logger
@@ -46,6 +47,10 @@ MAX_REMOVALS_SHARE = 0.25
 # The Plex server owner as last learned ({"id", "name"}), for passes where neither
 # plex.tv nor the Plex server can be asked: their exemption mustn't come and go.
 PLEX_OWNER = ("user_mgmt", "plex_owner")
+# The first daily check that judged people who have never watched anything. Their
+# clock never counts from before it, so those already on the share then got a full
+# period. Saved once, never moved.
+NEVER_WATCHED_SINCE = ("user_mgmt", "never_watched_since")
 
 
 async def reconcile_accounts(accounts) -> list:
@@ -423,6 +428,20 @@ class UserMgmtCog(commands.Cog):
             logger.debug(f"Could not remember the Plex owner: {e}")
         return name, account_id
 
+    async def _never_watched_since(self, now: datetime) -> Optional[datetime]:
+        """NEVER_WATCHED_SINCE, saved as `now` on the first pass that asks. None if it
+        can't be read or saved: never-watched people are then not judged this pass."""
+        from database.kv_store import kv_get, kv_set
+        try:
+            since = await kv_get(*NEVER_WATCHED_SINCE)
+            if since:
+                return ensure_utc(datetime.fromisoformat(since))
+            await kv_set(*NEVER_WATCHED_SINCE, now.isoformat())
+            return now
+        except Exception as e:
+            logger.warning(f"Could not read when never-watched people were first checked, skipping them: {e}")
+            return None
+
     @staticmethod
     def _is_plex_owner(user: PlexUser, tautulli_user: dict, owner_name, owner_account_id) -> bool:
         """The Plex owner's own row, which needn't be linked to BOT_OWNER_ID (nobody
@@ -444,11 +463,14 @@ class UserMgmtCog(commands.Cog):
             logger.info("Starting daily inactivity check...")
             # First learn which Plex account each tracked row really is (see reconcile_accounts).
             owner_account_entry = None
+            # Plex account ids on the share right now, when plex.tv could be asked.
+            on_share = None
             if can_sign_in(self.services.config):
                 try:
                     from core.plex_account import shared_accounts
                     accounts = await run_blocking(shared_accounts, self.services.config)
                     owner_account_entry = next((a for a in accounts if a.get("owner")), None)
+                    on_share = {str(a["id"]) for a in accounts if a.get("id") and not a.get("owner")}
                     await reconcile_accounts(accounts)
                 except Exception as e:
                     logger.info(f"Couldn't match tracked people to Plex accounts: {e}")
@@ -531,6 +553,10 @@ class UserMgmtCog(commands.Cog):
             before = {user.id: persisted_fields(user) for user in tracked_users}
 
             owner_name, owner_account_id = await self._plex_owner(owner_account_entry)
+            never_watched_since = await self._never_watched_since(datetime.now(timezone.utc))
+            # Tautulli's table stops at USERS_TABLE_PAGES pages; someone missing from a
+            # cut-off table may well have watched.
+            table_complete = len(tautulli_users) < USERS_TABLE_PAGE * USERS_TABLE_PAGES
 
             # Phase 2: decide. No transaction, no network - the field assignments
             # here are made on detached objects and persisted in phase 4.
@@ -540,6 +566,7 @@ class UserMgmtCog(commands.Cog):
             to_notify_exemption_lost = []
 
             for tracked_user in tracked_users:
+                unlisted = False
                 # Find corresponding Tautulli user
                 tautulli_user = tautulli_by_id.get(str(tracked_user.plex_user_id or ""))
                 if not tautulli_user:
@@ -557,9 +584,17 @@ class UserMgmtCog(commands.Cog):
                     tautulli_user = by_name
 
                 if not tautulli_user:
-                    logger.warning(f"Tracked user {tracked_user.plex_username} not found in Tautulli - skipping (may be new)")
-                    # Don't auto-delete - user might just not have watched anything yet
-                    continue
+                    # Tautulli has no row for this Plex account, which the share still
+                    # has: they have never played anything, and are judged like anyone
+                    # who never watched (below). Anyone else is skipped: off the share,
+                    # an invite not accepted yet, no account known (a name two Tautulli
+                    # users share, say), plex.tv not answering, or a cut-off table.
+                    account_id = str(tracked_user.plex_user_id or "")
+                    if not (table_complete and on_share is not None and account_id in on_share):
+                        logger.warning(f"Tracked user {tracked_user.plex_username} not found in Tautulli - skipping (may be new)")
+                        continue
+                    logger.info(f"Tracked user {tracked_user.plex_username} not found in Tautulli; counting as never watched")
+                    tautulli_user, unlisted = {}, True
 
                 # ---- top-watcher exemption -------------------------------------
                 # Decided before any warning or removal, and recorded, so that
@@ -674,30 +709,46 @@ class UserMgmtCog(commands.Cog):
                         continue
 
                 else:
-                    # No history found - might be a new user
-                    if tracked_user.last_watched is None:
-                        # New user with no activity yet
-                        tracked_user.days_inactive = 0
-                    else:
-                        # Existing user with no new activity
-                        baseline = ensure_utc(tracked_user.last_watched)
-                        lost_at = ensure_utc(tracked_user.exemption_lost_at)
-                        if lost_at is not None and lost_at > baseline:
-                            baseline = lost_at
-                        days_since = (now - baseline).days
-                        tracked_user.days_inactive = days_since
-
-                        if skip_enforcement:
+                    # No play in Tautulli's history: count from the last watch Plexbie saw.
+                    baseline = ensure_utc(tracked_user.last_watched)
+                    if baseline is None or unlisted:
+                        # Never watched anything (or not in Tautulli at all): the clock
+                        # runs from when tracking started, but never from before
+                        # never-watched people were first judged (NEVER_WATCHED_SINCE).
+                        if never_watched_since is None:
                             continue
-
-                        # Same warn-then-remove sequencing as the branch above.
-                        if days_since >= self.services.config.inactivity_warning_days and not tracked_user.warning_sent:
-                            to_warn.append(tracked_user)
+                        if tautulli_user.get('keep_history') in (0, "0"):
+                            # Tautulli records none of their plays, so no history isn't
+                            # no watching.
+                            logger.info(f"User {tracked_user.plex_username}: Tautulli doesn't keep their "
+                                        f"history, so not judged as never watched")
+                            tracked_user.days_inactive = 0
                             continue
+                        baseline = max(d for d in (baseline, ensure_utc(tracked_user.created_at),
+                                                   never_watched_since) if d is not None)
+                    lost_at = ensure_utc(tracked_user.exemption_lost_at)
+                    if lost_at is not None and lost_at > baseline:
+                        baseline = lost_at
+                    days_since = (now - baseline).days
+                    tracked_user.days_inactive = days_since
 
-                        if days_since >= self.services.config.inactivity_removal_days:
-                            to_remove.append((tracked_user, tautulli_user.get('user_id', 0)))
-                            continue
+                    if skip_enforcement:
+                        logger.info(
+                            f"User {tracked_user.plex_username}: {days_since} days "
+                            f"inactive (exempt from removal)"
+                        )
+                        continue
+
+                    logger.info(f"User {tracked_user.plex_username}: {days_since} days inactive")
+
+                    # Same warn-then-remove sequencing as the branch above.
+                    if days_since >= self.services.config.inactivity_warning_days and not tracked_user.warning_sent:
+                        to_warn.append(tracked_user)
+                        continue
+
+                    if days_since >= self.services.config.inactivity_removal_days:
+                        to_remove.append((tracked_user, tautulli_user.get('user_id', 0)))
+                        continue
 
             if history_stale and (to_warn or to_remove):
                 newest = datetime.fromtimestamp(newest_seen, tz=timezone.utc).date()
