@@ -557,6 +557,39 @@ def test_an_invite_opened_in_the_app_is_accepted_during_its_plex_sign_in():
     assert query["invite"] == ["ok"] and set(query) == {"code", "state", "invite"}
 
 
+def test_an_invite_that_breaks_during_an_app_sign_in_still_signs_in_and_forgets_the_plex_device():
+    class Broken(_Invites):
+        async def redeem(self, key, me, join):
+            raise RuntimeError("something inside broke")
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "m.db")
+        auth = _auth()
+        auth.invites = Broken()
+
+        async def fetch(method, url, **kw):
+            if "/pins/" in url:
+                return {"code": "ABCD1234", "authToken": "PLEX-SECRET-TOKEN"}
+            return {"id": 77, "username": "sam", "email": "sam@example.com"}
+        auth._fetch_json = fetch
+        client = _client(auth)
+        await client.start_server()
+        try:
+            _, challenge, state = _pkce()
+            await client.get(_start("plex", challenge, state, invite="INVITE-CODE"), allow_redirects=False)
+            await client.post("/auth/plex/pin", headers={"X-Plexbie": "1"}, json={"id": 7, "code": "ABCD1234", "next": "/x"})
+            confirm = await client.get("/auth/plex/callback", allow_redirects=False)
+            back = await client.post("/auth/mobile/confirm", data={"answer": "yes"}, allow_redirects=False,
+                                     headers={"Origin": str(client.make_url("")).rstrip("/")})
+            return confirm.status, confirm.headers.get("Location"), parse_qs(urlsplit(back.headers["Location"]).query), auth
+        finally:
+            await client.close()
+    status, location, query, auth = asyncio.run(scenario())
+    assert status == 302 and location == "/auth/mobile/confirm", "the sign-in goes on, not a bare 500"
+    assert query["invite"] == ["failed"] and "code" in query
+    assert auth.forgotten == ["PLEX-SECRET-TOKEN"], "Plexbie still signs itself out of their Plex account"
+
+
 def test_sign_in_can_return_through_the_sites_verified_link_and_falls_back_to_the_app_scheme():
     cfg_public = "https://plexbie.example"
     mobile.allow_return(cfg_public)

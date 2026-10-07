@@ -785,22 +785,30 @@ class Auth:
         }, headers={"Cache-Control": "no-store"})
 
     async def _use_invite(self, key: str, me: dict, token: str) -> Optional[str]:
+        """Never raises: anything that breaks answers "failed" (the invite stays
+        unspent), so the sign-in still finishes and Plexbie still signs itself out
+        of their Plex account."""
         from plugins.user_invites.cog import join_with_invite_link
         if self.invites is None:
             return None
-        name = (me.get("username") or me.get("title") or "").strip()
-        access = await self._plex_access()
-        if access is not None and str(me.get("id")) in access:
-            return "already"       # already on Plex: leave the invite unspent
+        try:
+            name = (me.get("username") or me.get("title") or "").strip()
+            access = await self._plex_access()
+            if access is not None and str(me.get("id")) in access:
+                return "already"       # already on Plex: leave the invite unspent
 
-        async def join(rec: dict) -> bool:
-            result = await join_with_invite_link(
-                self.bot, self.services, plex_name=name, plex_account_id=str(me.get("id")),
-                email=me.get("email") or "", user_token=token,
-                label=rec.get("label") or "", created_by=rec.get("created_by") or "an admin")
-            return bool(result.get("ok"))
+            async def join(rec: dict) -> bool:
+                result = await join_with_invite_link(
+                    self.bot, self.services, plex_name=name, plex_account_id=str(me.get("id")),
+                    email=me.get("email") or "", user_token=token,
+                    label=rec.get("label") or "", created_by=rec.get("created_by") or "an admin")
+                return bool(result.get("ok"))
 
-        outcome = await self.invites.redeem(key, me, join)
+            outcome = await self.invites.redeem(key, me, join)
+        except Exception as e:
+            # The type only: the message could carry their Plex sign-in.
+            logger.error(f"Invite link could not be used: {type(e).__name__}")
+            return "failed"
         if outcome == "ok":
             self.cache.drop("auth:plex-access")
             self.cache.drop("admin:shared")

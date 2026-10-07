@@ -11,7 +11,8 @@ What keeps a stranger out:
   * one use, then it's spent; it also expires (7 days by default) and an admin
     can revoke it while it's unused;
   * optionally locked to an email: then only the Plex account with that email
-    can use it, so a forwarded link is worthless;
+    can use it, once plex.tv says the email is confirmed, so a forwarded link is
+    worthless;
   * redemption runs under a per-invite lock, so two sign-ins racing on one link
     cannot both get in;
   * a bad, used, expired or revoked link all look the same from outside.
@@ -177,10 +178,12 @@ class Invites:
         `join(rec)` does the sharing and returns True on success; it only runs
         while the invite is held and still unused, and the invite is spent only
         if it succeeds.
-          ok       shared with them
-          email    locked to another email; the invite is untouched
-          invalid  used, expired, revoked or unknown
-          failed   Plex refused; the invite is untouched so they can retry
+          ok           shared with them
+          email        locked to another email; the invite is untouched
+          unconfirmed  locked to their email, but plex.tv says they haven't confirmed
+                       it yet; the invite is untouched
+          invalid      used, expired, revoked or unknown
+          failed       Plex refused; the invite is untouched so they can retry
         """
         async with self.lock(key):
             found = await self.usable(key)
@@ -190,9 +193,19 @@ class Invites:
             if rec.get("email") and rec["email"] != (me.get("email") or "").strip().lower():
                 logger.info(f"Invite for {rec.get('label')!r} refused: signed in with a different email")
                 return "email"
+            if rec.get("email") and me.get("confirmed") is False:
+                # Anyone can make a Plex account with an address that isn't theirs.
+                # Only an explicit "not confirmed" holds it back, so a plex.tv answer
+                # without the flag can't stop every locked invite.
+                logger.info(f"Invite for {rec.get('label')!r} held: the Plex account hasn't confirmed its email")
+                return "unconfirmed"
             if not await join(rec):
                 return "failed"
             rec.update(used_at=utc_now().isoformat(), used_by=me.get("username") or me.get("title"), used_by_id=str(me.get("id")))
-            await kv_set(NAMESPACE, key, rec)
+            try:
+                await kv_set(NAMESPACE, key, rec)
+            except Exception as e:
+                # They're on Plex now; telling them it failed would only send them round again.
+                logger.error(f"Invite for {rec.get('label')!r} used, but could not be marked used: {type(e).__name__}")
         logger.info(f"Invite for {rec.get('label')!r} used by {rec.get('used_by')}")
         return "ok"

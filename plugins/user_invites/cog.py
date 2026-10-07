@@ -616,15 +616,19 @@ async def join_with_invite_link(bot, services, *, plex_name: str, plex_account_i
     view = PlexInviteApprovalView(email=email or None, services=services)
     view.plex_name, view.plex_account_id = plex_name, plex_account_id
     await view._add_to_user_tracking(None, plex_name, plex_account_id)
-    await kv_set(WEB_JOINS_NAMESPACE, str(plex_account_id), {
-        "plex_name": plex_name,
-        "email": email,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "status": "approved",
-        "via": "invite link",
-        "invite_label": label,
-        "invited_by": created_by,
-    })
+    try:
+        await kv_set(WEB_JOINS_NAMESPACE, str(plex_account_id), {
+            "plex_name": plex_name,
+            "email": email,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": "approved",
+            "via": "invite link",
+            "invite_label": label,
+            "invited_by": created_by,
+        })
+    except Exception as e:
+        # Shared already: the invite must still be spent, so this isn't a failure.
+        logger.error(f"Invite link: shared with {plex_name} but could not record it: {type(e).__name__}")
 
     channel = find_admin_channel(bot, cfg)
     if channel:

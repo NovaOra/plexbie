@@ -611,8 +611,10 @@ so the household can do everything above without Discord:
   the live watch party, and check service health. Each command above has its
   counterpart there, and both sides run the same code.
 - **Invite links** let someone without Discord join: single use, expiring,
-  optionally locked to an email, stored only as a SHA-256. Without one, a Plex
-  sign-in cannot ask to join.
+  optionally locked to an email, stored only as a SHA-256. A locked link works
+  only for the Plex account with that email, once the person has confirmed it
+  with Plex; until then it waits, unspent. Without one, a Plex sign-in cannot
+  ask to join.
 - **Members without Discord** are told what Discord members are DMed (request
   decisions, arrivals, inactivity warnings, removal) by phone/browser alerts
   from the site, or by email when `SMTP_*` is set.
