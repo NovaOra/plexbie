@@ -116,40 +116,148 @@ def test_whole_token_matching_only():
     assert looks_foreign_language("Polished.Chrome.EPUB") is False
 
 
-def test_missing_title_element_returns_empty_not_error():
-    """One malformed result used to abort the whole submission."""
-    import xml.etree.ElementTree as ET
+# --- the search itself: NZBHydra's JSON answer, through the shared client ---
 
-    from plugins.media_requests.cog import result_title
+def _item(title, link, grabs=None, attr_key="attr"):
+    item = {"title": title, "link": link, "pubDate": "Thu, 01 Oct 2026 14:09:28 +0000",
+            "enclosure": {"@attributes": {"url": link, "length": "1048576", "type": "application/x-nzb"}}}
+    if grabs is not None:
+        item[attr_key] = [{"@attributes": {"name": "category", "value": "7020"}},
+                          {"@attributes": {"name": "grabs", "value": str(grabs)}}]
+    return item
 
-    # A result with no <title> child at all - the case that raised AttributeError.
-    no_title = ET.fromstring("<item><link>http://x/y.nzb</link></item>")
-    assert result_title(no_title) == ""
 
-    # A <title> present but empty.
-    empty = ET.fromstring("<item><title></title></item>")
-    assert result_title(empty) == ""
+def _feed(*items):
+    """An answer shaped like NZBHydra's o=json newznab output."""
+    return {"channel": {"title": "NZBHydra", "response": {"@attributes": {"offset": 0, "total": len(items)}},
+                        "item": list(items)}}
 
-    # A normal one, whitespace trimmed.
-    good = ET.fromstring("<item><title>  Some.Book.EPUB  </title></item>")
-    assert result_title(good) == "Some.Book.EPUB"
+
+class _Response:
+    status, content_length = 200, None
+
+    def __init__(self, body):
+        self.body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def json(self, **kw):
+        return self.body
+
+    async def text(self):
+        import json
+        return json.dumps(self.body)
+
+
+class _Http:
+    """NZBHydra at http://hydra:5076 and SABnzbd at http://sab:8080; `asked` records
+    (url, params) for each call."""
+
+    def __init__(self, hydra_body, sab_body=None):
+        self.hydra_body, self.sab_body = hydra_body, sab_body or {"status": True, "nzo_ids": ["SABnzbd_nzo_1"]}
+        self.asked = []
+
+    def request(self, method, url, params=None, **kw):
+        self.asked.append((url, dict(params or {})))
+        return _Response(self.hydra_body if url.startswith("http://hydra") else self.sab_body)
+
+
+def _services(http):
+    from types import SimpleNamespace
+
+    from core.clients import Hydra, Sabnzbd
+
+    config = SimpleNamespace(nzbhydra_url="http://hydra:5076", nzbhydra_api_key="hydra-key",
+                             sabnzbd_url="http://sab:8080", sabnzbd_api_key="sab-key",
+                             bookshelf_ebook_watch="", bookshelf_audiobook_watch="")
+    services = SimpleNamespace(config=config, http_session=http)
+    services.hydra, services.sab = Hydra(services), Sabnzbd(services)
+    return services
+
+
+def test_hydra_search_reads_grabs_from_the_newznab_attributes():
+    import asyncio
+
+    services = _services(_Http(_feed(_item("Some.Book.EPUB", "http://hydra/getnzb/1", grabs=42),
+                                     _item("Some.Book.MOBI", "http://hydra/getnzb/2"))))
+    out = asyncio.run(services.hydra.search("Some Book", ["7020"], limit=20, timeout=30))
+    assert [(r["title"], r["grabs"]) for r in out] == [("Some.Book.EPUB", 42), ("Some.Book.MOBI", 0)]
+    assert out[0]["link"] == "http://hydra/getnzb/1" and out[0]["size"] == 1048576
+
+
+def test_hydra_search_reads_grabs_written_as_newznab_attr_too():
+    import asyncio
+
+    services = _services(_Http(_feed(_item("Some.Book.EPUB", "http://hydra/getnzb/1", grabs=7,
+                                           attr_key="newznab:attr"))))
+    out = asyncio.run(services.hydra.search("Some Book", ["7020"]))
+    assert out[0]["grabs"] == 7
 
 
 def test_a_malformed_result_does_not_hide_the_good_ones():
-    """The loop must keep the other 19 results when one entry is broken."""
-    import xml.etree.ElementTree as ET
+    """One result with no title, an odd size or no shape at all must not cost the others."""
+    import asyncio
 
-    from plugins.media_requests.cog import result_title
+    untitled, blank = {"link": "http://hydra/getnzb/0"}, _item("   ", "http://hydra/getnzb/9")
+    odd_size = _item("Project.Hail.Mary.MOBI", "http://hydra/getnzb/2", grabs=1)
+    odd_size["enclosure"]["@attributes"]["length"] = "1.2 MB"
+    services = _services(_Http(_feed(untitled, None, blank, odd_size,
+                                     _item(" Project.Hail.Mary.EPUB ", "http://hydra/getnzb/1", grabs=3))))
+    out = asyncio.run(services.hydra.search("Project Hail Mary", ["7020"]))
+    assert [(r["title"], r["size"]) for r in out] == [("Project.Hail.Mary.MOBI", 0), ("Project.Hail.Mary.EPUB", 1048576)]
 
-    feed = ET.fromstring(
-        "<rss><channel>"
-        "<item><link>a</link></item>"
-        "<item><title>Project.Hail.Mary.EPUB</title></item>"
-        "</channel></rss>"
-    )
-    titles = [result_title(i) for i in feed.findall(".//item")]
-    assert titles.count("") == 1
-    assert "Project.Hail.Mary.EPUB" in titles
+
+def _book_view(services, request_format="ebook"):
+    from plugins.media_requests.cog import BookAdminApprovalView
+
+    return BookAdminApprovalView({"title": "The Swarm", "author": "Frank Schaetzing",
+                                  "request_format": request_format}, 7, services)
+
+
+def test_book_download_searches_through_the_shared_client_and_sends_the_best_release():
+    import asyncio
+
+    http = _Http(_feed(_item("Der.Schwarm.German.Retail.EPUB", "http://hydra/getnzb/de", grabs=900),
+                       _item("The.Swarm.Frank.Schaetzing.MOBI", "http://hydra/getnzb/mobi", grabs=80),
+                       _item("The.Swarm.Frank.Schaetzing.EPUB", "http://hydra/getnzb/epub", grabs=5)))
+    assert asyncio.run(_book_view(_services(http))._submit_to_download()) is True
+    (hydra_url, search), (sab_url, sab) = http.asked
+    assert hydra_url == "http://hydra:5076/api"
+    assert (search["t"], search["q"], search["cat"], search["limit"], search["o"]) == (
+        "search", "The Swarm Frank Schaetzing", "7020", "20", "json")
+    assert sab_url == "http://sab:8080/api"
+    assert (sab["mode"], sab["name"], sab["cat"]) == ("addurl", "http://hydra/getnzb/epub", "ebooks")
+
+
+def test_audiobook_download_ranks_by_grabs_in_the_audiobook_category():
+    import asyncio
+
+    http = _Http(_feed(_item("The.Swarm.Audiobook.EPUB", "http://hydra/getnzb/a", grabs=5),
+                       _item("The.Swarm.Audiobook.M4B", "http://hydra/getnzb/b", grabs=100)))
+    assert asyncio.run(_book_view(_services(http), "audiobook")._submit_to_download()) is True
+    (_, search), (_, sab) = http.asked
+    assert search["cat"] == "3030"
+    assert (sab["name"], sab["cat"]) == ("http://hydra/getnzb/b", "audiobooks")
+
+
+def test_book_download_stops_when_nzbhydra_refuses_the_search():
+    import asyncio
+
+    http = _Http({"error": {"@attributes": {"code": "100", "description": "Incorrect user credentials"}}})
+    assert asyncio.run(_book_view(_services(http))._submit_to_download()) is False
+    assert [url for url, _ in http.asked] == ["http://hydra:5076/api"]
+
+
+def test_book_download_with_no_results_sends_nothing():
+    import asyncio
+
+    http = _Http(_feed())
+    assert asyncio.run(_book_view(_services(http))._submit_to_download()) is False
+    assert [url for url, _ in http.asked] == ["http://hydra:5076/api"]
 
 
 def test_language_check_is_not_used_as_a_filter():

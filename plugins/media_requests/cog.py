@@ -53,19 +53,6 @@ LANGUAGE_TAGS = frozenset({
 })
 
 
-def result_title(item) -> str:
-    """Read a newznab <item>'s title, tolerating a malformed entry.
-
-    ElementTree find() returns None when the child is absent, so the original
-    `item.find("title").text` raised AttributeError - which unwound the entire
-    submission and discarded every other result because one entry was malformed.
-    """
-    element = item.find("title")
-    if element is None or not element.text:
-        return ""
-    return element.text.strip()
-
-
 def looks_foreign_language(release_title: str) -> bool:
     """Whether a release name carries a non-English language tag.
 
@@ -1275,13 +1262,7 @@ class BookAdminApprovalView(_RequestApprovalBase):
 
     async def _submit_to_download(self) -> bool:
         """Search NZBHydra for the book and send NZB to SABnzbd for download"""
-        import xml.etree.ElementTree as ET
-        import aiohttp as _aiohttp
-
-        hydra_url = self.services.config.nzbhydra_url
-        hydra_key = self.services.config.nzbhydra_api_key
-
-        if not hydra_url or not hydra_key:
+        if not self.services.hydra.configured:
             logger.warning("NZBHydra not configured")
             return False
         if not self.services.sab.configured:
@@ -1289,7 +1270,6 @@ class BookAdminApprovalView(_RequestApprovalBase):
             return False
 
         try:
-            _timeout = _aiohttp.ClientTimeout(total=30)
             title = self.book.get('title', '')
             author = self.book.get('author', '')
             format_type = self.book.get('request_format', 'ebook')
@@ -1305,159 +1285,108 @@ class BookAdminApprovalView(_RequestApprovalBase):
             search_term = f"{title} {author}".strip()
             logger.info(f"Searching NZBHydra for: {search_term} (cat={hydra_cat})")
 
-            async with _aiohttp.ClientSession(timeout=_timeout) as session:
-                # 1. Search NZBHydra
-                search_url = f"{hydra_url}/api"
-                params = {
-                    "t": "search",
-                    "q": search_term,
-                    "cat": hydra_cat,
-                    "apikey": hydra_key,
-                    "limit": "20"
-                }
+            # 1. Search NZBHydra
+            try:
+                items = await self.services.hydra.search(search_term, [hydra_cat], limit=20, timeout=30)
+            except ServiceError as e:
+                logger.error(f"NZBHydra search failed: {e}")
+                return False
 
-                async with session.get(search_url, params=params) as resp:
-                    if resp.status != 200:
-                        logger.error(f"NZBHydra search failed: {resp.status}")
-                        return False
-                    xml_text = await resp.text()
+            if not items:
+                logger.warning(f"No NZBHydra results for: {search_term}")
+                return False
 
-                # 2. Parse XML results
-                root = ET.fromstring(xml_text)
+            logger.info(f"NZBHydra returned {len(items)} results")
 
-                # Check for API error
-                error_elem = root.find('.//{http://www.newznab.com/DTD/2010/feeds/attributes/}error')
-                if error_elem is None:
-                    error_elem = root.find('.//error')
-                if error_elem is not None:
-                    logger.error(f"NZBHydra API error: {error_elem.get('description', 'unknown')}")
-                    return False
+            # 2. Rank results
+            candidates = []
+            for item in items:
+                item_title = item['title']
+                title_lower = item_title.lower()
 
-                items = root.findall('.//item')
-                if not items:
-                    logger.warning(f"No NZBHydra results for: {search_term}")
-                    return False
+                # Language is a ranking signal, never a filter - see
+                # looks_foreign_language(). Dropping matches here discarded
+                # legitimate English books whose titles contain a nationality.
+                is_foreign = looks_foreign_language(item_title)
 
-                logger.info(f"NZBHydra returned {len(items)} results")
+                # Bonus score for EPUB format in ebook searches
+                has_epub = 'epub' in title_lower
+                candidates.append({
+                    'title': item_title,
+                    'grabs': item['grabs'],
+                    'has_epub': has_epub,
+                    'is_foreign': is_foreign,
+                    'nzb_url': item['link']
+                })
 
-                # 3. Rank results
-                ns = {'newznab': 'http://www.newznab.com/DTD/2010/feeds/attributes/'}
-
-                candidates = []
-                for item in items:
-                    # A malformed result is skipped, not fatal - see result_title().
-                    item_title = result_title(item)
-                    if not item_title:
-                        logger.debug("Skipping NZBHydra result with no title")
-                        continue
-                    title_lower = item_title.lower()
-
-                    # Language is a ranking signal, never a filter - see
-                    # looks_foreign_language(). Dropping matches here discarded
-                    # legitimate English books whose titles contain a nationality.
-                    is_foreign = looks_foreign_language(item_title)
-
-                    # Get grabs count
-                    grabs = 0
-                    for attr in item.findall('.//newznab:attr', ns):
-                        if attr.get('name') == 'grabs':
-                            try:
-                                grabs = int(attr.get('value', '0'))
-                            except ValueError:
-                                grabs = 0
-
-                    # Get NZB download link
-                    link = item.find('link')
-                    nzb_url = link.text if link is not None else None
-
-                    if not nzb_url:
-                        enclosure = item.find('enclosure')
-                        if enclosure is not None:
-                            nzb_url = enclosure.get('url')
-
-                    if nzb_url:
-                        # Bonus score for EPUB format in ebook searches
-                        has_epub = 'epub' in title_lower
-                        candidates.append({
-                            'title': item_title,
-                            'grabs': grabs,
-                            'has_epub': has_epub,
-                            'is_foreign': is_foreign,
-                            'nzb_url': nzb_url
-                        })
-
-                if not candidates:
-                    logger.warning(f"No usable results for: {search_term}")
-                    return False
-
-                # Sort: English-looking first, then EPUB (for ebooks), then by
-                # grabs. reverse=True puts True before False, so the key uses
-                # "not is_foreign" to rank English-looking releases first.
-                if format_type != 'audiobook':
-                    candidates.sort(
-                        key=lambda x: (not x['is_foreign'], x['has_epub'], x['grabs']),
-                        reverse=True,
-                    )
-                else:
-                    candidates.sort(
-                        key=lambda x: (not x['is_foreign'], x['grabs']),
-                        reverse=True,
-                    )
-
-                best = candidates[0]
-                logger.info(
-                    f"Selected: '{best['title']}' ({best['grabs']} grabs, "
-                    f"epub={best['has_epub']}) from {len(candidates)} candidates"
+            # Sort: English-looking first, then EPUB (for ebooks), then by
+            # grabs. reverse=True puts True before False, so the key uses
+            # "not is_foreign" to rank English-looking releases first.
+            if format_type != 'audiobook':
+                candidates.sort(
+                    key=lambda x: (not x['is_foreign'], x['has_epub'], x['grabs']),
+                    reverse=True,
                 )
-                if best['is_foreign']:
-                    logger.warning(
-                        f"Best candidate carries a language tag and may not be "
-                        f"English: '{best['title']}'"
-                    )
+            else:
+                candidates.sort(
+                    key=lambda x: (not x['is_foreign'], x['grabs']),
+                    reverse=True,
+                )
 
-                # 4. Send NZB to SABnzbd
+            best = candidates[0]
+            logger.info(
+                f"Selected: '{best['title']}' ({best['grabs']} grabs, "
+                f"epub={best['has_epub']}) from {len(candidates)} candidates"
+            )
+            if best['is_foreign']:
+                logger.warning(
+                    f"Best candidate carries a language tag and may not be "
+                    f"English: '{best['title']}'"
+                )
+
+            # 3. Send NZB to SABnzbd
+            try:
+                result = await self.services.sab.call("addurl", name=best['nzb_url'], cat=sab_cat, timeout=30)
+            except ServiceError as e:
+                logger.error(f"SABnzbd: {e}")
+                return False
+            if result.get('status'):
+                logger.info(f"Sent to SABnzbd: '{best['title']}' → category '{sab_cat}'")
+
+                # Write hint file for bookshelf_processor plugin
                 try:
-                    result = await self.services.sab.call("addurl", name=best['nzb_url'], cat=sab_cat, timeout=30)
-                except ServiceError as e:
-                    logger.error(f"SABnzbd: {e}")
-                    return False
-                if result.get('status'):
-                    logger.info(f"Sent to SABnzbd: '{best['title']}' → category '{sab_cat}'")
+                    watch_dir = self.services.config.bookshelf_ebook_watch if sab_cat == 'ebooks' else self.services.config.bookshelf_audiobook_watch
+                    if watch_dir:
+                        hint_data = {
+                            "title": self.book.get('title', ''),
+                            "author": self.book.get('author', ''),
+                            "year": self.book.get('year'),
+                            "isbn": self.book.get('isbn'),
+                            "cover_url": self.book.get('cover_url'),
+                            "format": format_type,
+                            "nzb_title": best['title'],
+                            "requested_by": self.user_id,
+                            # Asked on the website without Discord: told by phone alert or email instead.
+                            "requested_by_plex_id": getattr(self, 'requester_plex_id', None),
+                            "requested_by_plex_name": getattr(self, 'requester_plex_name', None),
+                        }
+                        # Use the NZB title as the hint filename since SABnzbd
+                        # creates a folder with this name
+                        safe_name = re.sub(r'[<>:"/\\|?*]', '_', best['title'])
+                        hint_path = Path(watch_dir) / f".plexbie_hint_{safe_name}.json"
+                        # The watch dir is on the array via shfs: a 400-byte
+                        # write measured 49 ms at p95, 137 ms max.
+                        await run_blocking(
+                            hint_path.write_text, json.dumps(hint_data, indent=2)
+                        )
+                        logger.info(f"Wrote hint file: {hint_path.name}")
+                except Exception as e:
+                    logger.warning(f"Could not write hint file: {e}")
 
-                    # Write hint file for bookshelf_processor plugin
-                    try:
-                        watch_dir = self.services.config.bookshelf_ebook_watch if sab_cat == 'ebooks' else self.services.config.bookshelf_audiobook_watch
-                        if watch_dir:
-                            hint_data = {
-                                "title": self.book.get('title', ''),
-                                "author": self.book.get('author', ''),
-                                "year": self.book.get('year'),
-                                "isbn": self.book.get('isbn'),
-                                "cover_url": self.book.get('cover_url'),
-                                "format": format_type,
-                                "nzb_title": best['title'],
-                                "requested_by": self.user_id,
-                                # Asked on the website without Discord: told by phone alert or email instead.
-                                "requested_by_plex_id": getattr(self, 'requester_plex_id', None),
-                                "requested_by_plex_name": getattr(self, 'requester_plex_name', None),
-                            }
-                            # Use the NZB title as the hint filename since SABnzbd
-                            # creates a folder with this name
-                            safe_name = re.sub(r'[<>:"/\\|?*]', '_', best['title'])
-                            hint_path = Path(watch_dir) / f".plexbie_hint_{safe_name}.json"
-                            # The watch dir is on the array via shfs: a 400-byte
-                            # write measured 49 ms at p95, 137 ms max.
-                            await run_blocking(
-                                hint_path.write_text, json.dumps(hint_data, indent=2)
-                            )
-                            logger.info(f"Wrote hint file: {hint_path.name}")
-                    except Exception as e:
-                        logger.warning(f"Could not write hint file: {e}")
-
-                    return True
-                else:
-                    logger.error(f"SABnzbd rejected download: {result}")
-                    return False
+                return True
+            else:
+                logger.error(f"SABnzbd rejected download: {result}")
+                return False
 
         except Exception as e:
             logger.error(f"Failed to submit download: {e}", exc_info=True)

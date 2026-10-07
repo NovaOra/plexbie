@@ -258,7 +258,7 @@ class Hydra(_Client):
 
     async def search(self, query: str, categories: Iterable[str], *, limit: int = 100,
                      timeout: float = 90) -> List[Dict[str, Any]]:
-        """Releases for a text search: title, link (a Hydra download link), size, pubDate."""
+        """Releases for a text search: title, link (a Hydra download link), size, pubDate, grabs."""
         body = await self._request("GET", f"{self.config.nzbhydra_url.rstrip('/')}/api", timeout=timeout, params={
             "t": "search", "q": query, "cat": ",".join(categories), "limit": str(limit), "o": "json",
             "apikey": self.config.nzbhydra_api_key})
@@ -267,12 +267,33 @@ class Hydra(_Client):
         items = ((body or {}).get("channel") or {}).get("item") or []
         out = []
         for item in [items] if isinstance(items, dict) else items:
+            if not isinstance(item, dict):
+                continue  # one malformed entry must not cost the others
             enclosure = (item.get("enclosure") or {}).get("@attributes") or {}
             link = enclosure.get("url") or item.get("link")
-            if item.get("title") and link:
-                out.append({"title": item["title"], "link": link, "pubDate": item.get("pubDate"),
-                            "size": int(enclosure.get("length") or 0)})
+            title = str(item.get("title") or "").strip()
+            if title and link:
+                out.append({"title": title, "link": link, "pubDate": item.get("pubDate"),
+                            "size": self._number(enclosure.get("length")), "grabs": self._grabs(item)})
         return out
+
+    @staticmethod
+    def _number(value: Any) -> int:
+        """A newznab count or size, 0 when missing or not a number."""
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def _grabs(cls, item: Dict[str, Any]) -> int:
+        """How often the release was downloaded, from its newznab attributes (0 if not given)."""
+        attrs = item.get("attr") or item.get("newznab:attr") or []
+        for attr in [attrs] if isinstance(attrs, dict) else attrs:
+            fields = (attr.get("@attributes") or attr) if isinstance(attr, dict) else {}
+            if fields.get("name") == "grabs":
+                return cls._number(fields.get("value"))
+        return 0
 
 
 class Tmdb(_Client):
