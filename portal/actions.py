@@ -479,6 +479,10 @@ class Actions:
             return {"ok": False, "message": "Couldn't read the saved cleanup settings, so nothing was scanned. Try again in a moment."}
         if result is None:
             return {"ok": False, "message": "Plex isn't reachable right now, so nothing was scanned."}
+        if result.get("skipped") == "disabled":
+            return {"ok": False, "message": "Cleanup is off, so nothing was scanned. Turn it on first."}
+        if result.get("skipped"):
+            return {"ok": False, "message": "A cleanup scan is already running. Try again when it's done."}
         self.data.cache.drop("cleanup:countdown")
         n, d, would = len(result["notify"]), len(result["deleted"]), result["dry_run"]
         kept = result.get("kept", 0)

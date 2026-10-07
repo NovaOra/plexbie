@@ -238,8 +238,11 @@ who's watching from one place instead of five.
   answer, or has several entries by that name that can't be told apart (or a
   year is missing), the title is kept and tried again at the next daily check.
   Only titles really removed are reported as removed; a manual scan says how
-  many were kept. A title in Plex more than once (a 4K library, overlapping
-  folders) shares one Sonarr/Radarr entry, so it's judged by all its copies
+  many were kept. A manual scan (Discord's panel or Manage → Cleanup) is
+  refused while cleanup is switched off or another scan is running, and
+  switching cleanup off during a scan stops the removals it hasn't reached
+  yet. A title in Plex more than once (a 4K library, overlapping folders) shares one
+  Sonarr/Radarr entry, so it's judged by all its copies
   with the same id, or the same title and year (Plex has no id for some
   copies): while any copy is watched, exempt or in a skipped library, none is
   removed and no warning is sent for it, and a removal waits until every copy

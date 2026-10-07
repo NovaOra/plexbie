@@ -15,8 +15,8 @@ from plugins.media_cleanup.cog import MediaCleanupCog
 
 def _cog(history=None, history_fails=False):
     cog = object.__new__(MediaCleanupCog)
-    cog.config = {"inactivity_days": 90, "notify_days_before": 7, "exempt_items": {}, "dry_run": False,
-                  "exclude_libraries": []}
+    cog.config = {"enabled": True, "inactivity_days": 90, "notify_days_before": 7, "exempt_items": {},
+                  "dry_run": False, "exclude_libraries": []}
     cog._get_recent_request_timestamp = lambda item: None
 
     class H:
@@ -284,9 +284,38 @@ def test_a_scan_says_how_many_titles_were_kept():
         pass
     cog.load_data, cog.enforce_request_monitor_cleanup, cog.send_cleanup_notification = ready, monitor, quiet
     cog._scan_libraries_for_cleanup = lambda: ([], [_doomed(movie)])
+    cog._scan_lock = asyncio.Lock()
     out = asyncio.run(_website(cog).cleanup_scan(ADMIN))
     assert out["ok"] and "0 were removed" in out["message"], out
     assert "1 couldn't be removed and will be tried again at the next check" in out["message"], out
+
+
+def test_switching_cleanup_off_during_a_scan_stops_its_removals():
+    """The off switch was read once, before the library walk that takes minutes;
+    turning cleanup off meanwhile still removed what that walk found."""
+    from test_cleanup_settings_load import ADMIN, _website
+    radarr = Arr("Radarr", [{"id": 7, "title": "Dune", "year": 2021, "tmdbId": 438631}])
+    cog = _removal(radarr)
+    movie = Movie(1, "Dune", 2021, ["tmdb://438631"])
+
+    async def ready():
+        return True
+
+    async def monitor():
+        return {}
+
+    async def quiet(items, kind):
+        pass
+
+    def walk():
+        cog.config["enabled"] = False                 # another admin, mid-scan
+        return [], [_doomed(movie)]
+    cog.load_data, cog.enforce_request_monitor_cleanup, cog.send_cleanup_notification = ready, monitor, quiet
+    cog._scan_libraries_for_cleanup = walk
+    cog._scan_lock = asyncio.Lock()
+    out = asyncio.run(_website(cog).cleanup_scan(ADMIN))
+    assert radarr.deleted == [] and not movie.deleted, "a scan kept removing after cleanup was switched off"
+    assert cog.tracking_data == {} and "0 were removed" in out["message"], out
 
 
 def test_not_in_radarr_but_removed_from_plex_counts_as_deleted():

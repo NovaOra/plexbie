@@ -90,6 +90,8 @@ DEFAULT_CONFIG = {
 SETTINGS_UNREADABLE = ("⚠️ Couldn't read the saved cleanup settings, so nothing was changed. "
                        "Try again in a moment; if it keeps happening, check Plexbie's log.")
 SETTINGS_UNSAVED = "⚠️ Couldn't save the cleanup settings, so nothing was changed. Try again in a moment."
+SCAN_DISABLED = "⚠️ Media cleanup is currently disabled. Enable it first using the ⚙️ Settings button."
+SCAN_BUSY = "⏳ A cleanup scan is already running. Try again when it's done."
 
 
 def _defaults() -> dict:
@@ -180,10 +182,11 @@ class CleanupControlPanel(AdminOnlyView):
 
         try:
             if not self.cog.config["enabled"]:
-                await interaction.followup.send(
-                    "⚠️ Media cleanup is currently disabled. Enable it first using the ⚙️ Settings button.",
-                    ephemeral=True
-                )
+                await interaction.followup.send(SCAN_DISABLED, ephemeral=True)
+                return
+            # Before the "Running" embed; scan_now still makes the call.
+            if self.cog._scan_lock.locked():
+                await interaction.followup.send(SCAN_BUSY, ephemeral=True)
                 return
 
             mode_text = "🔵 **DRY RUN MODE**" if self.cog.config["dry_run"] else "🔴 **LIVE MODE**"
@@ -335,6 +338,9 @@ class MediaCleanupCog(commands.Cog):
         #: What the database last held, so a failed save can put self.config back.
         self._stored = _defaults()
         self._load_lock = asyncio.Lock()
+        #: Held for a whole scan, daily or on demand: two at once would send the same
+        #: removals and post every warning twice.
+        self._scan_lock = asyncio.Lock()
         self.daily_cleanup_check.start()
 
         # Register persistent view
@@ -569,22 +575,29 @@ class MediaCleanupCog(commands.Cog):
         remembered: restarting Plexbie used to run it (and send its warnings)
         every time. A new install has its first check a day after it starts.
         """
-        last = await kv_get(CLEANUP_NAMESPACE, "last_check")
-        now = datetime.now(timezone.utc)
-        if last is None:
-            await kv_set(CLEANUP_NAMESPACE, "last_check", now.isoformat())
-            return
+        # Guarded too: an exception let out of here ends the hourly loop until
+        # Plexbie restarts, so one locked database would stop cleanup for good.
         try:
-            if now - datetime.fromisoformat(last) < CHECK_EVERY:
+            last = await kv_get(CLEANUP_NAMESPACE, "last_check")
+            now = datetime.now(timezone.utc)
+            if last is None:
+                await kv_set(CLEANUP_NAMESPACE, "last_check", now.isoformat())
                 return
-        except (TypeError, ValueError):
-            pass
-        # Before the stamp, so a failed read is retried next hour rather than
-        # losing the day - and never a scan on the defaults' empty exemption list.
-        if not await self.load_data():
-            logger.warning("Skipped the daily cleanup check: the saved cleanup settings couldn't be read; trying again next hour")
+            try:
+                if now - datetime.fromisoformat(last) < CHECK_EVERY:
+                    return
+            except (TypeError, ValueError):
+                pass
+            # Before the stamp, so a failed read is retried next hour rather than
+            # losing the day - and never a scan on the defaults' empty exemption list.
+            if not await self.load_data():
+                logger.warning("Skipped the daily cleanup check: the saved cleanup settings couldn't be read; trying again next hour")
+                return
+            await kv_set(CLEANUP_NAMESPACE, "last_check", now.isoformat())
+        except Exception as e:
+            logger.error(f"Couldn't start the daily cleanup check ({type(e).__name__}: {e}); trying again next hour",
+                         exc_info=True)
             return
-        await kv_set(CLEANUP_NAMESPACE, "last_check", now.isoformat())
 
         if not self.config["enabled"]:
             logger.info("Media cleanup is disabled")
@@ -594,6 +607,16 @@ class MediaCleanupCog(commands.Cog):
             logger.warning("Plex server not available for cleanup check")
             return
 
+        # A scan started from Discord or the website is refused while this one
+        # runs; this one waits for theirs to finish, then checks the switch again.
+        async with self._scan_lock:
+            if not self.config["enabled"]:
+                logger.info("Media cleanup is disabled")
+                return
+            await self._daily_scan()
+
+    async def _daily_scan(self):
+        """The daily check's scan, under the scan lock."""
         try:
             logger.info("Starting daily media cleanup check...")
             monitor_summary = await self.enforce_request_monitor_cleanup()
@@ -612,7 +635,7 @@ class MediaCleanupCog(commands.Cog):
                 self._scan_libraries_for_cleanup
             )
 
-            # Send notifications
+            # Sent each day of the warning window, on purpose: it counts down to the removal.
             if items_to_notify:
                 await self.send_cleanup_notification(items_to_notify, "warning")
 
@@ -915,6 +938,11 @@ class MediaCleanupCog(commands.Cog):
                 media_type = item_data["type"]
                 title = item_data["title"]
 
+                # Read per title, like dry_run: switching cleanup off during a
+                # scan stops the removals it hasn't reached yet.
+                if not self.config["enabled"]:
+                    logger.info(f"Kept {title}: cleanup was switched off during the scan")
+                    continue
                 if self.config["dry_run"]:
                     logger.info(f"[DRY RUN] Would delete: {title} ({media_type})")
                     deleted.append(item_data)
@@ -1234,12 +1262,25 @@ class MediaCleanupCog(commands.Cog):
         Shared by the Discord panel's "Run Scan Now" and the website's Manage page.
         Raises CleanupSettingsUnavailable if the stored settings can't be read: a
         scan on the defaults would ignore every exemption and skipped library.
+        Returns {"skipped": "disabled"} while cleanup is switched off, and
+        {"skipped": "busy"} while another scan (the daily one, or another
+        admin's) is running.
         """
         if not await self.load_data():
             raise CleanupSettingsUnavailable(SETTINGS_UNREADABLE)
+        # Checked here, not only by the callers: a website tab opened before
+        # another admin switched cleanup off still offers Scan.
+        if not self.config["enabled"]:
+            return {"skipped": "disabled"}
         if not self.services.plex_server:
             return None
+        if self._scan_lock.locked():
+            return {"skipped": "busy"}
+        async with self._scan_lock:
+            return await self._scan_now()
 
+    async def _scan_now(self) -> Dict[str, Any]:
+        """scan_now's scan, under the scan lock."""
         monitor_summary = await self.enforce_request_monitor_cleanup()
 
         # Same traversal as the daily loop, off the event loop. This path is
@@ -1271,6 +1312,10 @@ class MediaCleanupCog(commands.Cog):
                 "❌ Plex server not available",
                 ephemeral=True
             )
+            return
+        if result.get("skipped"):
+            await interaction.followup.send(SCAN_DISABLED if result["skipped"] == "disabled" else SCAN_BUSY,
+                                            ephemeral=True)
             return
         items_to_notify, items_to_delete = result["notify"], result["to_delete"]
         deleted_items, monitor_summary = result["deleted"], result["monitor"]

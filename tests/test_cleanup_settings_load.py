@@ -623,3 +623,166 @@ def test_a_failed_save_forgets_the_unsaved_change():
     assert stored == STORED
     assert [content for content, _, _ in toggle.sent] == [cleanup.SETTINGS_UNSAVED]
     assert loaded is False
+
+
+# --- scans: only while cleanup is on, and one at a time ---
+
+MONITOR = {"tv_unmonitored": 0, "tv_reenabled": 0, "movie_unmonitored": 0, "movie_reenabled": 0,
+           "media_tracking_pruned": 0}
+
+
+def _stale_library(cog):
+    """Plex with one long-unwatched film. Returns what scans remove, in order."""
+    removed = []
+
+    async def monitor():
+        return dict(MONITOR)
+
+    async def delete_media_items(items):
+        removed.extend(item["title"] for item in items)
+        return items
+
+    async def quiet(items, kind):
+        pass
+
+    async def nothing():
+        return 0
+    cog.services.plex_server = object()
+    cog.enforce_request_monitor_cleanup, cog.delete_media_items = monitor, delete_media_items
+    cog.send_cleanup_notification, cog.reconcile_seerr = quiet, nothing
+    cog._scan_libraries_for_cleanup = lambda: ([], [{"title": "Old Film", "type": "movie", "rating_key": "5",
+                                                     "days_inactive": 400}])
+    return removed
+
+
+async def _post_scan(actions):
+    """POST /api/admin/cleanup/scan as an admin; (status, answer)."""
+    import json
+    from aiohttp.test_utils import TestClient, TestServer
+    from core.config import Config
+    from portal.app import build_app
+
+    async def who(request):
+        return ADMIN
+    app = build_app(FakeServices(Config()), who=who, readonly=False, dist=None,
+                    image_cache=tempfile.mkdtemp(), actions=actions)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        resp = await client.post("/api/admin/cleanup/scan", data=json.dumps({}),
+                                 headers={"X-Plexbie": "1", "Content-Type": "application/json"})
+        return resp.status, await resp.json()
+    finally:
+        await client.close()
+
+
+def test_no_scan_runs_while_cleanup_is_off():
+    """Only the daily loop and the Discord button checked the off switch. The
+    website's Scan (a stale tab, another admin, a direct call) removed titles from
+    a library whose cleanup had been switched off, in live mode."""
+    async def body(cog):
+        removed = _stale_library(cog)
+        website = await _website(cog).cleanup_scan(ADMIN)
+        status, answer = await _post_scan(_website(cog))
+        ix = _Interaction()
+        await cog.run_cleanup_scan(ix)
+        return removed, website, status, answer, ix
+
+    (removed, website, status, answer, ix), stored = _run(body)      # off, and live
+    assert removed == [], "a scan removed titles while cleanup was switched off"
+    assert website["ok"] is False and website["message"].startswith("Cleanup is off"), website
+    assert (status, answer) == (409, website)
+    assert [(content, ephemeral) for content, _, ephemeral in ix.sent] == [(cleanup.SCAN_DISABLED, True)], ix.sent
+    assert stored == STORED
+
+
+async def _within(call, seconds=1):
+    """`call`'s result, or None if it is still going after `seconds`."""
+    task = asyncio.ensure_future(call)
+    done, _ = await asyncio.wait({task}, timeout=seconds)
+    return task.result() if done else None
+
+
+def test_cleanup_scans_never_overlap():
+    """Nothing kept the daily check, the Discord button and the website's Scan
+    apart: two at once sent Sonarr/Radarr the same removals and posted every
+    warning and "Removed" notice twice."""
+    long_ago = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+
+    async def body(cog):
+        from database.kv_store import kv_set
+        await kv_set(NS, "last_check", long_ago)
+        removed = _stale_library(cog)
+        state, entered, release = {"running": 0, "most": 0, "scans": 0}, asyncio.Event(), asyncio.Event()
+
+        async def monitor():
+            state["scans"] += 1
+            state["running"] += 1
+            state["most"] = max(state["most"], state["running"])
+            entered.set()
+            await release.wait()
+            state["running"] -= 1
+            return dict(MONITOR)
+        cog.enforce_request_monitor_cleanup = monitor
+
+        first = asyncio.create_task(cog.scan_now())
+        await entered.wait()
+        # A second scan waits on the first one's Plex, so give each a moment and move on.
+        website = await _within(_website(cog).cleanup_scan(ADMIN))
+        ix = _Interaction()
+        await _within(cog.run_cleanup_scan(ix))
+        daily = asyncio.create_task(MediaCleanupCog.daily_cleanup_check.coro(cog))
+        await asyncio.sleep(0.05)
+        during = state["scans"]
+        release.set()
+        await first
+        await daily
+        return state, during, removed, website, ix
+
+    (state, during, removed, website, ix), _ = _run(body, stored={**STORED, "enabled": True})
+    assert state["most"] == 1, "two cleanup scans ran at the same time"
+    assert during == 1, "the daily check started while another scan was still running"
+    assert state["scans"] == 2 and removed == ["Old Film", "Old Film"], "the daily check should run once the other is done"
+    assert website and website["ok"] is False and website["message"].startswith("A cleanup scan is already running"), website
+    assert [(content, ephemeral) for content, _, ephemeral in ix.sent] == [(cleanup.SCAN_BUSY, True)], ix.sent
+
+
+def test_run_scan_while_another_runs_says_so_without_announcing_a_scan():
+    """The button posted "Running Cleanup Scan..." first and only then heard the
+    scan had been refused, so the admin was told both."""
+    async def body(cog):
+        _stale_library(cog)
+        ix = _Interaction()
+        async with cog._scan_lock:
+            await _run_scan(cog, ix)
+        return ix
+
+    ix, _ = _run(body, stored={**STORED, "enabled": True})
+    assert [(content, embed, ephemeral) for content, embed, ephemeral in ix.sent] == [(cleanup.SCAN_BUSY, None, True)], ix.sent
+
+
+def test_a_database_error_before_the_daily_check_does_not_stop_it():
+    """A tasks.loop ends for good on an exception its body lets out. Reading or
+    stamping the last check sat outside the handler, so one locked database
+    stopped cleanup until the next restart."""
+    long_ago = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+
+    async def remembered(namespace, key, default=None):
+        return long_ago
+
+    async def never_checked(namespace, key, default=None):
+        return None
+
+    async def unwritable(namespace, key, value):
+        raise RuntimeError("database is locked")
+
+    async def loaded():
+        return True
+
+    for name, kv_get in (("reading the last check", _unreadable), ("stamping a due check", remembered),
+                         ("starting the clock", never_checked)):
+        cog = object.__new__(MediaCleanupCog)
+        cog.load_data, cog.config = loaded, {**DEFAULTS, "enabled": False}
+        with _patched(kv_get=kv_get, kv_set=unwritable), _CaptureLog() as log:
+            asyncio.run(MediaCleanupCog.daily_cleanup_check.coro(cog))     # raising here ends the loop
+        assert any("daily cleanup check" in m and "next hour" in m for m in log.messages), (name, log.messages)
