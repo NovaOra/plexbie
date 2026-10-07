@@ -147,17 +147,20 @@ WINDOW_CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe
 
 def pin_page(params: dict) -> str:
     """The sign-in window: make a plex.tv PIN from this browser, hand it to
-    params["post"], then go to the plex.tv address that answers with."""
+    params["post"], then go to the plex.tv address that answers with. On a
+    failure it shows the server's reason, or, with params["back"] (a whole-page
+    sign-in, no window to close), goes to the page listed for that HTTP status."""
     return _page(
         "<p id=m>Opening Plex…</p>"
-        "<script>(async function(){var p=" + json.dumps(params).replace("</", "<\\/") + ";"
+        "<script>(async function(){var p=" + json.dumps(params).replace("</", "<\\/") + ",d={};"
         "try{var r=await fetch('https://plex.tv/api/v2/pins?strong=true',{method:'POST',headers:{"
         "'Accept':'application/json','X-Plex-Product':p.product,'X-Plex-Client-Identifier':p.client}});"
         "if(!r.ok)throw 0;var pin=await r.json();"
         "var s=await fetch(p.post,{method:'POST',credentials:'same-origin',headers:Object.assign({'Content-Type':'application/json'},p.headers||{}),"
         "body:JSON.stringify({id:pin.id,code:pin.code,next:p.next,invite:p.invite})});"
-        "var d=await s.json();if(!d.url)throw 0;location.replace(d.url);"
-        "}catch(e){document.getElementById('m').textContent='Couldn\\u2019t reach Plex. Close this window and try again.';}})();</script>")
+        "d=await s.json()||{};if(!d.url)throw s.status;location.replace(d.url);"
+        "}catch(e){if(p.back)return location.replace(p.back[e]||p.back[0]);"
+        "document.getElementById('m').textContent=d.error||'Couldn\\u2019t reach Plex. Close this window and try again.';}})();</script>")
 
 
 class Auth:
@@ -187,6 +190,7 @@ class Auth:
         self._owner_id: Optional[str] = None
         self._tasks: Set[asyncio.Task] = set()
         self._pin_locks: Dict[int, asyncio.Lock] = {}
+        self._pin_users: Dict[int, int] = {}     # finishers holding or waiting on each PIN's lock
         self._pins_done: Dict[int, str] = {}
         self.mobile = MobileSessions()           # sign-ins from the Plexbie app (portal/mobile.py)
         from core import notify
@@ -390,20 +394,10 @@ class Auth:
         return flow
 
     async def plex_login(self, request: web.Request) -> web.Response:
-        """Whole-page sign-in: off to plex.tv, back through plex_callback. Kept for
-        browsers without JavaScript; the site itself uses plex_go/plex_check."""
-        if self._pin_limit.over(request):
-            raise web.HTTPFound("/?login=busy")
-        client = secrets.token_hex(16)
-        try:
-            pin = await self._fetch_json("post", "https://plex.tv/api/v2/pins?strong=true", headers=self._plex_headers(client))
-        except Exception as e:
-            logger.warning(f"Plex sign-in could not start: {type(e).__name__}")
-            raise web.HTTPFound("/?login=failed")
-        response = web.HTTPFound(self._plex_auth_url(request, pin["code"], popup=False, client=client))
-        self._set(response, FLOW_COOKIE, self._plex_flow(request, pin["id"], str(pin["code"]), client, request.query.get("next"),
-                                                         bool(request.query.get("invite"))), FLOW_SECONDS, request)
-        raise response
+        """Whole-page sign-in, where the small window can't open: the same first page
+        as plex_go, in this tab, and back through plex_callback rather than polling.
+        The PIN is made by the browser here too (see plex_go); this server never makes one."""
+        return self._pin_window(request, safe_next(request.query.get("next")), bool(request.query.get("invite")), page=True)
 
     async def plex_go(self, request: web.Request) -> web.Response:
         """The sign-in window's first page. It asks plex.tv for a PIN itself, hands
@@ -416,19 +410,32 @@ class Auth:
         opens the Plex app, which never comes back; a page that moves on by
         itself, after the tap, stays in the browser. Plex's forwardUrl redirect
         isn't relied on either: once the PIN is approved, polling notices.
+
+        The address check also stops a plex.tv link forwarded to someone else: when
+        they approve it, plex.tv refuses because the sender's browser made the PIN.
+        So no sign-in here, the app's included, lets this server make the PIN. It
+        can't stop another site's page making a PIN in that person's own browser
+        (plex.tv answers any site), so only they can: by pressing Allow only on a
+        sign-in they started here (README, Security).
         """
         return self._pin_window(request, safe_next(request.query.get("next")), bool(request.query.get("invite")))
 
-    def _pin_window(self, request: web.Request, next_: str, invite: bool, mobile: Optional[dict] = None) -> web.Response:
+    def _pin_window(self, request: web.Request, next_: str, invite: bool, mobile: Optional[dict] = None,
+                    page: bool = False) -> web.Response:
         client = secrets.token_hex(16)
         params = {"client": client, "product": PLEX_PRODUCT, "next": next_, "invite": invite,
                   "post": "/auth/plex/pin", "headers": {"X-Plexbie": "1"}}
+        if page:
+            # No window to close: back to the site, with the banner for what went wrong.
+            params["back"] = {"0": "/?login=failed", "410": "/?login=expired", "429": "/?login=busy"}
         logger.info("Plex sign-in started" + (" from the app" if mobile else ""))
         response = web.Response(content_type="text/html", text=pin_page(params), headers={
             "Cache-Control": "no-store", "Content-Security-Policy": WINDOW_CSP})
         start = {"client": client}
         if mobile:
             start["mobile"] = mobile
+        elif page:
+            start["page"] = True
         self._set(response, START_COOKIE, start, FLOW_SECONDS, request)
         return response
 
@@ -451,9 +458,11 @@ class Auth:
         if not re.fullmatch(r"[A-Za-z0-9]{4,64}", code):
             return web.json_response({"error": "Bad PIN"}, status=400)
         mobile = start.get("mobile") if app_flow(start.get("mobile")) else None
-        # The app's sheet has no site polling behind it: plex.tv's forwardUrl brings it
-        # back to the whole-page callback, which sends it on to the app.
-        response = web.json_response({"url": self._plex_auth_url(request, code, popup=not mobile, client=start["client"])})
+        # The app's sheet and a whole-page sign-in have no site polling behind them:
+        # plex.tv's forwardUrl brings them back to the whole-page callback, which
+        # finishes there (or sends the sheet on to the app).
+        popup = not mobile and not start.get("page")
+        response = web.json_response({"url": self._plex_auth_url(request, code, popup=popup, client=start["client"])})
         flow = self._plex_flow(request, pin_id, code, start["client"], body.get("next"),
                                bool(body.get("invite")) and not mobile)
         if mobile:
@@ -542,20 +551,28 @@ class Auth:
         Once per PIN: the polling tab and the sign-in window can both get here, and
         the first one signs Plexbie out of the Plex account afterwards, which would
         fail the second. The second just gets the first one's answer (the browser
-        already holds the session cookie).
+        already holds the session cookie). A PIN's lock goes once nobody holds or
+        waits on it, so PINs nobody approves leave nothing behind.
         """
         pin = int(flow["pin"])
-        async with self._pin_locks.setdefault(pin, asyncio.Lock()):
-            if pin in self._pins_done:
-                self._clear(response, FLOW_COOKIE)
-                return self._pins_done[pin]
-            target = await self._finish_plex_once(flow, request, response)
-            if target is not None:
-                self._pins_done[pin] = target
-                while len(self._pins_done) > 500:
-                    self._pins_done.pop(next(iter(self._pins_done)))
-                    self._pin_locks.pop(next(iter(self._pin_locks)), None)
-            return target
+        lock = self._pin_locks.setdefault(pin, asyncio.Lock())
+        self._pin_users[pin] = self._pin_users.get(pin, 0) + 1
+        try:
+            async with lock:
+                if pin in self._pins_done:
+                    self._clear(response, FLOW_COOKIE)
+                    return self._pins_done[pin]
+                target = await self._finish_plex_once(flow, request, response)
+                if target is not None:
+                    self._pins_done[pin] = target
+                    while len(self._pins_done) > 500:
+                        self._pins_done.pop(next(iter(self._pins_done)))
+                return target
+        finally:
+            self._pin_users[pin] -= 1
+            if not self._pin_users[pin]:
+                del self._pin_users[pin]
+                self._pin_locks.pop(pin, None)
 
     async def _finish_plex_once(self, flow: dict, request: web.Request, response: web.StreamResponse) -> Optional[str]:
         try:
@@ -673,7 +690,11 @@ class Auth:
     async def mobile_confirm_page(self, request: web.Request) -> web.Response:
         """"Sign in to the Plexbie app as …?" Discord and plex.tv can sign someone in
         without a click (they remember them), and on Android another app could have
-        started this sheet, so the code is only made after a tap here, on this site."""
+        started this sheet, so the code is only made after a tap here, on this site.
+        It is shown to whoever started the sign-in, so it doesn't help when a Plex
+        link was sent to someone else to approve; plex.tv's address check stops a
+        forwarded link, but not another site's page that makes the PIN in their own
+        browser (see plex_go)."""
         pending = self._cookie(request, CONFIRM_COOKIE) or {}
         person, mobile = pending.get("person") or {}, pending.get("mobile")
         headers = {**PRIVATE, "Content-Security-Policy": CONFIRM_CSP}

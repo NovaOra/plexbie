@@ -1,6 +1,7 @@
 # path: tests/test_setup.py
 """The first-start setup page (portal/setup.py)."""
 import asyncio
+import json
 import os
 import pathlib
 import tempfile
@@ -170,9 +171,11 @@ class _FakeHttp:
 
     def __init__(self):
         self.approved = False
+        self.calls = []
 
     def request(self, method, url, **kw):
         http = self
+        self.calls.append((method, url))
 
         class _Resp:
             status = 200
@@ -225,6 +228,7 @@ def test_plex_sign_in_in_a_small_window_is_finished_by_polling():
             page = await (await c.get("/auth/plex/go?next=%2Fapp%2Frequests")).text()
             # The browser makes the PIN (Plex refuses one made from another address).
             assert "https://plex.tv/api/v2/pins?strong=true" in page and "/auth/plex/pin" in page
+            assert '"back"' not in page, "the small window shows what went wrong instead"
             h = {"X-Plexbie": "1"}
             assert (await c.post("/auth/plex/pin", json={"id": 5, "code": "<script>"}, headers=h)).status == 400
             got = await (await c.post("/auth/plex/pin", json={"id": 5, "code": "abcd", "next": "/app/requests"}, headers=h)).json()
@@ -281,6 +285,83 @@ def test_someone_elses_plex_pin_cant_be_finished_from_another_browser():
     no_header, no_window, cross_site, planted, stolen = asyncio.run(go())
     assert no_header == 403 and cross_site == 403 and no_window == 410
     assert planted == 200 and stolen == {"waiting": True}, "the PIN's code doesn't match, so no session"
+
+
+def test_whole_page_plex_sign_in_makes_its_pin_in_the_browser_and_finishes_in_that_tab():
+    """The link without the small window (popup blocked, invite page): the server
+    never makes the PIN, so plex.tv's different-address refusal covers it too."""
+    from aiohttp import web
+    from core.config import Config
+    from helpers import FakeServices
+    from portal.auth import Auth
+    from portal.cache import TTLCache
+
+    async def go():
+        cfg = Config()
+        cfg.web_session_secret = "s" * 32
+        services = FakeServices(cfg)
+        services.http_session = _FakeHttp()
+        auth = Auth(None, services, TTLCache())
+        auth._forget_device = lambda token, client: asyncio.sleep(0)
+        app = web.Application()
+        app.router.add_get("/auth/plex/login", auth.plex_login)
+        app.router.add_post("/auth/plex/pin", auth.plex_pin)
+        app.router.add_get("/auth/plex/callback", auth.plex_callback)
+        c = TestClient(TestServer(app))
+        await c.start_server()
+        try:
+            start = await c.get("/auth/plex/login?next=%2Fapp%2Frequests", allow_redirects=False)
+            assert not services.http_session.calls, "the server asked plex.tv for a PIN itself"
+            page = await start.text()
+            assert start.status == 200 and "https://plex.tv/api/v2/pins?strong=true" in page and "/auth/plex/pin" in page
+            # No window to close when it goes wrong: back to the site, with the banner for why.
+            params = json.loads(page.split("var p=", 1)[1].split(",d={};", 1)[0])
+            assert params["back"] == {"0": "/?login=failed", "410": "/?login=expired", "429": "/?login=busy"}
+            got = await (await c.post("/auth/plex/pin", json={"id": 5, "code": "abcd", "next": "/app/requests"},
+                                      headers={"X-Plexbie": "1"})).json()
+            forward = got["url"].split("#!?", 1)[1]
+            assert "callback" in forward and "popup" not in forward, "plex.tv sends this same tab back"
+            waiting = await c.get("/auth/plex/callback", allow_redirects=False)
+            assert waiting.headers["Location"] == "/?login=cancelled"
+            services.http_session.approved = True
+            done = await c.get("/auth/plex/callback", allow_redirects=False)
+            assert done.status == 302 and done.headers["Location"] == "/app/requests"
+            assert "plexbie_session" in done.cookies
+            again = await c.get("/auth/plex/callback", allow_redirects=False)
+            assert again.headers["Location"] == "/?login=expired"
+            assert not [u for m, u in services.http_session.calls if m == "post"]
+        finally:
+            await c.close()
+    asyncio.run(go())
+
+
+def test_plex_sign_in_locks_are_let_go_once_nobody_waits_on_them():
+    from aiohttp import web
+    from core.config import Config
+    from helpers import FakeServices
+    from portal.auth import Auth
+    from portal.cache import TTLCache
+
+    async def go():
+        cfg = Config()
+        cfg.web_session_secret = "s" * 32
+        auth = Auth(None, FakeServices(cfg), TTLCache())
+        finished = []
+
+        async def once(flow, request, response):
+            await asyncio.sleep(0.01)
+            finished.append(flow["pin"])
+            return "/" if flow.get("approved") else None
+        auth._finish_plex_once = once
+        for pin in range(100):                     # never approved, e.g. made-up PIN numbers
+            assert await auth._finish_plex({"pin": pin}, None, None) is None
+        assert auth._pin_locks == {}, "a PIN nobody approves keeps no lock"
+        # The polling tab and the sign-in window together: one finishes, the other gets its answer.
+        finished.clear()
+        both = await asyncio.gather(*(auth._finish_plex({"pin": 500, "approved": True}, None, web.Response())
+                                      for _ in range(2)))
+        assert both == ["/", "/"] and finished == [500] and auth._pin_locks == {}
+    asyncio.run(go())
 
 
 def test_login_redirects_stay_on_this_site():

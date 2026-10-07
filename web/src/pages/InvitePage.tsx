@@ -73,7 +73,7 @@ export function InvitePage() {
   }
 
   const until = info.expiresAt ? new Date(info.expiresAt).toLocaleDateString(undefined, { month: "long", day: "numeric" }) : null;
-  const signIn = SAMPLE ? "/?as=member&invite=ok" : "/auth/plex/login?next=%2F&invite=1";
+  const sampleSignIn = "/?as=member&invite=ok";
 
   return (
     <div className="shell page invite">
@@ -84,7 +84,7 @@ export function InvitePage() {
           {info.inviter ?? "Someone in the household"} invited you to the household Plex: their films and shows, on any screen.
         </p>
         {SAMPLE ? (
-          <a className="btn btn--plex btn--big invite__go" href={signIn}>
+          <a className="btn btn--plex btn--big invite__go" href={sampleSignIn}>
             <PlayCircle size={22} aria-hidden /> Sign in with Plex
           </a>
         ) : (
@@ -166,9 +166,15 @@ export function InvitePage() {
       </motion.section>
 
       <motion.div className="invite__again" {...rise(0.3)}>
-        <a className="btn btn--plex btn--big invite__go" href={signIn}>
-          <PlayCircle size={22} aria-hidden /> Sign in or sign up with Plex
-        </a>
+        {SAMPLE ? (
+          <a className="btn btn--plex btn--big invite__go" href={sampleSignIn}>
+            <PlayCircle size={22} aria-hidden /> Sign in or sign up with Plex
+          </a>
+        ) : (
+          <PlexSignIn className="btn btn--plex btn--big invite__go" invite>
+            <PlayCircle size={22} aria-hidden /> Sign in or sign up with Plex
+          </PlexSignIn>
+        )}
         <p className="muted invite__privacy">
           You type your password on plex.tv, never here. Plexbie uses your sign-in once, to accept the invite, then signs
           itself out of your Plex account. It keeps only your Plex name and email, to manage your access.

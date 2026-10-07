@@ -900,6 +900,15 @@ docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config
   are left out of Manage → Messages and only noted in the log. Keep Public Bot off.
 - **Never commit `config/.env`.** It is gitignored, along with `config/*.db` and
   `logs/`.
+- **Only press Allow on a Plex sign-in you started yourself.** Every Plex sign-in
+  (website, invite page and app) asks plex.tv for its PIN from the visitor's own
+  browser, never from the server, and plex.tv refuses an approval from a different
+  internet address. So a plex.tv sign-in link someone forwards you signs nobody in,
+  unless you share an internet connection (same Wi-Fi, VPN or mobile carrier). That
+  check can't stop a web page that starts a Plex sign-in in your own browser: Plex
+  offers "Plexbie" to any page that asks, and pressing Allow there can sign that
+  page's owner in as you. Press Allow only right after pressing **Sign in with
+  Plex** on your household's own Plexbie address.
 - `/say` lets an administrator send a message as the bot. Every use is logged
   with the invoking user and target channel. Remove the plugin if you would
   rather not have it.
