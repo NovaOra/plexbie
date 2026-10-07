@@ -151,8 +151,8 @@ def _with_app(scenario, *, closed, person, plex_account_id, discord_id):
     """Runs a reply with the real alerts: APP_PUSH on, Sam's phone registered with the
     app, Expo stood in for. Returns (the answer, the DMs that arrived, what Expo got)."""
     expo = _Expo(lambda m: {"status": "ok", "id": "t"})
-    saved = os.environ.get("APP_PUSH")
-    os.environ["APP_PUSH"] = "expo"
+    saved = {k: os.environ.get(k) for k in ("APP_PUSH", "EXPO_ACCESS_TOKEN")}
+    os.environ["APP_PUSH"], os.environ["EXPO_ACCESS_TOKEN"] = "expo", "test-expo-access-token"
 
     async def with_phone(actions):
         await notify.register_app(TOKEN, "android", plex_account_id=plex_account_id, plex_name=None, discord_id=discord_id)
@@ -161,9 +161,10 @@ def _with_app(scenario, *, closed, person, plex_account_id, discord_id):
         out, dms, _ = _run(with_phone, closed=closed, fallback=None)
     finally:
         expo.close()
-        os.environ.pop("APP_PUSH", None)
-        if saved is not None:
-            os.environ["APP_PUSH"] = saved
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
     return out, dms, expo.sent
 
 

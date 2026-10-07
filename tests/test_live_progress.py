@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import conftest  # noqa: F401
 
 os.environ["APP_PUSH"] = "expo"
+os.environ["EXPO_ACCESS_TOKEN"] = "test-expo-access-token"
 
 from core import live_progress, notify
 from test_app_push import TOKEN, OTHER, _Expo, _db

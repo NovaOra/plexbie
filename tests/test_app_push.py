@@ -15,8 +15,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import conftest  # noqa: F401
 
-# These tests are about sending app alerts, which an install has to turn on (APP_PUSH).
+# These tests are about sending app alerts, which only the install holding the Expo
+# project's token can turn on (APP_PUSH with EXPO_ACCESS_TOKEN).
 os.environ["APP_PUSH"] = "expo"
+os.environ["EXPO_ACCESS_TOKEN"] = "test-expo-access-token"
 
 from core import notify
 
@@ -43,13 +45,14 @@ class _Expo:
     """A stand-in for Expo's push service: records what was sent, answers with tickets."""
 
     def __init__(self, tickets):
-        self.tickets, self.sent = tickets, []
+        self.tickets, self.sent, self.auth = tickets, [], []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 outer.sent.extend(body)
+                outer.auth.append(self.headers.get("Authorization"))
                 out = json.dumps({"data": [outer.tickets(m) for m in body]}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -300,3 +303,103 @@ def test_a_plex_sign_in_name_never_reaches_another_persons_phone():
     attacker, own = _db(body)
     assert attacker == [], "a chosen name must not pick up another person's phone"
     assert len(own) == 1, "Plexbie's own names still resolve"
+
+
+def _env(**values):
+    """Sets these variables (None removes one); returns what to put back."""
+    saved = {k: os.environ.get(k) for k in values}
+    for k, v in values.items():
+        os.environ.pop(k, None)
+        if v is not None:
+            os.environ[k] = v
+    return saved
+
+
+def test_without_the_projects_token_app_alerts_stay_off_and_nothing_reaches_expo():
+    """APP_PUSH=expo alone isn't enough: only the install holding the Expo project's
+    token sends app alerts. Anyone else's would go through the project's account (or be
+    refused once its enhanced push security is on), so nothing is sent at all."""
+    expo = _Expo(lambda m: {"status": "ok", "id": "t"})
+    saved = _env(APP_PUSH="expo", EXPO_ACCESS_TOKEN=None)
+    try:
+        assert notify.app_push_on() is False
+
+        async def body():
+            await notify.register_app(TOKEN, "android", plex_account_id=None, plex_name=None, discord_id="55")
+            return (await notify.push_app_to_discord("55", title="t", body="b"),
+                    await notify.push_app_live(await notify.apps_for(discord_id="55"), {"op": "end", "id": "x", "ts": 1}))
+        sent, live = _db(body)
+        os.environ["EXPO_ACCESS_TOKEN"] = "   "
+        assert notify.app_push_on() is False, "a blank token is no token"
+    finally:
+        _env(**saved)
+        expo.close()
+    assert sent == 0 and live == 0
+    assert expo.sent == [] and expo.auth == [], "no request to Expo without the token"
+
+
+def test_with_the_projects_token_app_alerts_go_out_with_it():
+    expo = _Expo(lambda m: {"status": "ok", "id": "t"})
+    saved = _env(APP_PUSH="expo", EXPO_ACCESS_TOKEN="the-projects-token")
+    try:
+        assert notify.app_push_on() is True
+
+        async def body():
+            await notify.register_app(TOKEN, "android", plex_account_id=None, plex_name=None, discord_id="55")
+            return await notify.push_app_to_discord("55", title="t", body="b")
+        sent = _db(body)
+    finally:
+        _env(**saved)
+        expo.close()
+    assert sent == 1 and expo.auth == ["Bearer the-projects-token"]
+
+
+def test_the_app_is_offered_phone_alerts_only_when_this_install_can_send_them():
+    """/api/mobile's "push" list is what the app goes by: empty, it points members to
+    the website's alerts."""
+    from test_portal import MEMBER, _client
+
+    async def offered():
+        client, _ = _client(MEMBER)
+        await client.start_server()
+        try:
+            return (await (await client.get("/api/mobile")).json())["push"]
+        finally:
+            await client.close()
+    saved = _env(APP_PUSH="expo", EXPO_ACCESS_TOKEN=None)
+    try:
+        without = asyncio.run(offered())
+        os.environ["EXPO_ACCESS_TOKEN"] = "the-projects-token"
+        with_token = asyncio.run(offered())
+        os.environ.pop("APP_PUSH")
+        off = asyncio.run(offered())
+    finally:
+        _env(**saved)
+    assert without == [] and with_token == ["expo"] and off == []
+
+
+def test_app_push_without_the_token_says_so_once_at_start_up_without_printing_it():
+    import logging
+    records = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+    handler = Keep(level=logging.DEBUG)
+    notify.logger.addHandler(handler)
+    saved = _env(APP_PUSH="expo", EXPO_ACCESS_TOKEN=None)
+    try:
+        notify.check_app_push()
+        told = [r.getMessage() for r in records if r.levelno >= logging.WARNING]
+        records.clear()
+        os.environ["EXPO_ACCESS_TOKEN"] = "the-projects-token"
+        notify.check_app_push()
+        os.environ.pop("APP_PUSH")
+        notify.check_app_push()
+        quiet = [r.getMessage() for r in records if r.levelno >= logging.WARNING]
+    finally:
+        notify.logger.removeHandler(handler)
+        _env(**saved)
+    assert len(told) == 1 and "EXPO_ACCESS_TOKEN" in told[0] and "website" in told[0]
+    assert quiet == [], "nothing to say when it's set up, or not asked for"
+    assert not any("the-projects-token" in m for m in told + quiet)

@@ -358,11 +358,23 @@ async def apps_for(*, plex_account_id: Optional[str] = None, plex_name: Optional
     return await _matching(APP_NAMESPACE, plex_account_id=plex_account_id, plex_name=plex_name, discord_id=discord_id)
 
 
+def _expo_token() -> str:
+    return (os.getenv("EXPO_ACCESS_TOKEN") or "").strip()
+
+
 def app_push_on() -> bool:
     """Alerts to the phone app go through the Plexbie project's Expo account (its app is
-    built against it), so they're opt-in: APP_PUSH=expo. Off, the default, the app tells
-    members to use the website's alerts, which every install sends itself."""
-    return (os.getenv("APP_PUSH") or "").strip().lower() == "expo"
+    built against it), so only the install holding that project's token sends them:
+    APP_PUSH=expo and EXPO_ACCESS_TOKEN. Off, the default, the app tells members to use
+    the website's alerts, which every install sends itself."""
+    return (os.getenv("APP_PUSH") or "").strip().lower() == "expo" and bool(_expo_token())
+
+
+def check_app_push() -> None:
+    """At start-up: APP_PUSH=expo without the token sends nothing, so say why (never the value)."""
+    if (os.getenv("APP_PUSH") or "").strip().lower() == "expo" and not _expo_token():
+        logger.warning("APP_PUSH=expo is set without EXPO_ACCESS_TOKEN, so app alerts stay off: they go "
+                       "through the Plexbie project's own Expo account. Members use the website's alerts instead.")
 
 
 async def _push_app(apps: List[tuple], payload: Dict[str, Any], live: Optional[Dict[str, Any]] = None) -> int:
@@ -389,10 +401,8 @@ async def _push_app(apps: List[tuple], payload: Dict[str, Any], live: Optional[D
         } for _, r in apps]
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as http:
-            headers = {"Accept": "application/json"}
             # With Expo's "enhanced push security" on, only a sender holding this token is heard.
-            if os.getenv("EXPO_ACCESS_TOKEN"):
-                headers["Authorization"] = f"Bearer {os.getenv('EXPO_ACCESS_TOKEN')}"
+            headers = {"Accept": "application/json", "Authorization": f"Bearer {_expo_token()}"}
             async with http.post(EXPO_PUSH_URL, json=messages, headers=headers) as resp:
                 answer = await resp.json(content_type=None)
                 if resp.status >= 400:

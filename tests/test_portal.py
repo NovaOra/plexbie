@@ -3242,16 +3242,19 @@ def test_app_alerts_are_off_unless_this_install_opts_in():
     don't send through it; the app then points members to the website's alerts."""
     import os
     from core import notify
-    saved = os.environ.pop("APP_PUSH", None)
+    saved = {k: os.environ.pop(k, None) for k in ("APP_PUSH", "EXPO_ACCESS_TOKEN")}
     try:
         assert not notify.app_push_on()
         assert asyncio.run(notify._push_app([("k", {"token": "ExponentPushToken[x]"})], {"title": "t"})) == 0, "nothing sent"
         os.environ["APP_PUSH"] = "expo"
+        assert not notify.app_push_on(), "only with the project's token"
+        os.environ["EXPO_ACCESS_TOKEN"] = "the-projects-token"
         assert notify.app_push_on()
     finally:
-        os.environ.pop("APP_PUSH", None)
-        if saved is not None:
-            os.environ["APP_PUSH"] = saved
+        for k, v in saved.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
 
 
 # ------------------------------------------------- DMs: the shared inbox

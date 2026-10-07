@@ -496,6 +496,8 @@ async def main():
 
     # Setup logging
     setup_logging()
+    from core import notify
+    notify.check_app_push()
 
     services = None
     offline = 0

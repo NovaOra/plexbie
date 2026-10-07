@@ -798,8 +798,13 @@ with any Plexbie: members type your address when they sign in.
   for the member who turned them on, so they keep arriving; if that member isn't
   signed in there right then, or the send fails, it goes on their next visit. The site added to
   a Home Screen opens at its root; phones that added it earlier keep it as the same app. The
-  app's own alerts go through the Plexbie project's Expo account, so they're off
-  unless you set `APP_PUSH=expo`. The app then points members to the website.
+  app's own alerts go through the Plexbie project's own Expo account, so only the
+  project's own install can send them (`APP_PUSH=expo` with its `EXPO_ACCESS_TOKEN`,
+  and Expo's enhanced push security on; without it, Expo takes app alerts from any
+  sender, token or not). Every other household uses the website's
+  alerts, which work on any phone, including from Safari on a Home Screen; the app
+  points members to them. `APP_PUSH=expo` without the token sends nothing and says so
+  in the log at start-up.
   Logging out of the website turns off that browser's alerts, so a shared computer
   doesn't keep showing the last member's. A browser left signed in until its session ran
   out keeps its alerts for the member who turned them on; anyone else who signs in there
