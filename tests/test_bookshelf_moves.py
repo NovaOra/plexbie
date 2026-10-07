@@ -682,3 +682,86 @@ def test_moves_and_destination_choice_run_off_the_event_loop():
     assert "run_blocking(_read_filing_record" in source
     assert "_place_book(" not in source, "never called on the loop itself"
     assert "failed_moves" not in source
+
+
+# --- what a hint may carry ------------------------------------------------------
+
+def test_a_meta_file_inside_the_download_is_ignored():
+    """Only the hint the bot wrote beside the download counts. A .plexbie_meta.json
+    inside it came with the release and could name any book, cover URL or member."""
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        (source / ".plexbie_meta.json").write_text(json.dumps({
+            "author": "Someone Else", "title": "Planted", "cover_url": "http://127.0.0.1:8080/admin",
+            "requested_by": "666", "requested_by_plex_name": "victim",
+        }))
+        covers = []
+        real_cover = shelf.download_cover
+
+        async def recorded_cover(url, dest, cache_dir=None):
+            covers.append(url)
+            return False
+
+        shelf.download_cover = recorded_cover
+        try:
+            with _recorded_dms() as dms:
+                assert _process(source, lib, _FakeBot()) is True
+        finally:
+            shelf.download_cover = real_cover
+        assert _book_folder(lib).is_dir(), "filed under the bot's own hint"
+        assert not (lib / "Someone Else").exists()
+        assert dms == ["42"], "only the member who asked is told"
+        assert covers == []
+        assert not hint.exists(), "the bot's own hint is the one consumed"
+
+
+def test_hint_fields_of_the_wrong_type_or_size_are_dropped():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / ".plexbie_hint_x.json"
+        path.write_text(json.dumps({
+            "nzb_title": RELEASE, "title": ["not", "text"], "author": "A" * 5000,
+            "series": "Saga", "series_index": '1"/><evil/>', "year": "next spring",
+            "isbn": {"x": 1}, "cover_url": "file:///etc/passwd",
+            "requested_by": "<@everyone>", "requested_by_plex_id": 12.5, "requested_by_plex_name": 7,
+        }))
+        hint = shelf._read_hint(path)
+    assert hint["series"] == "Saga"
+    for key in ("title", "author", "series_index", "year", "isbn", "cover_url",
+                "requested_by", "requested_by_plex_id", "requested_by_plex_name"):
+        assert hint.get(key) is None, f"{key} kept: {hint.get(key)!r}"
+
+
+def test_well_formed_hint_fields_are_kept():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / ".plexbie_hint_x.json"
+        path.write_text(json.dumps({
+            "nzb_title": RELEASE, "title": "The Book", "author": "Ann Author", "year": 2011,
+            "isbn": "9780000000001", "cover_url": "https://covers.openlibrary.org/b/olid/OL1M-M.jpg",
+            "requested_by": 123456789012345678, "requested_by_plex_id": "998877",
+            "requested_by_plex_name": "ann",
+        }))
+        hint = shelf._read_hint(path)
+    assert (hint["title"], hint["author"], hint["year"], hint["isbn"]) == ("The Book", "Ann Author", 2011, "9780000000001")
+    assert hint["cover_url"] == "https://covers.openlibrary.org/b/olid/OL1M-M.jpg"
+    assert hint["requested_by"] == 123456789012345678
+    assert (hint["requested_by_plex_id"], hint["requested_by_plex_name"]) == ("998877", "ann")
+
+
+def test_a_hint_that_is_not_an_object_is_not_used():
+    with tempfile.TemporaryDirectory() as tmp:
+        watch = Path(tmp)
+        (watch / ".plexbie_hint_x.json").write_text(json.dumps([RELEASE]))
+        assert shelf._find_hint_file(watch, RELEASE) is None
+        assert shelf._read_hint(watch / ".plexbie_hint_x.json") is None
+
+
+def test_series_index_is_escaped_in_metadata_opf():
+    import xml.etree.ElementTree as ET
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "metadata.opf"
+        shelf.generate_opf({"title": "T", "author": "A", "series": "S", "series_index": '1"/><x a="'}, path)
+        tree = ET.parse(path)
+    values = [m.get("content") for m in tree.iter("{http://www.idpf.org/2007/opf}meta")
+              if m.get("name") == "calibre:series_index"]
+    assert values == ['1"/><x a="']

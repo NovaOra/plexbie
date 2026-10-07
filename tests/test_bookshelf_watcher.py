@@ -17,6 +17,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urljoin
 
 import conftest  # noqa: F401
 
@@ -290,9 +291,26 @@ def test_expire_runs_even_when_no_items_are_present():
 
 # --- download_cover: the writes moved to a worker thread, the files must still land ---
 
-class _FakeResponse:
+JPEG = b"\xff\xd8\xff\xe0" + b"x" * 5000
+COVER_URL = "https://covers.example/1.jpg"
+
+
+class _FakeContent:
     def __init__(self, body):
         self._body = body
+
+    async def iter_chunked(self, size):
+        for start in range(0, len(self._body), size):
+            yield self._body[start:start + size]
+
+
+class _FakeResponse:
+    def __init__(self, body, status=200, headers=None):
+        self._body = body
+        self.status = status
+        self.headers = headers or {"Content-Type": "image/jpeg"}
+        self.content_length = len(body)
+        self.content = _FakeContent(body)
 
     async def __aenter__(self):
         return self
@@ -301,15 +319,19 @@ class _FakeResponse:
         return False
 
     def raise_for_status(self):
-        pass
+        if self.status >= 400:
+            raise RuntimeError(f"HTTP {self.status}")
 
     async def read(self):
         return self._body
 
 
 class _FakeSession:
-    def __init__(self, body, calls):
-        self._body, self._calls = body, calls
+    """Answers from `pages` (url -> body or response), following redirects the way
+    aiohttp does unless told not to."""
+
+    def __init__(self, pages, calls):
+        self._pages, self._calls = pages, calls
 
     async def __aenter__(self):
         return self
@@ -317,47 +339,233 @@ class _FakeSession:
     async def __aexit__(self, *exc):
         return False
 
-    def get(self, url):
+    def _answer(self, url):
         self._calls.append(url)
-        return _FakeResponse(self._body)
+        page = self._pages.get(url, b"")
+        return page if isinstance(page, _FakeResponse) else _FakeResponse(page)
+
+    def get(self, url, allow_redirects=True, **kwargs):
+        resp = self._answer(url)
+        while allow_redirects and resp.status in (301, 302, 303, 307, 308):
+            url = urljoin(url, resp.headers["Location"])
+            resp = self._answer(url)
+        return resp
 
 
-def _download_cover(body, dest, cache_dir):
+def _redirect(location):
+    return _FakeResponse(b"", status=302, headers={"Location": location})
+
+
+def _download_cover(body, dest, cache_dir, url=COVER_URL, pages=None):
     from plugins.bookshelf_processor import cog as module
 
     calls = []
+    pages = pages if pages is not None else {url: body}
     original = module.aiohttp.ClientSession
-    module.aiohttp.ClientSession = lambda **kw: _FakeSession(body, calls)
+    module.aiohttp.ClientSession = lambda **kw: _FakeSession(pages, calls)
     try:
-        ok = asyncio.run(module.download_cover("https://covers.example/1.jpg", dest, cache_dir))
+        ok = asyncio.run(module.download_cover(url, dest, cache_dir))
     finally:
         module.aiohttp.ClientSession = original
     return ok, calls
 
 
-def test_download_cover_writes_destination_and_cache():
+def _cover_dirs():
     root = _tmpdir()
     cache, dest = root / "cache", root / "lib" / "cover.jpg"
     cache.mkdir()
     dest.parent.mkdir()
-    body = b"\xff\xd8" + b"x" * 5000
-    ok, calls = _download_cover(body, dest, cache)
+    return cache, dest
+
+
+def test_download_cover_writes_destination_and_cache():
+    cache, dest = _cover_dirs()
+    ok, calls = _download_cover(JPEG, dest, cache)
     assert ok and len(calls) == 1
-    assert dest.read_bytes() == body
+    assert dest.read_bytes() == JPEG
     cached = list(cache.iterdir())
-    assert len(cached) == 1 and cached[0].read_bytes() == body
+    assert len(cached) == 1 and cached[0].read_bytes() == JPEG
+    assert [p.name for p in dest.parent.iterdir()] == ["cover.jpg"], "no temporary file left behind"
 
 
 def test_download_cover_copies_from_cache_without_fetching():
-    root = _tmpdir()
-    cache, dest = root / "cache", root / "lib" / "cover.jpg"
-    cache.mkdir()
-    dest.parent.mkdir()
-    body = b"\xff\xd8" + b"y" * 5000
-    _download_cover(body, root / "first.jpg", cache)  # populate the cache
+    cache, dest = _cover_dirs()
+    _download_cover(JPEG, dest.parent.parent / "first.jpg", cache)  # populate the cache
     ok, calls = _download_cover(b"never fetched", dest, cache)
     assert ok and calls == [], "a cache hit must not refetch"
-    assert dest.read_bytes() == body
+    assert dest.read_bytes() == JPEG
+
+
+def test_download_cover_fetches_only_public_http_hosts():
+    for url in ("http://127.0.0.1/cover.jpg", "http://10.0.0.15:8080/api", "http://[::1]/cover.jpg",
+                "http://169.254.169.254/latest/meta-data", "http://192.168.1.1/", "http://100.64.0.1/",
+                "http://\uff11\uff12\uff17.0.0.1/cover.jpg", "http://[fec0::1]/", "http://[::7f00:1]/",
+                "http://[64:ff9b::a00:f]/", "http://[2002:c0a8:101::1]/",
+                "file:///etc/passwd", "ftp://covers.example/1.jpg", "not a url"):
+        cache, dest = _cover_dirs()
+        ok, calls = _download_cover(JPEG, dest, cache, url=url)
+        assert ok is False and calls == [], f"{url} was fetched"
+        assert not dest.exists() and not list(cache.iterdir())
+
+
+def test_ipv6_forms_of_a_private_address_are_not_public():
+    from plugins.bookshelf_processor.cog import _is_public_address
+
+    for host in ("fec0::1", "::7f00:1", "::a00:f", "64:ff9b::7f00:1", "64:ff9b::c0a8:101",
+                 "2002:7f00:1::1", "::ffff:10.0.0.15", "::1", "::"):
+        assert not _is_public_address(host), f"{host} counted as public"
+    for host in ("93.184.215.14", "64:ff9b::5db8:d70e", "2606:4700::1111"):
+        assert _is_public_address(host), f"{host} counted as private"
+
+
+def test_download_cover_does_not_follow_a_redirect_to_a_private_address():
+    cache, dest = _cover_dirs()
+    pages = {COVER_URL: _redirect("http://192.168.1.1/admin"), "http://192.168.1.1/admin": JPEG}
+    ok, calls = _download_cover(None, dest, cache, pages=pages)
+    assert ok is False and calls == [COVER_URL]
+    assert not dest.exists() and not list(cache.iterdir())
+
+
+def test_download_cover_follows_a_redirect_to_a_public_host():
+    cache, dest = _cover_dirs()
+    pages = {COVER_URL: _redirect("/real.jpg"), "https://covers.example/real.jpg": JPEG}
+    ok, calls = _download_cover(None, dest, cache, pages=pages)
+    assert ok and calls == [COVER_URL, "https://covers.example/real.jpg"]
+    assert dest.read_bytes() == JPEG
+
+
+def test_download_cover_refuses_a_name_that_resolves_to_the_lan():
+    """A public-looking name pointing at a private address is caught where it is
+    resolved, which also covers a name that changes between a check and the fetch."""
+    from plugins.bookshelf_processor import cog as module
+
+    class Answers:
+        def __init__(self, *hosts):
+            self.hosts = hosts
+
+        async def resolve(self, host, port=0, family=0):
+            return [{"hostname": host, "host": h, "port": port, "family": family,
+                     "proto": 0, "flags": 0} for h in self.hosts]
+
+        async def close(self):
+            pass
+
+    async def resolve(*hosts):
+        resolver = module._PublicResolver()
+        resolver._resolver = Answers(*hosts)
+        return await resolver.resolve("covers.example", 443)
+
+    for private in (("10.0.0.15",), ("127.0.0.1", "::1"), ("::ffff:192.168.1.1",), ("169.254.169.254",)):
+        try:
+            asyncio.run(resolve(*private))
+        except OSError:
+            pass
+        else:
+            raise AssertionError(f"{private} was accepted")
+    mixed = asyncio.run(resolve("10.0.0.15", "93.184.215.14"))
+    assert [entry["host"] for entry in mixed] == ["93.184.215.14"]
+
+
+def test_download_cover_never_reaches_a_local_server():
+    """End to end through aiohttp: a cover URL naming this host, by address or by
+    name, is never fetched."""
+    from aiohttp import web
+
+    from plugins.bookshelf_processor import cog as module
+
+    hits = []
+
+    async def cover(request):
+        hits.append(request.path)
+        return web.Response(body=JPEG, content_type="image/jpeg")
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/cover.jpg", cover)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        results = []
+        try:
+            for host in ("127.0.0.1", "localhost", "\uff11\uff12\uff17.0.0.1"):
+                cache, dest = _cover_dirs()
+                ok = await module.download_cover(f"http://{host}:{port}/cover.jpg", dest, cache)
+                results.append((host, ok, dest.exists()))
+        finally:
+            await runner.cleanup()
+        return results
+
+    for host, ok, written in asyncio.run(run()):
+        assert ok is False and not written, f"fetched a cover from {host}"
+    assert hits == []
+
+
+def test_download_cover_refuses_content_that_is_not_an_image():
+    page = b"<html>" + b"Image not available " * 300 + b"</html>"
+    for response in (_FakeResponse(page, headers={"Content-Type": "text/html"}),
+                     _FakeResponse(page, headers={"Content-Type": "image/jpeg"}),
+                     _FakeResponse(JPEG, headers={"Content-Type": "text/html; charset=utf-8"})):
+        cache, dest = _cover_dirs()
+        ok, _ = _download_cover(None, dest, cache, pages={COVER_URL: response})
+        assert ok is False
+        assert not dest.exists() and not list(cache.iterdir()), "nothing rejected is written or cached"
+
+
+def test_download_cover_accepts_png_and_webp():
+    png = b"\x89PNG\r\n\x1a\n" + b"p" * 5000
+    webp = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"w" * 5000
+    for body, kind in ((png, "image/png"), (webp, "image/webp")):
+        cache, dest = _cover_dirs()
+        ok, _ = _download_cover(None, dest, cache, pages={COVER_URL: _FakeResponse(body, headers={"Content-Type": kind})})
+        assert ok and dest.read_bytes() == body
+
+
+def test_download_cover_refuses_an_oversized_image():
+    from plugins.bookshelf_processor import cog as module
+
+    saved = getattr(module, "COVER_MAX_BYTES", None)
+    module.COVER_MAX_BYTES = 4000
+    try:
+        cache, dest = _cover_dirs()
+        ok, _ = _download_cover(JPEG, dest, cache)
+        quiet = _FakeResponse(JPEG)
+        quiet.content_length = None  # no Content-Length: the cap applies while reading
+        cache2, dest2 = _cover_dirs()
+        ok2, _ = _download_cover(None, dest2, cache2, pages={COVER_URL: quiet})
+    finally:
+        module.COVER_MAX_BYTES = saved
+    assert ok is False and not dest.exists() and not list(cache.iterdir())
+    assert ok2 is False and not dest2.exists()
+
+
+def test_a_cached_file_that_is_not_an_image_is_fetched_again():
+    import hashlib
+
+    cache, dest = _cover_dirs()
+    (cache / f"{hashlib.md5(COVER_URL.encode()).hexdigest()}.jpg").write_bytes(b"<html>placeholder</html>" * 100)
+    ok, calls = _download_cover(JPEG, dest, cache)
+    assert ok and calls == [COVER_URL]
+    assert dest.read_bytes() == JPEG
+
+
+def test_a_failed_cover_write_leaves_no_partial_file():
+    from plugins.bookshelf_processor import cog as module
+
+    cache, dest = _cover_dirs()
+    real = module.os.replace
+
+    def full_disk(src, dst):
+        raise OSError(28, "No space left on device")
+
+    module.os.replace = full_disk
+    try:
+        ok, _ = _download_cover(JPEG, dest, cache)
+    finally:
+        module.os.replace = real
+    assert ok is False
+    assert list(dest.parent.iterdir()) == [] and list(cache.iterdir()) == []
 
 
 # --- book metadata lookups: what each source's answer becomes ---

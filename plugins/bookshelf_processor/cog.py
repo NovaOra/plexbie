@@ -9,18 +9,24 @@ Ported from the standalone bookshelf-processor Docker container.
 
 import contextlib
 import errno
+import ipaddress
 import json
 import os
 import re
 import shutil
+import socket
 import hashlib
 import zipfile
 from dataclasses import dataclass, field
 from html import escape as html_escape
 from pathlib import Path
 from datetime import datetime
+from urllib.parse import urljoin
 
 import aiohttp
+from aiohttp.abc import AbstractResolver
+from aiohttp.resolver import DefaultResolver
+from yarl import URL
 import discord
 from discord.ext import commands, tasks
 
@@ -77,6 +83,13 @@ TITLE_WORDS = {
 }
 
 API_TIMEOUT = 10
+
+#: Largest cover image accepted. Real covers run to a few MB (the largest seen
+#: was 6.8 MB); anything far beyond that is not a cover.
+COVER_MAX_BYTES = 15 * 1024 * 1024
+
+#: Redirects followed for one cover. Every hop is checked like the first URL.
+COVER_MAX_REDIRECTS = 5
 
 
 # ─── Name Parsing ────────────────────────────────────────────────────────────
@@ -752,6 +765,18 @@ def _best_match(docs: list, author: str, title: str) -> dict | None:
     return None
 
 
+def _write_file_atomically(path: Path, content: bytes) -> None:
+    """Blocking: write through a temporary name in the same folder, so a full
+    disk or a restart never leaves a half-written file under the real name."""
+    tmp = path.with_name(f".{path.name}.tmp")
+    try:
+        tmp.write_bytes(content)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _write_cover(content: bytes, dest: Path, cache_path: Path | None) -> None:
     """Save to cache and destination. Blocking, so call via run_blocking.
 
@@ -760,39 +785,172 @@ def _write_cover(content: bytes, dest: Path, cache_path: Path | None) -> None:
     write, all of it with the event loop stopped when done inline.
     """
     if cache_path:
-        cache_path.write_bytes(content)
-    dest.write_bytes(content)
+        _write_file_atomically(cache_path, content)
+    _write_file_atomically(dest, content)
+
+
+def _cover_from_cache(cache_path: Path, dest: Path) -> bool:
+    """Blocking: copy a cached cover to dest. False when there is none, or the
+    cached file is not an image (a cache written before covers were checked)."""
+    try:
+        content = cache_path.read_bytes()
+    except FileNotFoundError:
+        return False
+    if not _looks_like_image(content):
+        return False
+    _write_file_atomically(dest, content)
+    return True
+
+
+def _looks_like_image(content: bytes) -> bool:
+    """JPEG, PNG or WebP, judged by the first bytes rather than by what the server says."""
+    return (content.startswith(b"\xff\xd8\xff")
+            or content.startswith(b"\x89PNG\r\n\x1a\n")
+            or (content[:4] == b"RIFF" and content[8:12] == b"WEBP"))
+
+
+_SITE_LOCAL_V6 = ipaddress.ip_network("fec0::/10")
+_IPV4_IN_V6 = (ipaddress.ip_network("::/96"), ipaddress.ip_network("64:ff9b::/96"))
+
+
+def _is_public_address(host: str) -> bool:
+    """True for an IP address on the internet; False for the LAN, this host,
+    link-local, shared (CGNAT/Tailscale), reserved and multicast ranges, or a name."""
+    try:
+        ip = ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return False
+    if ip.version == 6:
+        if ip in _SITE_LOCAL_V6:
+            return False
+        # Judge an IPv6 address that carries an IPv4 one (mapped, compatible,
+        # NAT64, 6to4) by the IPv4 address it reaches.
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip.sixtofour:
+            ip = ip.sixtofour
+        elif any(ip in net for net in _IPV4_IN_V6):
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip.is_global and not ip.is_multicast
+
+
+def _cover_url_allowed(url: str) -> bool:
+    """http(s) only, and never an address that is not public. A host given by
+    name is checked when it is resolved (see _PublicResolver)."""
+    try:
+        # The host as aiohttp will connect to it: yarl normalises it first, so
+        # an address written in fullwidth digits is checked as plain 127.0.0.1.
+        parts = URL(url)
+        host = parts.raw_host
+    except (ValueError, TypeError):
+        return False
+    if parts.scheme not in ("http", "https") or not host:
+        return False
+    try:
+        ipaddress.ip_address(host.split("%", 1)[0])
+    except ValueError:
+        return True  # a name
+    return _is_public_address(host)
+
+
+class _PublicResolver(AbstractResolver):
+    """Resolves cover hosts to public addresses only.
+
+    The cover URL comes from book lookups and the request hint. Checking the
+    name here, where the connection is made, also covers a redirect to a name
+    on the LAN and a name that changes address between a check and the fetch.
+    """
+
+    def __init__(self):
+        self._resolver = DefaultResolver()
+
+    async def resolve(self, host, port=0, family=socket.AF_INET):
+        found = await self._resolver.resolve(host, port, family)
+        public = [entry for entry in found if _is_public_address(entry["host"])]
+        if not public:
+            raise OSError(errno.EACCES, f"{host} has no public address")
+        return public
+
+    async def close(self):
+        await self._resolver.close()
+
+
+async def _fetch_cover(session, url: str) -> bytes | None:
+    """The body of a cover image at url, or None (logged) when it is refused.
+
+    Redirects are followed here rather than by aiohttp, so every hop is held to
+    the same rules as the first URL.
+    """
+    for _ in range(COVER_MAX_REDIRECTS + 1):
+        async with session.get(url, allow_redirects=False) as resp:
+            if resp.status in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                target = urljoin(url, location) if location else ""
+                if not _cover_url_allowed(target):
+                    logger.warning(f"Cover redirect refused: {url} -> {location}")
+                    return None
+                url = target
+                continue
+            resp.raise_for_status()
+
+            kind = resp.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if kind and not kind.startswith("image/") and kind != "application/octet-stream":
+                logger.warning(f"Cover is not an image ({kind}), skipping: {url}")
+                return None
+            if resp.content_length and resp.content_length > COVER_MAX_BYTES:
+                logger.warning(f"Cover too large ({resp.content_length} bytes), skipping: {url}")
+                return None
+            content = bytearray()
+            async for chunk in resp.content.iter_chunked(64 * 1024):
+                content += chunk
+                if len(content) > COVER_MAX_BYTES:
+                    logger.warning(f"Cover larger than {COVER_MAX_BYTES} bytes, skipping: {url}")
+                    return None
+            return bytes(content)
+    logger.warning(f"Cover redirected more than {COVER_MAX_REDIRECTS} times, skipping: {url}")
+    return None
 
 
 async def download_cover(url: str, dest: Path, cache_dir: Path | None = None) -> bool:
-    """Download cover art, using cache to avoid redundant fetches."""
+    """Download cover art, using cache to avoid redundant fetches.
+
+    Only public http(s) hosts are fetched, and only a JPEG, PNG or WebP image
+    up to COVER_MAX_BYTES is written (or cached).
+    """
     if dest.exists():
         logger.debug(f"Cover already exists: {dest}")
         return True
 
-    # Check cache
-    if cache_dir:
-        cache_key = hashlib.md5(url.encode()).hexdigest()
-        cache_path = cache_dir / f"{cache_key}.jpg"
-
-        if cache_path.exists():
-            # dest is on the array via shfs: off the loop (see _write_cover).
-            await run_blocking(shutil.copy2, str(cache_path), str(dest))
-            logger.debug(f"Cover from cache: {dest}")
-            return True
-    else:
-        cache_path = None
+    if not _cover_url_allowed(url):
+        logger.warning(f"Cover URL refused (only public http(s) hosts are fetched): {url}")
+        return False
 
     try:
+        # Check cache
+        if cache_dir:
+            cache_key = hashlib.md5(url.encode()).hexdigest()
+            cache_path = cache_dir / f"{cache_key}.jpg"
+
+            # dest is on the array via shfs: off the loop (see _write_cover).
+            if await run_blocking(_cover_from_cache, cache_path, dest):
+                logger.debug(f"Cover from cache: {dest}")
+                return True
+        else:
+            cache_path = None
+
         timeout = aiohttp.ClientTimeout(total=API_TIMEOUT)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
-                resp.raise_for_status()
-                content = await resp.read()
+        connector = aiohttp.TCPConnector(resolver=_PublicResolver())
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            content = await _fetch_cover(session, url)
+        if content is None:
+            return False
 
         # Check that we got an actual image (not a placeholder)
         if len(content) < 1000:
             logger.warning(f"Cover too small ({len(content)} bytes), skipping: {url}")
+            return False
+        if not _looks_like_image(content):
+            logger.warning(f"Cover is not a JPEG, PNG or WebP image, skipping: {url}")
             return False
 
         await run_blocking(_write_cover, content, dest, cache_path)
@@ -813,7 +971,7 @@ def generate_opf(meta: dict, output_path: Path):
     if meta.get("series"):
         series_meta += f'    <meta name="calibre:series" content="{html_escape(meta["series"])}"/>\n'
     if meta.get("series_index") is not None:
-        series_meta += f'    <meta name="calibre:series_index" content="{meta["series_index"]}"/>\n'
+        series_meta += f'    <meta name="calibre:series_index" content="{html_escape(str(meta["series_index"]))}"/>\n'
 
     year_meta = ""
     if meta.get("year"):
@@ -1425,8 +1583,8 @@ def _find_hint_file(watch_dir: Path, item_name: str):
             logger.debug(f"Ignoring unreadable hint {candidate.name}: {e}")
             continue
 
-        nzb_title = payload.get("nzb_title") or ""
-        if nzb_title and _normalise_for_match(nzb_title) == target:
+        nzb_title = payload.get("nzb_title") if isinstance(payload, dict) else None
+        if isinstance(nzb_title, str) and _normalise_for_match(nzb_title) == target:
             matches.append((mtime, candidate))
 
     if not matches:
@@ -1437,6 +1595,75 @@ def _find_hint_file(watch_dir: Path, item_name: str):
     if len(matches) > 1:
         logger.warning(f"{len(matches)} hint files match {item_name}; using the newest")
     return matches[0][1]
+
+
+#: Longest text taken from a hint field. Titles, names and cover URLs from a
+#: book request are far shorter; anything longer did not come from one.
+HINT_TEXT_MAX = 500
+HINT_URL_MAX = 2048
+
+
+def _hint_text(value, limit: int = HINT_TEXT_MAX) -> str | None:
+    """value when it is a non-empty string of at most `limit` characters, else None."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if value and len(value) <= limit else None
+
+
+def _hint_number(value, digits: int):
+    """value when it is a whole number of at most `digits` digits (an int, or a
+    string of digits as some writers store ids), else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 0 <= value < 10 ** digits else None
+    if isinstance(value, str) and re.fullmatch(rf"\d{{1,{digits}}}", value):
+        return value
+    return None
+
+
+def _read_hint(path: Path) -> dict | None:
+    """Blocking: the metadata in a hint file, with every field checked.
+
+    None when the file cannot be read or is not a JSON object. A field of the
+    wrong type or size is dropped (None) rather than trusted: the title and
+    author name the library folder, the cover URL is fetched, and the requester
+    fields decide who is told the book arrived.
+    """
+    try:
+        with open(path) as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError) as e:
+        logger.warning(f"Could not read hint file {path.name}: {e}")
+        return None
+    if not isinstance(payload, dict):
+        logger.warning(f"Ignoring hint file {path.name}: not a JSON object")
+        return None
+
+    cover_url = _hint_text(payload.get("cover_url"), HINT_URL_MAX)
+    if cover_url and not cover_url.lower().startswith(("http://", "https://")):
+        cover_url = None
+    isbn = _hint_text(payload.get("isbn"), 17)
+    if isbn and not re.fullmatch(r"[0-9Xx-]{10,17}", isbn):
+        isbn = None
+    plex_id = payload.get("requested_by_plex_id")
+    if not (isinstance(plex_id, str) and re.fullmatch(r"[\w-]{1,64}", plex_id)):
+        plex_id = _hint_number(plex_id, 20)
+
+    return {
+        "title": _hint_text(payload.get("title")),
+        "author": _hint_text(payload.get("author")),
+        "year": _hint_number(payload.get("year"), 4),
+        "series": _hint_text(payload.get("series")),
+        "series_index": _hint_number(payload.get("series_index"), 4),
+        "cover_url": cover_url,
+        "isbn": isbn,
+        # A Discord user id.
+        "requested_by": _hint_number(payload.get("requested_by"), 20),
+        "requested_by_plex_id": plex_id,
+        "requested_by_plex_name": _hint_text(payload.get("requested_by_plex_name")),
+    }
 
 
 # ─── Main Processing Pipeline ────────────────────────────────────────────────
@@ -1455,7 +1682,8 @@ async def process_item(
     media_type: 'audiobook' or 'ebook'
 
     Metadata priority (file contents first, folder name last):
-      1. Hint file (.plexbie_meta.json) — if present, skip all parsing/extraction
+      1. Hint file (.plexbie_hint_*.json beside the download, written by the
+         book request) — if present, skip all parsing/extraction
       2. Embedded file metadata (M4B/EPUB/MP3 tags, ISBN)
       3. API lookup using embedded data (ISBN exact match, then title+author)
       4. Folder name parsing (only if files contain no metadata)
@@ -1467,40 +1695,34 @@ async def process_item(
     logger.info(f"Processing {media_type}: {source_path.name}")
 
     # ── Check for hint files from Plexbie media_requests ──
-    hint_file = None
     hint_used = False
     hint = None
 
-    # Check 1: .plexbie_meta.json inside the download folder
-    candidate = source_path / ".plexbie_meta.json" if source_path.is_dir() else source_path.parent / ".plexbie_meta.json"
-    if candidate.exists():
-        hint_file = candidate
-
-    # Check 2: .plexbie_hint_<name>.json in the watch directory (written by media_requests cog)
-    if not hint_file:
-        hint_file = await run_blocking(
-            _find_hint_file, source_path.parent, source_path.name
-        )
+    # Only .plexbie_hint_<name>.json in the watch directory, which the
+    # media_requests cog writes. Anything inside the download folder came with
+    # the release and is never taken as a hint.
+    hint_file = await run_blocking(
+        _find_hint_file, source_path.parent, source_path.name
+    )
 
     if hint_file:
-        try:
-            with open(hint_file) as f:
-                hint = json.load(f)
-            logger.info(f"Using hint file metadata: {hint.get('title')} by {hint.get('author')}")
+        hint = await run_blocking(_read_hint, hint_file)
+        if hint is not None:
+            logger.info(f"Using hint file metadata: {hint['title']} by {hint['author']}")
 
             # Use hint data directly — skip all parsing and extraction
             final = {
-                "author": hint.get("author", "Unknown"),
-                "title": hint.get("title", source_path.name),
-                "year": hint.get("year"),
-                "series": hint.get("series"),
-                "series_index": hint.get("series_index"),
-                "cover_url": hint.get("cover_url"),
-                "isbn": hint.get("isbn"),
+                "author": hint["author"] or "Unknown",
+                "title": hint["title"] or source_path.name,
+                "year": hint["year"],
+                "series": hint["series"],
+                "series_index": hint["series_index"],
+                "cover_url": hint["cover_url"],
+                "isbn": hint["isbn"],
             }
             hint_used = True
-        except Exception as e:
-            logger.warning(f"Failed to read hint file, falling back to extraction: {e}")
+        else:
+            logger.warning("Failed to read hint file, falling back to extraction")
 
     # An earlier attempt that did not finish (files that could not be moved back,
     # or a restart part-way through) noted where it was filing this download.

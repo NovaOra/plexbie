@@ -251,6 +251,12 @@ who's watching from one place instead of five.
   its files couldn't all be put back, or Plexbie stopped part-way, and the next
   attempt moves them back and files the book again into the same folder. If you
   delete that download instead, tidy the folder by hand, marker included.
+  Request details (who asked, title, cover) come only from the hidden
+  `.plexbie_hint_*.json` Plexbie writes beside the download when it sends a
+  request; nothing inside a download is taken as request details. Cover art is
+  fetched only from public http(s) hosts, never from an address on your network
+  (redirects included), and only a JPEG, PNG or WebP image of up to 15 MB is
+  saved as `cover.jpg` or cached.
 
 **Housekeeping**
 

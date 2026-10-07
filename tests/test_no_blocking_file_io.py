@@ -61,9 +61,6 @@ KNOWN_SITES = {
     "plugins/new_media_added/cog.py::_send_requester_availability_dm::save_tracking_data()": "2.7 ms per DM",
     "webhooks/radarr_handler.py::_handle_grab::save_tracking_data()": "2.7 ms per grab",
     "webhooks/sonarr_handler.py::_handle_grab::save_tracking_data()": "2.7 ms per grab",
-    # bookshelf hint file, read from the array: 0.23 ms (0.27).
-    "plugins/bookshelf_processor/cog.py::process_item::open": "0.23 ms per book",
-    "plugins/bookshelf_processor/cog.py::process_item::json.load": "0.23 ms per book",
     # watch_tracking small files: watch_streaks.json 912 B.
     "plugins/watch_tracking/cog.py::update_watch_streaks::read_text": "0.22 ms",
     "plugins/watch_tracking/cog.py::update_watch_streaks::write_text": "0.32 ms",
