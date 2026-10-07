@@ -855,6 +855,17 @@ registered in both the global and guild scopes and Discord merges the two. The
 bot clears the global scope on every start, logging
 `removing N stale global command(s)`.
 
+**Cleanup settings that won't load**: if the log keeps saying `The saved cleanup
+settings aren't readable`, a stored cleanup record is damaged. Cleanup then
+changes nothing and skips its daily check rather than fall back to the defaults,
+which would switch it on. The log line says which record isn't an object
+(`config` or `tracking`); delete that one. Without `config`, cleanup starts again
+from the defaults (on, in practice mode), so set it up again on Manage → Cleanup.
+
+```bash
+docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config/plexbie.db'); db.execute(\"DELETE FROM key_value_store WHERE namespace = 'media_cleanup' AND key = 'config'\"); db.commit()"
+```
+
 ---
 
 ## Security

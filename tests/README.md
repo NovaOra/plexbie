@@ -40,6 +40,7 @@ webhook tests bind `127.0.0.1:18099` only for the duration of a test.
 | `test_webhook_e2e.py` | The wrapper and the handlers must compose over real HTTP. Unit tests cannot see that the wrapper reads the body before a handler calls `request.post()` on multipart. |
 | `test_kv_store.py` | No uniqueness on `(namespace, key)`, so `kv_set`'s select-then-insert could write two rows; `kv_get` then raised `MultipleResultsFound` forever and `media_cleanup` silently fell back to defaults, losing its exemption list while still deleting media. |
 | `test_config.py` | `BOT_OWNER_ID=novaora` — a username where a snowflake belonged — was discarded silently by `_int_or_none`, across 25 fields. Six more fields used a bare `int()` that crashed the whole bot on one typo. |
+| `test_cleanup_settings_load.py` | After a restart the cleanup cog held DEFAULT_CONFIG until its first load. `/cleanup config`, the panel's status and Run Scan buttons, and a failed database read all acted on those defaults: a save emptied the exemption list and the skipped libraries and turned a switched-off cleanup back on, and Run Scan went ahead against a stored "off". Every reader now loads first, and nothing is saved until the stored settings have loaded. A failed save puts memory back to what is stored, and a website change refused partway through changes nothing. |
 
 ## Conventions
 

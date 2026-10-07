@@ -38,6 +38,11 @@ logger = get_logger(__name__)
 LIMITS = {"request": (20, 3600), "join": (3, 86400), "admin": (120, 3600), "push_test": (6, 3600), "help": (5, 86400),
           "push": (20, 3600), "lookup": (600, 3600)}
 
+#: What the website shows when the cleanup cog won't touch its settings: it hasn't
+#: been able to read the stored ones, or couldn't store a change.
+CLEANUP_UNREADABLE = "Couldn't read the saved cleanup settings, so nothing was changed. Try again in a moment."
+CLEANUP_UNSAVED = "Couldn't save the cleanup settings, so nothing was changed. Try again in a moment."
+
 
 def _flag(body: dict, key: str) -> bool:
     """A true/false setting, which must be sent as one: bool("false") is True, so a
@@ -47,6 +52,16 @@ def _flag(body: dict, key: str) -> bool:
         raise web.HTTPBadRequest(text=json.dumps({"error": f"{key} must be true or false."}),
                                  content_type="application/json")
     return value
+
+
+def _whole_number(body: dict, key: str) -> int:
+    """A number of days. Text that isn't one is the sender's mistake (400), not a
+    service failure."""
+    try:
+        return int(body[key])
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text=json.dumps({"error": f"{key} must be a whole number."}),
+                                 content_type="application/json")
 
 
 class _WebRequester:
@@ -373,10 +388,15 @@ class Actions:
         cog = self.bot.get_cog("MediaCleanupCog")
         if not cog or not rk.isdigit():
             raise web.HTTPBadRequest(text='{"error":"Cleanup isn\'t available."}', content_type="application/json")
-        await cog.load_data()
+        # The countdown can take a while, so it comes first: nothing may wait between
+        # picking up cog.config and saving it. A failed save elsewhere during that
+        # wait has the next load swap in a new dict, and an exemption added to the old
+        # one would be reported as kept but never stored.
+        clock = await self.data.countdown() if keep else {}
+        if not await cog.load_data():
+            return {"ok": False, "message": CLEANUP_UNREADABLE}
         items = cog.config.setdefault("exempt_items", {})
         if keep:
-            clock = await self.data.countdown()
             info = clock.get(rk) or {}
             items[rk] = {
                 "title": info.get("title") or "Unknown",
@@ -387,7 +407,8 @@ class Actions:
             }
         else:
             items.pop(rk, None)
-        await cog.save_config()
+        if not await cog.save_config():
+            return {"ok": False, "message": CLEANUP_UNSAVED}
         self.data.cache.drop("cleanup:countdown")
         logger.info(f"{self.actor(user)} {'exempted' if keep else 'un-exempted'} {rk} from cleanup on the website")
         return {"ok": True, "message": "Kept permanently." if keep else "No longer kept."}
@@ -402,49 +423,58 @@ class Actions:
         """Change what the Discord cleanup panel and /cleanup config change, with the same limits."""
         self.limit(user["user"]["id"], "admin")
         cog = self._cleanup_cog()
-        await cog.load_data()
-        cfg = cog.config
-        changes = []
+        if not await cog.load_data():
+            return {"ok": False, "message": CLEANUP_UNREADABLE}
+        # Checked in full before cog.config changes: a refusal halfway through would
+        # otherwise leave the earlier fields (live mode, say) in memory, where the
+        # daily scan uses them and the next unrelated save stores them.
+        updates, changes = {}, []
         if "enabled" in body:
-            cfg["enabled"] = _flag(body, "enabled")
-            changes.append(f"cleanup {'on' if cfg['enabled'] else 'off'}")
+            updates["enabled"] = _flag(body, "enabled")
+            changes.append(f"cleanup {'on' if updates['enabled'] else 'off'}")
         if "practice" in body:
-            cfg["dry_run"] = _flag(body, "practice")
-            changes.append("practice mode" if cfg["dry_run"] else "LIVE mode")
+            updates["dry_run"] = _flag(body, "practice")
+            changes.append("practice mode" if updates["dry_run"] else "LIVE mode")
         if "inactivityDays" in body:
-            days = int(body["inactivityDays"])
+            days = _whole_number(body, "inactivityDays")
             if not 30 <= days <= 3650:
                 raise web.HTTPBadRequest(text='{"error":"Keep it between 30 and 3650 days, for safety."}', content_type="application/json")
-            cfg["inactivity_days"] = days
+            updates["inactivity_days"] = days
             changes.append(f"{days} days")
         if "warnDaysBefore" in body:
-            warn = int(body["warnDaysBefore"])
-            if not 1 <= warn < cfg["inactivity_days"]:
+            warn = _whole_number(body, "warnDaysBefore")
+            if not 1 <= warn < updates.get("inactivity_days", cog.config["inactivity_days"]):
                 raise web.HTTPBadRequest(text='{"error":"The warning has to come at least a day before removal."}', content_type="application/json")
-            cfg["notify_days_before"] = warn
+            updates["notify_days_before"] = warn
             changes.append(f"warn {warn} days before")
         if "excludedLibraries" in body:
             libs = body["excludedLibraries"]
             if not isinstance(libs, list) or not all(isinstance(x, str) for x in libs):
                 raise web.HTTPBadRequest(text='{"error":"Unknown libraries."}', content_type="application/json")
-            cfg["exclude_libraries"] = sorted(set(libs))
-            changes.append(f"skipping {', '.join(cfg['exclude_libraries']) or 'nothing'}")
+            updates["exclude_libraries"] = sorted(set(libs))
+            changes.append(f"skipping {', '.join(updates['exclude_libraries']) or 'nothing'}")
         if "channelId" in body:
             cid = body["channelId"]
-            cfg["notification_channel_id"] = int(cid) if cid and str(cid).isdigit() else None
+            updates["notification_channel_id"] = int(cid) if cid and str(cid).isdigit() else None
             changes.append("notification channel")
         if not changes:
             return {"ok": False, "message": "Nothing to change."}
-        await cog.save_config()
+        cog.config.update(updates)
+        if not await cog.save_config():
+            return {"ok": False, "message": CLEANUP_UNSAVED}
         self.data.cache.drop("cleanup:countdown")
         self.data.cache.drop("cleanup:config")
         logger.info(f"{self.actor(user)} changed cleanup settings on the website: {changes}")
         return {"ok": True, "message": "Saved: " + ", ".join(changes) + "."}
 
     async def cleanup_scan(self, user: dict) -> dict:
+        from plugins.media_cleanup.cog import CleanupSettingsUnavailable
         self.limit(user["user"]["id"], "admin")
         cog = self._cleanup_cog()
-        result = await cog.scan_now()
+        try:
+            result = await cog.scan_now()
+        except CleanupSettingsUnavailable:
+            return {"ok": False, "message": "Couldn't read the saved cleanup settings, so nothing was scanned. Try again in a moment."}
         if result is None:
             return {"ok": False, "message": "Plex isn't reachable right now, so nothing was scanned."}
         self.data.cache.drop("cleanup:countdown")

@@ -500,6 +500,7 @@ def test_media_cleanup_runs_once_a_day_not_on_every_restart():
 
     async def load_data():
         ran.append(True)
+        return True
     cog = object.__new__(module.MediaCleanupCog)
     cog.load_data = load_data
     cog.config = {"enabled": False}

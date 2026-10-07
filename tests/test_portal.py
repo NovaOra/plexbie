@@ -390,10 +390,11 @@ def test_cleanup_settings_from_the_website_keep_the_discord_safety_limits():
                   "exclude_libraries": [], "notification_channel_id": None}
 
         async def load_data(self):
-            pass
+            return True
 
         async def save_config(self):
             saved.append(dict(self.config))
+            return True
 
     class Bot:
         def get_cog(self, name):

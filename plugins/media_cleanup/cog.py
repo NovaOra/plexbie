@@ -1,5 +1,7 @@
 # path: plugins/media_cleanup/cog.py
 """Media cleanup plugin - removes unwatched content after 3 months"""
+import asyncio
+import copy
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
@@ -53,6 +55,22 @@ DEFAULT_CONFIG = {
     "notify_days_before": 7,  # Warn 7 days before deletion
 }
 
+#: Told to an admin when the stored settings can't be read. Acting on the defaults
+#: instead would empty the exemption list and switch a disabled cleanup back on.
+SETTINGS_UNREADABLE = ("⚠️ Couldn't read the saved cleanup settings, so nothing was changed. "
+                       "Try again in a moment; if it keeps happening, check Plexbie's log.")
+SETTINGS_UNSAVED = "⚠️ Couldn't save the cleanup settings, so nothing was changed. Try again in a moment."
+
+
+def _defaults() -> dict:
+    """A private copy of DEFAULT_CONFIG. A shallow copy shares its exempt_items and
+    exclude_libraries, so changing the cog's would change the module's defaults."""
+    return copy.deepcopy(DEFAULT_CONFIG)
+
+
+class CleanupSettingsUnavailable(Exception):
+    """scan_now couldn't read the stored settings, so it didn't scan."""
+
 
 class CleanupControlPanel(AdminOnlyView):
     """Interactive control panel for media cleanup.
@@ -69,6 +87,8 @@ class CleanupControlPanel(AdminOnlyView):
     async def status_button(self, interaction: discord.Interaction, button: Button):
         """Show current cleanup status"""
         await interaction.response.defer(ephemeral=True)
+        if not await self.cog.settings_ready(interaction):
+            return
 
         try:
             embed = discord.Embed(
@@ -123,6 +143,10 @@ class CleanupControlPanel(AdminOnlyView):
     async def run_button(self, interaction: discord.Interaction, button: Button):
         """Run cleanup scan immediately"""
         await interaction.response.defer(ephemeral=True)
+        # Before the enabled check: on a cog that hasn't loaded yet, that check
+        # reads the default (on) and would let a scan through a stored "off".
+        if not await self.cog.settings_ready(interaction):
+            return
 
         try:
             if not self.cog.config["enabled"]:
@@ -167,10 +191,13 @@ class CleanupControlPanel(AdminOnlyView):
         # write DEFAULT_CONFIG back over the stored settings (losing exempt_items,
         # exclude_libraries, inactivity_days, ...) whenever this fires before the
         # first successful load.
-        await self.cog.load_data()
+        if not await self.cog.settings_ready(interaction):
+            return
 
         self.cog.config["dry_run"] = not self.cog.config["dry_run"]
-        await self.cog.save_config()
+        if not await self.cog.save_config():
+            await interaction.response.send_message(SETTINGS_UNSAVED, ephemeral=True)
+            return
 
         mode = "🔵 Dry Run (Safe)" if self.cog.config["dry_run"] else "🔴 Live Mode (Deletes Files)"
 
@@ -206,10 +233,13 @@ class CleanupSettingsView(AdminOnlyView):
     async def toggle_enabled(self, interaction: discord.Interaction, button: Button):
         """Toggle cleanup enabled/disabled"""
         # See toggle_dry_run_button: load before mutate-and-save.
-        await self.cog.load_data()
+        if not await self.cog.settings_ready(interaction):
+            return
 
         self.cog.config["enabled"] = not self.cog.config["enabled"]
-        await self.cog.save_config()
+        if not await self.cog.save_config():
+            await interaction.response.send_message(SETTINGS_UNSAVED, ephemeral=True)
+            return
 
         status = "✅ Enabled" if self.cog.config["enabled"] else "❌ Disabled"
         await interaction.response.send_message(
@@ -220,6 +250,8 @@ class CleanupSettingsView(AdminOnlyView):
     @discord.ui.button(label="📅 Set Days (90)", style=discord.ButtonStyle.secondary)
     async def set_days(self, interaction: discord.Interaction, button: Button):
         """Show instructions for setting inactivity days"""
+        if not await self.cog.settings_ready(interaction):
+            return
         embed = discord.Embed(
             title="📅 Set Inactivity Days",
             description=f"Current: **{self.cog.config['inactivity_days']} days**\n\nTo change, use:\n`/cleanup config inactivity_days:<number>`",
@@ -230,6 +262,8 @@ class CleanupSettingsView(AdminOnlyView):
     @discord.ui.button(label="📢 Set Notification Channel", style=discord.ButtonStyle.secondary)
     async def set_channel(self, interaction: discord.Interaction, button: Button):
         """Show instructions for setting notification channel"""
+        if not await self.cog.settings_ready(interaction):
+            return
         current_channel = "Not set"
         if self.cog.config.get("notification_channel_id"):
             channel = interaction.guild.get_channel(self.cog.config["notification_channel_id"])
@@ -265,9 +299,12 @@ class MediaCleanupCog(commands.Cog):
     def __init__(self, bot: commands.Bot, services: BotServices):
         self.bot = bot
         self.services = services
-        self.config = DEFAULT_CONFIG.copy()
+        self.config = _defaults()
         self.tracking_data = {}
         self._data_loaded = False
+        #: What the database last held, so a failed save can put self.config back.
+        self._stored = _defaults()
+        self._load_lock = asyncio.Lock()
         self.daily_cleanup_check.start()
 
         # Register persistent view
@@ -278,35 +315,88 @@ class MediaCleanupCog(commands.Cog):
         self.daily_cleanup_check.cancel()
         # Note: Can't await in cog_unload, data will be saved after each operation
 
-    async def load_data(self):
-        """Load config and tracking data from database"""
+    async def cog_load(self):
+        """Read the saved settings at startup. load_data never raises, so a database
+        hiccup here can't stop the plugin loading; a failure is logged and retried on
+        first use."""
+        await self.load_data()
+
+    async def load_data(self) -> bool:
+        """Load config and tracking data from database. True once they're in memory.
+
+        Never raises: the hourly loop would stop for good, and every caller would
+        need its own handler. Until this returns True, self.config is only the
+        defaults, and nothing may read, change or save it.
+        """
         if self._data_loaded:
-            return
-        try:
-            # Load config
-            saved_config = await kv_get(CLEANUP_NAMESPACE, "config", {})
-            self.config = {**DEFAULT_CONFIG, **saved_config}
+            return True
+        async with self._load_lock:
+            if self._data_loaded:
+                # A concurrent load finished first; keep its result and anything changed since.
+                return True
+            try:
+                saved_config = await kv_get(CLEANUP_NAMESPACE, "config", {})
+                tracking = await kv_get(CLEANUP_NAMESPACE, "tracking", {})
+            except Exception as e:
+                logger.error(f"Couldn't read the saved cleanup settings ({type(e).__name__}: {e}); "
+                             "cleanup settings won't be changed or used until they load", exc_info=True)
+                return False
+            # No row at all is a fresh install, and the defaults really are its
+            # settings. A row that isn't an object is damage: falling back to the
+            # defaults would switch cleanup on and forget every exemption.
+            if not isinstance(saved_config, dict) or not isinstance(tracking, dict):
+                logger.error(f"The saved cleanup settings aren't readable (config is {type(saved_config).__name__}, "
+                             f"tracking is {type(tracking).__name__}); refusing to change or use them until the stored row is fixed")
+                return False
 
-            # Load tracking data
-            self.tracking_data = await kv_get(CLEANUP_NAMESPACE, "tracking", {})
-
-            exempt_items = self.config.get("exempt_items", {})
+            config = {**_defaults(), **saved_config}
+            exempt_items = config.get("exempt_items", {})
             if isinstance(exempt_items, list):
-                self.config["exempt_items"] = {str(item): {"title": "Unknown", "type": "unknown"} for item in exempt_items}
+                config["exempt_items"] = {str(item): {"title": "Unknown", "type": "unknown"} for item in exempt_items}
             elif not isinstance(exempt_items, dict):
-                self.config["exempt_items"] = {}
+                config["exempt_items"] = {}
 
+            # Both together, and only once both reads have succeeded.
+            self.config, self.tracking_data = config, tracking
+            self._stored = copy.deepcopy(config)
             self._data_loaded = True
             logger.info("Loaded media cleanup data from database")
-        except Exception as e:
-            logger.error(f"Error loading cleanup data: {e}")
+            return True
 
-    async def save_config(self):
-        """Save cleanup configuration"""
+    async def save_config(self) -> bool:
+        """Save cleanup configuration. False if it wasn't saved.
+
+        The whole dict is written, so it's refused until the stored settings have
+        loaded: before that self.config is the defaults, and saving would replace
+        the household's settings with them.
+        """
+        if not self._data_loaded:
+            logger.error("Refused to save the cleanup settings: the saved ones haven't been loaded, "
+                         "so saving now would replace them with defaults")
+            return False
         try:
             await kv_set(CLEANUP_NAMESPACE, "config", self.config)
+            self._stored = copy.deepcopy(self.config)
+            return True
         except Exception as e:
-            logger.error(f"Error saving cleanup config: {e}")
+            logger.error(f"Couldn't save the cleanup settings: {e}", exc_info=True)
+            # Put back what's stored, in place, so a scan already running doesn't act
+            # on the change (live mode, say) that never saved. The next reader also
+            # re-reads the database rather than trusting memory.
+            self.config.clear()
+            self.config.update(copy.deepcopy(self._stored))
+            self._data_loaded = False
+            return False
+
+    async def settings_ready(self, interaction: discord.Interaction) -> bool:
+        """Load the saved settings before anything reads or changes them; on failure
+        tell the admin privately and return False."""
+        if await self.load_data():
+            return True
+        logger.warning(f"Refused a cleanup action for {interaction.user}: the saved settings couldn't be read")
+        send = interaction.followup.send if interaction.response.is_done() else interaction.response.send_message
+        await send(SETTINGS_UNREADABLE, ephemeral=True)
+        return False
 
     async def save_tracking_data(self):
         """Save tracking data"""
@@ -459,10 +549,12 @@ class MediaCleanupCog(commands.Cog):
                 return
         except (TypeError, ValueError):
             pass
+        # Before the stamp, so a failed read is retried next hour rather than
+        # losing the day - and never a scan on the defaults' empty exemption list.
+        if not await self.load_data():
+            logger.warning("Skipped the daily cleanup check: the saved cleanup settings couldn't be read; trying again next hour")
+            return
         await kv_set(CLEANUP_NAMESPACE, "last_check", now.isoformat())
-
-        # Ensure data is loaded
-        await self.load_data()
 
         if not self.config["enabled"]:
             logger.info("Media cleanup is disabled")
@@ -1014,8 +1106,11 @@ class MediaCleanupCog(commands.Cog):
         """One scan on demand, as the daily loop does it. None if Plex is unavailable.
 
         Shared by the Discord panel's "Run Scan Now" and the website's Manage page.
+        Raises CleanupSettingsUnavailable if the stored settings can't be read: a
+        scan on the defaults would ignore every exemption and skipped library.
         """
-        await self.load_data()
+        if not await self.load_data():
+            raise CleanupSettingsUnavailable(SETTINGS_UNREADABLE)
         if not self.services.plex_server:
             return None
 
@@ -1106,7 +1201,8 @@ class MediaCleanupCog(commands.Cog):
         if not await require_admin(interaction):
             return
 
-        await self.load_data()
+        if not await self.settings_ready(interaction):
+            return
 
         if not self.services.plex_server:
             await interaction.response.send_message(
@@ -1143,7 +1239,9 @@ class MediaCleanupCog(commands.Cog):
             "added_at": match.get("added_at"),
             "exempted_at": datetime.now(timezone.utc).isoformat(),
         }
-        await self.save_config()
+        if not await self.save_config():
+            await interaction.response.send_message(SETTINGS_UNSAVED, ephemeral=True)
+            return
 
         embed = create_info_embed(
             "Configuration Updated",
@@ -1159,7 +1257,8 @@ class MediaCleanupCog(commands.Cog):
         if not await require_admin(interaction):
             return
 
-        await self.load_data()
+        if not await self.settings_ready(interaction):
+            return
         exempt_items = self.config.setdefault("exempt_items", {})
         query = title.casefold().strip()
         matches = [
@@ -1196,7 +1295,9 @@ class MediaCleanupCog(commands.Cog):
 
         rating_key, data = matches[0]
         exempt_items.pop(rating_key, None)
-        await self.save_config()
+        if not await self.save_config():
+            await interaction.response.send_message(SETTINGS_UNSAVED, ephemeral=True)
+            return
 
         embed = create_info_embed(
             "Configuration Updated",
@@ -1211,7 +1312,8 @@ class MediaCleanupCog(commands.Cog):
         if not await require_admin(interaction):
             return
 
-        await self.load_data()
+        if not await self.settings_ready(interaction):
+            return
         exempt_items = self.config.get("exempt_items", {})
 
         if not exempt_items:
@@ -1249,8 +1351,9 @@ class MediaCleanupCog(commands.Cog):
         if not await require_admin(interaction):
             return
 
-        # Ensure data is loaded
-        await self.load_data()
+        # A panel built on the defaults would show the wrong mode and switch.
+        if not await self.settings_ready(interaction):
+            return
 
         # Create control panel
         view = CleanupControlPanel(self)
@@ -1292,6 +1395,7 @@ class MediaCleanupCog(commands.Cog):
             return
 
         changes = []
+        updates = {}
 
         if inactivity_days is not None:
             if inactivity_days < 30:
@@ -1300,15 +1404,22 @@ class MediaCleanupCog(commands.Cog):
                     ephemeral=True
                 )
                 return
-            self.config["inactivity_days"] = inactivity_days
+            updates["inactivity_days"] = inactivity_days
             changes.append(f"Inactivity Days: {inactivity_days}")
 
         if notification_channel is not None:
-            self.config["notification_channel_id"] = notification_channel.id
+            updates["notification_channel_id"] = notification_channel.id
             changes.append(f"Notification Channel: {notification_channel.mention}")
 
         if changes:
-            await self.save_config()
+            # Only the fields given change; the rest must be the stored settings,
+            # not the defaults a freshly restarted cog starts with.
+            if not await self.settings_ready(interaction):
+                return
+            self.config.update(updates)
+            if not await self.save_config():
+                await interaction.response.send_message(SETTINGS_UNSAVED, ephemeral=True)
+                return
             embed = create_info_embed(
                 "✅ Configuration Updated",
                 "\n".join(f"• {change}" for change in changes)
