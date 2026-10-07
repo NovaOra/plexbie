@@ -1059,6 +1059,15 @@ docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config
   offers "Plexbie" to any page that asks, and pressing Allow there can sign that
   page's owner in as you. Press Allow only right after pressing **Sign in with
   Plex** on your household's own Plexbie address.
+- **Admins hear about every new sign-in as an admin.** Each new website or app
+  session for the owner or an admin (Discord, Plex or the phone app) sends that
+  admin a Discord DM, when they have Discord, and an alert to every admin who
+  turned alerts on in a browser or the app, with the time, how they signed in and
+  roughly the browser or device, but never a token, cookie or address; a member's
+  sign-in tells nobody. Owners without linked Discord hear only through those
+  alerts, so turn them on. To end every website sign-in, change
+  `WEB_SESSION_SECRET` (or delete `config/.web_session_secret`) and restart;
+  phone-app sign-ins aren't tied to it and end after 30 days unused.
 - `/say` lets any Plexbie admin (Discord administrator, `ADMIN_ROLE_ID` holder
   or `BOT_OWNER_ID`) send a message as the bot. It posts with Plexbie's own
   channel access and its `@everyone`/`@here` pings, so an admin-role holder can

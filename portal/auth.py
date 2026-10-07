@@ -72,6 +72,36 @@ OWNER_ID = ("web_sessions", "plex_owner_id")
 #: stands in while plex.tv can't be reached.
 SHARE_LIST = ("web_sessions", "plex_share_list")
 SHARE_LIST_DAYS = 3
+#: What a sign-in alert may say a browser was, found in its User-Agent (first match wins).
+BROWSERS = (("Edg/", "Edge"), ("OPR/", "Opera"), ("FxiOS/", "Firefox"), ("Firefox/", "Firefox"),
+            ("CriOS/", "Chrome"), ("Chrome/", "Chrome"), ("Safari/", "Safari"))
+SYSTEMS = (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("CrOS", "ChromeOS"),
+           ("Windows", "Windows"), ("Macintosh", "Mac"), ("Linux", "Linux"))
+#: The same for the phone app, whose requests name only the phone's HTTP library.
+APP_SYSTEMS = (("okhttp", "an Android phone"), ("Android", "an Android phone"),
+               ("CFNetwork", "an iPhone or iPad"), ("Darwin", "an iPhone or iPad"))
+NOT_YOU = "If this wasn't you, sign out on the website and tell the other admins."
+#: A sign-in whose admin status couldn't be checked (plex.tv or Discord not answering) is
+#: checked once more after this long: past the five minutes the share list is kept.
+RECHECK_SECONDS = 330
+
+
+def rough_device(user_agent: Optional[str]) -> str:
+    """"Firefox on Windows", from a User-Agent: only names from the lists above,
+    never the header itself (the visitor wrote it)."""
+    ua = user_agent or ""
+    browser = next((name for mark, name in BROWSERS if mark in ua), None)
+    system = next((name for mark, name in SYSTEMS if mark in ua), None)
+    if browser and system:
+        return f"{browser} on {system}"
+    return browser or (f"a browser on {system}" if system else "an unknown browser")
+
+
+def rough_app_device(user_agent: Optional[str]) -> str:
+    """"an Android phone", from the app's User-Agent: only names from the list above,
+    never the device name the app sent (whoever finished the sign-in chose it)."""
+    ua = user_agent or ""
+    return next((name for mark, name in APP_SYSTEMS if mark in ua), "an unknown device")
 
 
 # ------------------------------------------------------------- signed values
@@ -362,6 +392,7 @@ class Auth:
         self._clear(response, FLOW_COOKIE)
         self._set(response, SESSION_COOKIE, person, SESSION_DAYS * 86400, request)
         logger.info(f"Web sign-in via Discord: {me.get('username')}")
+        self._tell_of_sign_in(person, "on the website with Discord", rough_device(request.headers.get("User-Agent")))
         raise response
 
     # ------------------------------------------------------- plex sign-in
@@ -619,12 +650,45 @@ class Auth:
         self._background(self._forget_device(token, client))
         self._set(response, SESSION_COOKIE, person, SESSION_DAYS * 86400, request)
         logger.info(f"Web sign-in via Plex: {me.get('username')}")
+        self._tell_of_sign_in(person, "on the website with Plex", rough_device(request.headers.get("User-Agent")))
         return target
 
     def _background(self, coro) -> None:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    def _tell_of_sign_in(self, person: dict, how: str, device: str) -> None:
+        """A new session (website or app): if it's an admin's, tell them by Discord DM
+        and every admin by alert, so a sign-in someone else made in their name doesn't
+        go unseen. Called once where each session is made. In the background: telling
+        never holds up or breaks the sign-in. When, how and roughly from what only:
+        no token, cookie or address."""
+        async def go():
+            try:
+                who = await self.describe(person)
+                if not who.get("admin") and (who.get("accessUnknown") or who.get("inGuild") is False):
+                    await asyncio.sleep(RECHECK_SECONDS)   # couldn't tell yet: an owner's session may only show later
+                    who = await self.describe(person)
+                if not who.get("admin"):
+                    return
+                import discord
+                from core import admin_mirror, notify
+                when = time.strftime("%d %b %Y, %H:%M UTC", time.gmtime())
+                what = discord.utils.escape_mentions(discord.utils.escape_markdown(device))
+                if who.get("discordId"):
+                    try:
+                        await admin_mirror.dm_user_id(self.bot, self.services, who["discordId"], context="new sign-in",
+                                                      content=f"🔐 You signed in to Plexbie {how}, from {what}, {when}.\n{NOT_YOU}")
+                    except Exception as e:          # the admins are still told
+                        logger.info(f"Couldn't DM an admin about their sign-in: {type(e).__name__}")
+                name = str(person.get("name") or "An admin")[:60]
+                notify.alert_admins_soon(self.bot, self.config, title=f"{name} signed in to Plexbie",
+                                         body=f"{how[0].upper()}{how[1:]}, from {device}, {when}. {NOT_YOU}",
+                                         url="/", tag=f"sign-in-{secrets.token_hex(4)}")
+            except Exception as e:
+                logger.info(f"Couldn't tell the admins about a sign-in: {type(e).__name__}")
+        self._background(go())
 
     async def _forget_device(self, token: str, client: str) -> None:
         """Remove Plexbie from the account's authorized devices, which revokes the token."""
@@ -686,6 +750,10 @@ class Auth:
             return web.json_response({"error": UNAVAILABLE}, status=503, headers=PRIVATE)
         if result is None:
             return web.json_response({"error": BAD_CODE}, status=400, headers=PRIVATE)
+        made = self.mobile.lookup(result["token"])
+        if made:
+            via = "Plex" if made.get("via") == "plex" else "Discord"
+            self._tell_of_sign_in(made, f"in the Plexbie app with {via}", rough_app_device(request.headers.get("User-Agent")))
         return web.json_response(result, headers=PRIVATE)
 
     async def mobile_confirm_page(self, request: web.Request) -> web.Response:
