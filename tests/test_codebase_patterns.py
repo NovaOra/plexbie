@@ -107,13 +107,13 @@ def test_public_view_allowlist_has_no_stale_entries():
 
 #: Calls that tell a user something happened.
 NOTIFY_CALLS = ("send_user_dm", "dm_user_id", "_dm_tracked", "_notify_without_discord", "_send_farewell_dm", "_send_manual_removal_dm")
-#: Calls that actually perform the destructive action.
-DESTRUCTIVE_CALLS = ("removeFriend",)
+#: Calls that actually perform the destructive action. These are mostly handed to
+#: run_blocking rather than called, so naming one counts as calling it.
+DESTRUCTIVE_CALLS = ("removeFriend", "_remove_friend")
 
 
-def test_no_notification_precedes_the_destructive_call():
-    """The exact defect fixed twice: DM sent, then removal fails, user misinformed."""
-    offenders = []
+def _removals_and_notices():
+    """(file, function, notify lines, destructive lines) for every function."""
     for rel, text in _source_files():
         tree = ast.parse(text)
         for node in ast.walk(tree):
@@ -121,22 +121,40 @@ def test_no_notification_precedes_the_destructive_call():
                 continue
             notify_lines, destructive_lines = [], []
             for inner in ast.walk(node):
-                if not isinstance(inner, ast.Call):
-                    continue
-                label = getattr(inner.func, "attr", None) or getattr(inner.func, "id", None)
-                if label in NOTIFY_CALLS:
-                    notify_lines.append(inner.lineno)
-                elif label in DESTRUCTIVE_CALLS:
-                    destructive_lines.append(inner.lineno)
-            if notify_lines and destructive_lines:
-                if min(notify_lines) < max(destructive_lines):
-                    offenders.append(f"{rel}:{node.name} (notify at {min(notify_lines)}, "
-                                     f"destructive at {max(destructive_lines)})")
+                if isinstance(inner, ast.Call):
+                    label = getattr(inner.func, "attr", None) or getattr(inner.func, "id", None)
+                    if label in NOTIFY_CALLS:
+                        notify_lines.append(inner.lineno)
+                elif isinstance(inner, (ast.Attribute, ast.Name)):
+                    if (getattr(inner, "attr", None) or getattr(inner, "id", None)) in DESTRUCTIVE_CALLS:
+                        destructive_lines.append(inner.lineno)
+            yield rel, node.name, notify_lines, destructive_lines
+
+
+def test_no_notification_precedes_the_destructive_call():
+    """The exact defect fixed twice: DM sent, then removal fails, user misinformed."""
+    offenders = []
+    for rel, name, notify_lines, destructive_lines in _removals_and_notices():
+        if notify_lines and destructive_lines:
+            if min(notify_lines) < max(destructive_lines):
+                offenders.append(f"{rel}:{name} (notify at {min(notify_lines)}, "
+                                 f"destructive at {max(destructive_lines)})")
 
     assert offenders == [], (
         "a user is told about a removal before it is confirmed; move the "
         "notification after the destructive call: " + str(offenders)
     )
+
+
+def test_the_ordering_check_sees_both_ways_someone_is_removed():
+    """The removals hand removeFriend to run_blocking rather than calling it, so a
+    check that only looked for calls would pass whatever order they ran in."""
+    seen = {(rel, name) for rel, name, notify_lines, destructive_lines in _removals_and_notices()
+            if notify_lines and destructive_lines}
+    for name in ("_remove_inactive_user", "remove_plex_user"):
+        assert ("plugins/user_mgmt/cog.py", name) in seen, (
+            f"{name} tells someone they were removed, but the check found no removal in it"
+        )
 
 
 # --- pattern: embed field values must be bounded ---

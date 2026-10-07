@@ -486,6 +486,45 @@ def test_linking_refuses_a_discord_account_already_linked_elsewhere_and_unlink_k
     assert unlinked and not again and row == (None, "mom")
 
 
+def test_removing_someone_from_the_website_uses_the_same_removal_as_discord():
+    """Manage → People → Remove calls /remove-user's removal, once, as the admin."""
+    calls = []
+
+    class Cog:
+        async def remove_plex_user(self, name, removed_by):
+            calls.append((name, removed_by))
+            if name == "stays":
+                return False, "❌ Error removing user from Plex: (400) bad_request"
+            return True, f"✅ Successfully removed `{name}` from Plex server and tracking database."
+
+    class Bot:
+        def get_cog(self, name):
+            return Cog() if name == "UserMgmtCog" else None
+
+    async def scenario(user, bodies):
+        client, actions = _client(user)
+        actions.bot = Bot()
+        await client.start_server()
+        try:
+            out = []
+            for body in bodies:
+                resp = await client.post("/api/admin/people/remove", headers=OK_HEADERS, data=json.dumps(body))
+                out.append((resp.status, await resp.json()))
+            return out
+        finally:
+            await client.close()
+
+    refused = asyncio.run(scenario(MEMBER, [{"plexName": "mom"}]))
+    assert refused[0][0] == 403 and calls == []
+
+    removed, failed, empty, missing = asyncio.run(scenario(
+        ADMIN, [{"plexName": "mom"}, {"plexName": "stays"}, {"plexName": ""}, {}]))
+    assert removed == (200, {"ok": True, "message": "Successfully removed `mom` from Plex server and tracking database."})
+    assert failed == (409, {"ok": False, "message": "Error removing user from Plex: (400) bad_request"})
+    assert empty[0] == 400 and missing[0] == 400
+    assert calls == [("mom", "Pat"), ("stays", "Pat")]
+
+
 def test_cleanup_settings_from_the_website_keep_the_discord_safety_limits():
     saved = []
 

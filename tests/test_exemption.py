@@ -182,7 +182,8 @@ class _Harness:
     """A UserMgmtCog wired to a real temporary database and fake Tautulli."""
 
     def __init__(self, users, tautulli_rows, aliases=None, credits=None,
-                 tautulli_status=200, plex_owner=None, owner_account_id=None):
+                 tautulli_status=200, plex_owner=None, owner_account_id=None,
+                 removal_works=True):
         self.users = users
         self.tautulli_rows = tautulli_rows
         self.aliases = aliases or {}
@@ -191,6 +192,7 @@ class _Harness:
         self.plex_owner = plex_owner                # the Plex server owner's account name
         self.owner_account_id = owner_account_id    # the owner's Plex account id, as plex.tv said
         self.warning_reaches = True                 # whether a warning gets through by any route
+        self.removal_works = removal_works          # whether Plex agrees to a removal
         self.warned = []
         self.removed = []
         self.exemption_lost = []
@@ -243,7 +245,7 @@ class _Harness:
 
         async def remove(user, plex_user_id):
             harness.removed.append(user.plex_username)
-            return True
+            return harness.removal_works
 
         async def alert(title, text, **kw):
             harness.alerts.append(title)
@@ -641,6 +643,28 @@ def test_a_recent_play_by_anyone_keeps_the_check_running():
     h.run()
     assert h.removed == ["idler"] and h.warned == ["drifter"]
     assert h.alerts == []
+
+
+def test_a_removal_that_went_through_drops_the_row():
+    h = _Harness(
+        users=[_user("idler", 1, 40, warning_sent=True)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700), _u("idler", 10)],
+    )
+    rows = h.run()
+    assert h.removed == ["idler"] and "idler" not in rows
+
+
+def test_a_failed_removal_keeps_the_row_with_todays_numbers():
+    """The row is the only record that a retry is owed, and the next pass reads it."""
+    h = _Harness(
+        users=[_user("idler", 1, 40, warning_sent=True, days_inactive=12)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700), _u("idler", 10)],
+        removal_works=False,
+    )
+    rows = h.run()
+    assert h.removed == ["idler"], "the removal was never tried"
+    assert "idler" in rows, "the row went while they still have Plex access"
+    assert rows["idler"]["days_inactive"] == 40, "the activity figures from this pass were dropped"
 
 
 def test_removing_too_many_at_once_removes_nobody():

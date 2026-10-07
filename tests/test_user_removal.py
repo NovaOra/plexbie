@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 
 import conftest  # noqa: F401
 
-from plexapi.exceptions import NotFound
+from plexapi.exceptions import BadRequest, NotFound
 
 
 class _Friend:
@@ -90,19 +90,23 @@ def _cog(module, account, system_accounts, calls):
     async def farewell(user, stats):
         calls.append(("farewell", user.plex_username))
 
+    async def notice(user, title, body, context):
+        calls.append(("notice", user.plex_username))
+
     cog._get_user_stats = stats
     cog._remove_plex_role = remove_role
     cog._send_manual_removal_dm = manual_dm
     cog._send_farewell_dm = farewell
+    cog._notify_without_discord = notice
     return cog
 
 
-def _remove_by_hand(person, account, system_accounts):
+def _remove_by_hand(person, account, system_accounts, calls=None):
     """Run remove_plex_user against fakes; returns (ok, message, calls)."""
     from core import plex_invites
     from plugins.user_mgmt import cog as module
 
-    calls = []
+    calls = [] if calls is None else calls
 
     class Session:
         async def execute(self, stmt):
@@ -234,10 +238,10 @@ def test_someone_still_shared_with_is_removed_and_told():
 # the daily inactivity removal takes off the account it measured
 # ===================================================================
 
-def _remove_inactive(user, plex_user_id, account):
+def _remove_inactive(user, plex_user_id, account, calls=None):
     from plugins.user_mgmt import cog as module
 
-    calls = []
+    calls = [] if calls is None else calls
     cog = _cog(module, account, [], calls)
     saved = module.owner_account
     module.owner_account = lambda config: account
@@ -288,3 +292,98 @@ def test_without_any_account_id_the_stored_email_is_still_used():
     user = _person(plex_username="river", plex_email="river@example.com", plex_user_id=None)
     removed, _ = _remove_inactive(user, 0, account)
     assert account.removed == [55] and removed is True
+
+
+# ===================================================================
+# nobody is told, and nothing is undone, until Plex has said yes
+# ===================================================================
+
+def _refusing(account, calls):
+    """Plex turning the removal down: the person stays on the share."""
+    def removeFriend(user):
+        calls.append("removeFriend")
+        raise BadRequest("(400) bad_request")
+    account.removeFriend = removeFriend
+
+
+def _logged(account, calls):
+    """The removal itself, logged in order with the DM, role and row changes."""
+    remove = account.removeFriend
+
+    def removeFriend(user):
+        remove(user)
+        calls.append(("removeFriend", user if isinstance(user, str) else user.id))
+    account.removeFriend = removeFriend
+
+
+def test_a_refused_inactivity_removal_keeps_them_and_tells_nobody():
+    """Found by account id, and by stored email when no id is known; with Discord or without."""
+    for account_id, discord_id in ((55, 42), (None, 42), (55, None), (None, None)):
+        calls = []
+        account = _Account([_Friend(55, "river", "river@example.com")])
+        _refusing(account, calls)
+        user = _person(plex_username="river", plex_email="river@example.com",
+                       plex_user_id=account_id, discord_id=discord_id)
+        removed, calls = _remove_inactive(user, account_id or 0, account, calls)
+        assert removed is False, "the row would go while they still have Plex access"
+        assert calls == ["removeFriend"], f"told or changed before Plex agreed: {calls}"
+        assert [f.id for f in account.friends] == [55]
+
+
+def test_an_inactivity_removal_is_announced_only_after_plex_agrees():
+    calls = []
+    account = _Account([_Friend(55, "river", "river@example.com")])
+    _logged(account, calls)
+    user = _person(plex_username="river", plex_email="river@example.com", plex_user_id=55)
+    removed, calls = _remove_inactive(user, 55, account, calls)
+    assert removed is True
+    assert calls == [("removeFriend", 55), ("farewell", "river"), ("role", 42)]
+
+
+def test_someone_without_discord_hears_only_after_plex_agrees():
+    calls = []
+    account = _Account([_Friend(55, "river", "river@example.com")])
+    _logged(account, calls)
+    user = _person(plex_username="river", plex_email="river@example.com", plex_user_id=55, discord_id=None)
+    removed, calls = _remove_inactive(user, 55, account, calls)
+    assert removed is True
+    assert calls == [("removeFriend", 55), ("notice", "river")]
+
+
+def test_without_an_account_id_the_stored_email_names_them_to_plex():
+    """The Plex name differs from the friend's, so only the email finds them."""
+    calls = []
+    account = _Account([_Friend(55, "river.plex", "river@example.com")])
+    _logged(account, calls)
+    user = _person(plex_username="river", plex_email="river@example.com", plex_user_id=None)
+    removed, calls = _remove_inactive(user, 0, account, calls)
+    assert removed is True
+    assert calls == [("removeFriend", "river@example.com"), ("farewell", "river"), ("role", 42)]
+
+
+def test_without_an_account_id_or_email_the_plex_name_is_used():
+    calls = []
+    account = _Account([_Friend(55, "river")])
+    _logged(account, calls)
+    user = _person(plex_username="river", plex_email=None, plex_user_id=None)
+    removed, calls = _remove_inactive(user, 0, account, calls)
+    assert removed is True
+    assert calls == [("removeFriend", "river"), ("farewell", "river"), ("role", 42)]
+
+
+def test_a_refused_removal_by_hand_keeps_them_and_tells_nobody():
+    calls = []
+    account = _Account([_Friend(7, "departed", "departed@example.com")])
+    _refusing(account, calls)
+    ok, message, calls = _remove_by_hand(_person(), account, [_SystemAccount(1, "Owner")], calls)
+    assert not ok and "Error removing" in message
+    assert calls == ["removeFriend"], f"told, unroled or forgotten before Plex agreed: {calls}"
+
+
+def test_a_removal_by_hand_is_announced_only_after_plex_agrees():
+    calls = []
+    account = _Account([_Friend(7, "departed", "departed@example.com")])
+    _logged(account, calls)
+    ok, message, calls = _remove_by_hand(_person(), account, [_SystemAccount(1, "Owner")], calls)
+    assert ok, message
+    assert calls == [("removeFriend", 7), ("removed DM", "departed"), ("role", 42), "delete row"]
