@@ -295,7 +295,44 @@ def test_plex_sign_in_in_a_small_window_is_finished_by_polling():
             page = await c.get("/auth/plex/callback?popup=1", allow_redirects=False)
             assert page.status == 200 and "close" in await page.text()
             # And a stale check after sign-in says done instead of failing.
-            assert (await (await c.get("/auth/plex/check")).json())["done"] is True
+            assert (await (await c.get("/auth/plex/check")).json()) == {"done": True}
+        finally:
+            await c.close()
+    asyncio.run(go())
+
+
+def test_plex_sign_in_finished_by_the_small_window_leaves_the_page_where_it_was():
+    """plex.tv sends the small window back before the page's next check: the check
+    then says done without a place, so the page goes back to where it started
+    rather than to the home page."""
+    from aiohttp import web
+    from core.config import Config
+    from helpers import FakeServices
+    from portal.auth import Auth
+    from portal.cache import TTLCache
+
+    async def go():
+        cfg = Config()
+        cfg.web_session_secret = "s" * 32
+        services = FakeServices(cfg)
+        services.http_session = _FakeHttp()
+        auth = Auth(None, services, TTLCache())
+        auth._forget_device = lambda token, client: asyncio.sleep(0)   # no plex.tv in tests
+        app = web.Application()
+        app.router.add_get("/auth/plex/go", auth.plex_go)
+        app.router.add_post("/auth/plex/pin", auth.plex_pin)
+        app.router.add_get("/auth/plex/check", auth.plex_check)
+        app.router.add_get("/auth/plex/callback", auth.plex_callback)
+        c = TestClient(TestServer(app))
+        await c.start_server()
+        try:
+            await c.get("/auth/plex/go?next=%2Ftitle%2Ftv%2F123")
+            h = {"X-Plexbie": "1"}
+            await c.post("/auth/plex/pin", json={"id": 5, "code": "abcd", "next": "/title/tv/123"}, headers=h)
+            services.http_session.approved = True
+            page = await c.get("/auth/plex/callback?popup=1", allow_redirects=False)
+            assert page.status == 200 and "close" in await page.text()
+            assert (await (await c.get("/auth/plex/check")).json()) == {"done": True}
         finally:
             await c.close()
     asyncio.run(go())

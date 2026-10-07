@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, SAMPLE, api, artUrl, loginUrl, plexSignIn } from "./client";
+import { ApiError, SAMPLE, api, artUrl, loginUrl, plexSignIn, signInReturn } from "./client";
 
 /** A stand-in for the bot's /api: answers every call with `reply` and records what was asked. */
 function serve(reply: () => Response) {
@@ -110,6 +110,19 @@ describe("loginUrl", () => {
   });
 });
 
+describe("signInReturn", () => {
+  it("comes back to the page that asked for a sign-in", () => {
+    expect(signInReturn("/title/tv/123", "")).toBe("/title/tv/123");
+    expect(signInReturn("/search", "?q=moon&type=tv")).toBe("/search?q=moon&type=tv");
+  });
+
+  it("leaves out the last sign-in's notice", () => {
+    expect(signInReturn("/", "?login=failed")).toBe("/");
+    expect(signInReturn("/library", "?login=expired&page=2")).toBe("/library?page=2");
+    expect(signInReturn("/", "?invite=failed")).toBe("/");
+  });
+});
+
 describe("plexSignIn", () => {
   /** A browser with a popup that opens (or is blocked) and a page that can move on. */
   function browser(popup: { close(): void } | null) {
@@ -166,6 +179,56 @@ describe("plexSignIn", () => {
     expect(fetch).toHaveBeenCalledTimes(5);
     expect(status).toHaveBeenLastCalledWith("That PIN expired.");
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("stops a few seconds after the window is closed, checking once more first", async () => {
+    const popup = { close: vi.fn(), closed: false };
+    const { assign } = browser(popup);
+    const fetch = serve(() => json({ done: false }));
+    const status = vi.fn();
+    plexSignIn(click(), "/", false, status);
+    await vi.advanceTimersByTimeAsync(1500 * 2);
+    popup.closed = true;
+    await vi.advanceTimersByTimeAsync(1500 * 4);
+    expect(fetch).toHaveBeenCalledTimes(6);
+    expect(status).toHaveBeenLastCalledWith("Sign-in window closed. Press Sign in with Plex again.");
+    await vi.advanceTimersByTimeAsync(1500 * 10);
+    expect(fetch).toHaveBeenCalledTimes(6);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("still signs in when Plex was approved just as the window closed", async () => {
+    const popup = { close: vi.fn(), closed: true };
+    const { assign } = browser(popup);
+    let checks = 0;
+    serve(() => (++checks < 3 ? json({ done: false }) : json({ done: true, next: "/title/tv/123" })));
+    plexSignIn(click(), "/title/tv/123");
+    await vi.advanceTimersByTimeAsync(1500 * 3);
+    expect(assign).toHaveBeenCalledWith("/title/tv/123");
+  });
+
+  it("goes back to its own page when the window finished the sign-in first", async () => {
+    const { assign } = browser({ close: vi.fn() });
+    serve(() => json({ done: true }));
+    plexSignIn(click(), "/title/tv/123");
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(assign).toHaveBeenCalledWith("/title/tv/123");
+  });
+
+  it("watches one sign-in at a time: pressing again takes over", async () => {
+    browser({ close: vi.fn() });
+    const fetch = serve(() => json({ done: false }));
+    const first = vi.fn();
+    const second = vi.fn();
+    plexSignIn(click(), "/", false, first);
+    await vi.advanceTimersByTimeAsync(1500 * 2);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    plexSignIn(click(), "/", false, second);
+    expect(first).toHaveBeenLastCalledWith("");
+    expect(second).toHaveBeenLastCalledWith("Waiting for Plex…");
+    await vi.advanceTimersByTimeAsync(1500 * 4);
+    expect(fetch).toHaveBeenCalledTimes(6);
+    expect(first).toHaveBeenLastCalledWith("");
   });
 });
 

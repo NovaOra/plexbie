@@ -513,7 +513,8 @@ class Auth:
         flow = self._cookie(request, FLOW_COOKIE) or {}
         if flow.get("via") != "plex" or not flow.get("pin") or not flow.get("client"):
             if self.session(request):
-                return web.json_response({"done": True, "next": "/"})
+                # The small window got there first: the page goes on to where it started.
+                return web.json_response({"done": True})
             return web.json_response({"error": "That sign-in expired. Press Sign in with Plex again."}, status=410)
         response = web.json_response({"waiting": True})
         try:

@@ -615,7 +615,11 @@ so the household can do everything above without Discord:
   the database until the cookie would have expired). While the database can't be
   read or written, logging out says it couldn't (you stay signed in until a try
   succeeds), and a cookie the list can't be checked for gets "try again in a
-  moment" rather than being let in.
+  moment" rather than being let in. A member link opened while signed out (a
+  title shared in Discord, say) shows the sign-in, and signing in returns to it.
+  Sign in with Plex opens a small Plex window and waits for it; closing that
+  window ends the wait a few seconds later, and pressing the button again starts
+  over.
 - **Members:** request films, TV and books through the same admin approval
   cards as `/request`, follow each request with live Sonarr/Radarr/SABnzbd
   progress, see what arrived and what's leaving under the cleanup countdown,

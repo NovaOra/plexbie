@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { PlayCircle } from "../components/icons";
-import { loginUrl } from "../api/client";
+import { loginUrl, signInReturn } from "../api/client";
 import { EASE_OUT, Journey, useRise } from "../components/motion";
 import { InviteOutcome } from "./InvitePage";
 import { DiscordMark, useTitle } from "../components/ui";
@@ -53,6 +53,8 @@ export function Landing() {
   useTitle("Log in");
   const reduced = useReducedMotion();
   const rise = useRise(12, 0.45);
+  const { pathname, search } = useLocation();
+  const next = signInReturn(pathname, search);
 
   return (
     <div className="shell landing landing--private">
@@ -66,10 +68,10 @@ export function Landing() {
           <LoginNotice />
           <InviteOutcome />
           <motion.div {...rise(0.3)} className="landing__actions landing__signin">
-            <a className="btn btn--primary btn--discord" href={loginUrl("/", "discord")}>
+            <a className="btn btn--primary btn--discord" href={loginUrl(next, "discord")}>
               <DiscordMark /> Log in with Discord
             </a>
-            <PlexSignIn className="btn btn--plex">
+            <PlexSignIn className="btn btn--plex" next={next}>
               <PlayCircle size={20} aria-hidden /> Sign in with Plex
             </PlexSignIn>
           </motion.div>

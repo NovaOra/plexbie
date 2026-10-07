@@ -208,6 +208,20 @@ export const api = {
 export const loginUrl = (next = "/", via: "discord" | "plex" = "discord") =>
   SAMPLE ? `/?as=member` : `/auth/${via}/login?${new URLSearchParams({ next })}`;
 
+/** Where a sign-in started on this page comes back to: the page itself (a member
+ *  link opened while signed out), without the last sign-in's or invite's notice
+ *  (?login=…, ?invite=…). */
+export function signInReturn(pathname: string, search: string) {
+  const q = new URLSearchParams(search);
+  q.delete("login");
+  q.delete("invite");
+  const rest = q.toString();
+  return rest ? `${pathname}?${rest}` : pathname;
+}
+
+/** The Plex sign-in being watched: pressing Sign in with Plex again takes over. */
+let plexWatch: { stop(): void } | null = null;
+
 /**
  * "Sign in with Plex" in a small window, watched from here. Plex's own redirect
  * back isn't relied on: on phones the plex.tv link often opens the Plex app, which
@@ -224,12 +238,17 @@ export function plexSignIn(e: { preventDefault(): void }, next = "/", invite = f
   const win = window.open(`/auth/plex/go?${q}`, "plexbie-plex", "width=520,height=720");
   if (!win) return; // blocked: let the link do a whole-page sign-in instead
   e.preventDefault();
+  plexWatch?.stop();
+  const watch = new AbortController();
+  plexWatch = { stop: () => { watch.abort(); onStatus?.(""); } };
   onStatus?.("Waiting for Plex…");
   (async () => {
     try {
+      let closedFor = 0;
       for (let i = 0; i < 240; i++) {
         await new Promise((ok) => setTimeout(ok, 1500));
-        const c = await fetch("/auth/plex/check", { credentials: "same-origin", cache: "no-store" });
+        if (watch.signal.aborted) return;
+        const c = await fetch("/auth/plex/check", { credentials: "same-origin", cache: "no-store", signal: watch.signal });
         const got = await c.json().catch(() => ({}));
         if (got.done) {
           try { win.close(); } catch { /* already closed */ }
@@ -237,9 +256,13 @@ export function plexSignIn(e: { preventDefault(): void }, next = "/", invite = f
           return;
         }
         if (!c.ok && i > 3) throw new Error(got.error || "That sign-in didn’t work.");
+        // Closed without finishing. A few more checks (about 5 s) first: Plex may
+        // have been approved just as it closed, or in the Plex app on a phone.
+        if (win.closed && ++closedFor > 3) throw new Error("Sign-in window closed. Press Sign in with Plex again.");
       }
       throw new Error("That took too long. Press Sign in with Plex again.");
     } catch (err) {
+      if (watch.signal.aborted) return;
       onStatus?.(err instanceof Error ? err.message : "That sign-in didn’t work.");
     }
   })();
