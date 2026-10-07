@@ -16,6 +16,7 @@ import pathlib
 import sqlite3
 import tempfile
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import conftest  # noqa: F401
 
@@ -181,16 +182,20 @@ class _Harness:
     """A UserMgmtCog wired to a real temporary database and fake Tautulli."""
 
     def __init__(self, users, tautulli_rows, aliases=None, credits=None,
-                 tautulli_status=200):
+                 tautulli_status=200, plex_owner=None, owner_account_id=None):
         self.users = users
         self.tautulli_rows = tautulli_rows
         self.aliases = aliases or {}
         self.credits = credits or {}
         self.tautulli_status = tautulli_status
+        self.plex_owner = plex_owner                # the Plex server owner's account name
+        self.owner_account_id = owner_account_id    # the owner's Plex account id, as plex.tv said
+        self.warning_reaches = True                 # whether a warning gets through by any route
         self.warned = []
         self.removed = []
         self.exemption_lost = []
         self.alerts = []
+        self.alert_texts = []                       # (admin channel text, phone alert text)
         self.db = str(pathlib.Path(tempfile.mkdtemp()) / "exempt.db")
 
     def _make_cog(self):
@@ -215,9 +220,14 @@ class _Harness:
             inactivity_warning_days = 25
             inactivity_removal_days = 30
 
+        class FakePlex:
+            def systemAccounts(self):
+                return [SimpleNamespace(id=0, name=""), SimpleNamespace(id=1, name=harness.plex_owner)]
+
         class FakeServices:
             config = FakeConfig()
             tautulli = FakeTautulli()
+            plex_server = FakePlex() if harness.plex_owner else None
 
         cog = object.__new__(module.UserMgmtCog)
         cog.services = FakeServices()
@@ -226,6 +236,7 @@ class _Harness:
 
         async def warn(user):
             harness.warned.append(user.plex_username)
+            return harness.warning_reaches
 
         async def lost(user):
             harness.exemption_lost.append(user.plex_username)
@@ -236,6 +247,7 @@ class _Harness:
 
         async def alert(title, text, **kw):
             harness.alerts.append(title)
+            harness.alert_texts.append((text, kw.get("push")))
 
         cog._send_warning_dm = warn
         cog._send_exemption_lost_dm = lost
@@ -243,7 +255,8 @@ class _Harness:
         cog._alert_admins = alert
         return module, cog
 
-    def run(self):
+    def run(self, seed=True):
+        """One daily pass. seed=False runs another pass over the rows already saved."""
         import database.session as session_module
         from plugins.user_mgmt.models import PlexUser
         from plugins.watch_party.models import WatchPartyCredit
@@ -254,6 +267,14 @@ class _Harness:
             if session_module.engine is not None:
                 await session_module.engine.dispose()
             await session_module.init_database(f"sqlite:///{self.db}")
+            if not seed:
+                await module.UserMgmtCog.check_inactive_users.coro(cog)
+                await session_module.engine.dispose()
+                return
+            if self.owner_account_id:
+                from database.kv_store import kv_set
+                from portal.auth import OWNER_ID
+                await kv_set(*OWNER_ID, self.owner_account_id)
             async with session_module.get_session() as session:
                 for spec in self.users:
                     session.add(PlexUser(**spec))
@@ -398,6 +419,73 @@ def test_the_owner_is_exempt_regardless_of_rank():
     rows = h.run()
     assert h.removed == [] and h.warned == []
     assert rows["owner"]["is_top_watcher"] == 1
+
+
+def test_the_plex_owner_is_exempt_without_a_linked_discord_account():
+    """The owner's row needn't carry BOT_OWNER_ID: nobody linked it, or someone else set the bot up."""
+    h = _Harness(
+        users=[_user("plexowner", None, 400, warning_sent=True)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700), _u("plexowner", 1)],
+        plex_owner="PlexOwner",
+    )
+    h.run()
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
+
+
+def test_the_plex_owner_is_found_by_account_id_too():
+    """Tautulli and Plexbie can call the owner something else than their Plex account name."""
+    row = _user("Server Owner", None, 400, warning_sent=True, plex_user_id=777)
+    h = _Harness(
+        users=[row, _user("idler", 2, 40, warning_sent=True)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700),
+                       _u("owner-alias", 1, user_id=777), _u("idler", 10)],
+        owner_account_id="777",
+    )
+    h.run()
+    assert h.removed == ["idler"], f"removed={h.removed} warned={h.warned}"
+
+
+def test_the_plex_owner_stays_exempt_while_plex_is_unreachable():
+    """Once found, the owner is remembered: a pass that can't ask Plex mustn't tell them
+    they're out of the top three, or restart their clock."""
+    h = _Harness(
+        users=[_user("plexowner", None, 400)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700), _u("plexowner", 1)],
+        plex_owner="PlexOwner",
+    )
+    h.run()
+    h.plex_owner = None
+    rows = h.run(seed=False)
+    assert h.exemption_lost == [] and h.warned == [] and h.removed == []
+    assert rows["plexowner"]["is_top_watcher"] == 1
+
+
+def test_the_plex_owner_is_found_through_plex_tv():
+    """plex.tv names the owner's account on every pass, with no website sign-in needed.
+    Plexbie and Tautulli call them something else, so only the account id ties them."""
+    import core.plex_account as plex_account
+
+    class SignedIn(_Harness):
+        def _make_cog(self):
+            module, cog = super()._make_cog()
+            cog.services.config.plex_token = "owner-token"
+            return module, cog
+
+    def owner_only(config):
+        return [{"id": 777, "title": "realowner", "username": "realowner", "email": "",
+                 "owner": True, "thumb": None}]
+
+    h = SignedIn(
+        users=[_user("Server Owner", None, 400, warning_sent=True)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700), _u("Server Owner", 1, user_id=777)],
+    )
+    saved = plex_account.shared_accounts
+    plex_account.shared_accounts = owner_only
+    try:
+        h.run()
+    finally:
+        plex_account.shared_accounts = saved
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
 
 
 def test_no_standings_means_nobody_s_clock_starts():
@@ -630,3 +718,163 @@ def test_people_already_off_the_share_do_not_count_towards_the_limit():
         module._fetch_shared_account_ids, plex_account.shared_accounts = saved
     assert h.alerts == [], "three real removals are within the limit"
     assert {"p1", "p2", "p3"} <= set(h.removed)
+
+
+# ===================================================================
+# the warning, then the removal
+# ===================================================================
+
+def _board(*rows):
+    """Three busy people with a recent play, so nobody below is exempt and history isn't stale."""
+    return [_seen_row("a", 900, 1), _seen_row("b", 800, 1), _seen_row("c", 700, 1), *rows]
+
+
+def test_idle_past_the_warning_threshold_is_warned_not_removed():
+    h = _Harness(users=[_user("drifter", 1, 26)], tautulli_rows=_board(_seen_row("drifter", 10, 26)))
+    rows = h.run()
+    assert h.warned == ["drifter"] and h.removed == []
+    assert rows["drifter"]["warning_sent"] == 1, "the warning must be saved, or it repeats every day"
+    assert rows["drifter"]["days_inactive"] == 26
+
+
+def test_idle_past_removal_but_never_warned_is_warned_first():
+    """A warning nobody had a chance to act on is not a warning."""
+    h = _Harness(users=[_user("lapsed", 1, 40)], tautulli_rows=_board(_seen_row("lapsed", 10, 40)))
+    rows = h.run()
+    assert h.warned == ["lapsed"]
+    assert h.removed == [], "removed on the same pass that warned"
+    assert rows["lapsed"]["warning_sent"] == 1
+
+
+def test_the_removal_comes_on_a_later_pass_than_the_warning():
+    h = _Harness(users=[_user("lapsed", 1, 40)], tautulli_rows=_board(_seen_row("lapsed", 10, 40)))
+    h.run()
+    assert h.warned == ["lapsed"] and h.removed == []
+    h.run(seed=False)
+    assert h.warned == ["lapsed"], "warned twice"
+    assert h.removed == ["lapsed"]
+
+
+def test_watching_after_a_warning_clears_it():
+    h = _Harness(users=[_user("returner", 1, 26, warning_sent=True)],
+                 tautulli_rows=_board(_seen_row("returner", 10, 3)))
+    rows = h.run()
+    assert h.warned == [] and h.removed == []
+    assert rows["returner"]["warning_sent"] == 0, "a stale warning would let the next lapse remove them unwarned"
+    assert rows["returner"]["days_inactive"] == 3
+
+
+def test_no_new_history_still_warns_from_the_last_known_watch():
+    """Tautulli has no last_seen for them, but Plexbie saw them watch 26 days ago."""
+    h = _Harness(users=[_user("quiet", 1, 26)], tautulli_rows=_board(_u("quiet", 10)))
+    rows = h.run()
+    assert h.warned == ["quiet"] and h.removed == []
+    assert rows["quiet"]["warning_sent"] == 1
+
+
+def test_a_warning_that_reached_nobody_tells_the_admins():
+    """Closed DMs, no alerts, no email: the warning still counts, so they aren't warned daily
+    and never removed, but the admins hear that they weren't told."""
+    h = _Harness(users=[_user("closed", 1, 26)], tautulli_rows=_board(_seen_row("closed", 10, 26)))
+    h.warning_reaches = False
+    rows = h.run()
+    assert h.warned == ["closed"]
+    assert rows["closed"]["warning_sent"] == 1
+    assert h.alerts == ["Inactivity warning not delivered"], h.alerts
+
+
+def test_a_long_list_of_unwarned_people_is_shortened():
+    idle = [f"m{i:02}" for i in range(20)]
+    h = _Harness(users=[_user(n, 10 + i, 26) for i, n in enumerate(idle)],
+                 tautulli_rows=_board(*[_seen_row(n, 10, 26) for n in idle]))
+    h.warning_reaches = False
+    h.run()
+    text, push = h.alert_texts[0]
+    assert "and 5 more" in text and "m19" not in text
+    assert "20 people" in push and "m00" not in push
+
+
+def test_a_warning_that_got_through_tells_the_admins_nothing():
+    h = _Harness(users=[_user("open", 1, 26)], tautulli_rows=_board(_seen_row("open", 10, 26)))
+    h.run()
+    assert h.warned == ["open"] and h.alerts == []
+
+
+def _warning_cog(dm_fails, other_route):
+    """The real _send_warning_dm, with Discord and notify_member faked. Returns (cog, calls, undo)."""
+    import core.notify as notify
+    from plugins.user_mgmt import cog as module
+
+    calls = {"dm": [], "notify": []}
+
+    async def fake_send_user_dm(bot, services, user, **kw):
+        calls["dm"].append(kw)
+        if dm_fails:
+            raise RuntimeError("Cannot send messages to this user")
+
+    async def fake_notify_member(services, **kw):
+        calls["notify"].append(kw)
+        return other_route
+
+    class FakeBot:
+        async def fetch_user(self, uid):
+            return SimpleNamespace(id=uid)
+
+    class FakeConfig:
+        inactivity_warning_days = 25
+        inactivity_removal_days = 30
+
+    cog = object.__new__(module.UserMgmtCog)
+    cog.bot = FakeBot()
+    cog.services = SimpleNamespace(config=FakeConfig())
+    saved = module.send_user_dm, notify.notify_member
+    module.send_user_dm, notify.notify_member = fake_send_user_dm, fake_notify_member
+
+    def undo():
+        module.send_user_dm, notify.notify_member = saved
+    return cog, calls, undo
+
+
+def _member(**kw):
+    spec = {"plex_username": "sam", "discord_id": 42, "discord_username": "sam#1", "plex_email": "sam@example.com"}
+    spec.update(kw)
+    return SimpleNamespace(**spec)
+
+
+def test_a_delivered_warning_dm_needs_no_other_route():
+    cog, calls, undo = _warning_cog(dm_fails=False, other_route="none")
+    try:
+        assert asyncio.run(cog._send_warning_dm(_member())) is True
+    finally:
+        undo()
+    assert len(calls["dm"]) == 1 and calls["notify"] == []
+
+
+def test_a_closed_dm_falls_back_to_an_alert_or_email():
+    cog, calls, undo = _warning_cog(dm_fails=True, other_route="email")
+    try:
+        assert asyncio.run(cog._send_warning_dm(_member())) is True
+    finally:
+        undo()
+    assert calls["dm"][0].get("own_fallback") is True, "the app copy would arrive twice"
+    sent = calls["notify"][0]
+    assert sent["discord_id"] == "42" and sent["plex_name"] == "sam" and sent["email"] == "sam@example.com"
+    assert "30" not in sent["title"] and "5 days" in sent["body"]
+
+
+def test_a_warning_with_no_route_at_all_reports_failure():
+    cog, calls, undo = _warning_cog(dm_fails=True, other_route="none")
+    try:
+        assert asyncio.run(cog._send_warning_dm(_member())) is False
+    finally:
+        undo()
+    assert len(calls["notify"]) == 1
+
+
+def test_a_member_without_discord_is_warned_another_way():
+    cog, calls, undo = _warning_cog(dm_fails=False, other_route="push")
+    try:
+        assert asyncio.run(cog._send_warning_dm(_member(discord_id=None))) is True
+    finally:
+        undo()
+    assert calls["dm"] == [] and len(calls["notify"]) == 1

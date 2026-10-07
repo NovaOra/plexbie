@@ -42,6 +42,9 @@ STALE_HISTORY_DAYS = 7
 # tracked if that is more. Beyond it, the pass removes nobody and asks the admins.
 MAX_REMOVALS_PER_PASS = 3
 MAX_REMOVALS_SHARE = 0.25
+# The Plex server owner as last learned ({"id", "name"}), for passes where neither
+# plex.tv nor the Plex server can be asked: their exemption mustn't come and go.
+PLEX_OWNER = ("user_mgmt", "plex_owner")
 
 
 async def reconcile_accounts(accounts) -> list:
@@ -377,6 +380,42 @@ class UserMgmtCog(commands.Cog):
         owner_id = self.services.config.bot_owner_id
         return bool(owner_id and user.discord_id == owner_id)
 
+    async def _plex_owner(self, account=None):
+        """(account name, Plex account id) of the server owner, either None if unknown.
+        `account` is the owner's entry from shared_accounts when plex.tv answered;
+        otherwise the Plex server's own name for them and the id a website sign-in
+        remembered. Whatever is found is remembered, and stands in when nothing is."""
+        from database.kv_store import kv_get, kv_set
+        if account:
+            name, account_id = account.get("title") or None, account.get("id")
+        else:
+            name = await self._plex_owner_name()
+            try:
+                from portal.auth import OWNER_ID
+                account_id = await kv_get(*OWNER_ID)
+            except Exception as e:
+                logger.debug(f"Could not read the remembered Plex owner: {e}")
+                account_id = None
+        try:
+            known = await kv_get(*PLEX_OWNER) or {}
+            found = {"id": str(account_id) if account_id else known.get("id"), "name": name or known.get("name")}
+            if found != {"id": known.get("id"), "name": known.get("name")}:
+                await kv_set(*PLEX_OWNER, found)
+            name, account_id = found["name"], found["id"]
+        except Exception as e:
+            logger.debug(f"Could not remember the Plex owner: {e}")
+        return name, account_id
+
+    @staticmethod
+    def _is_plex_owner(user: PlexUser, tautulli_user: dict, owner_name, owner_account_id) -> bool:
+        """The Plex owner's own row, which needn't be linked to BOT_OWNER_ID (nobody
+        linked it, or another Discord account set the bot up). removeFriend fails
+        against the owner, so without this they'd be warned and fail removal daily."""
+        if owner_account_id and str(owner_account_id) in {str(user.plex_user_id or ""),
+                                                          str(tautulli_user.get('user_id') or "")}:
+            return True
+        return bool(owner_name and user.plex_username.lower() == owner_name.lower())
+
     @tasks.loop(hours=24)
     async def check_inactive_users(self):
         """Check all users for inactivity every 24 hours"""
@@ -387,10 +426,13 @@ class UserMgmtCog(commands.Cog):
         try:
             logger.info("Starting daily inactivity check...")
             # First learn which Plex account each tracked row really is (see reconcile_accounts).
+            owner_account_entry = None
             if can_sign_in(self.services.config):
                 try:
                     from core.plex_account import shared_accounts
-                    await reconcile_accounts(await run_blocking(shared_accounts, self.services.config))
+                    accounts = await run_blocking(shared_accounts, self.services.config)
+                    owner_account_entry = next((a for a in accounts if a.get("owner")), None)
+                    await reconcile_accounts(accounts)
                 except Exception as e:
                     logger.info(f"Couldn't match tracked people to Plex accounts: {e}")
 
@@ -472,6 +514,8 @@ class UserMgmtCog(commands.Cog):
             # row is always rewritten. That is correct, just not a saving.
             before = {user.id: persisted_fields(user) for user in tracked_users}
 
+            owner_name, owner_account_id = await self._plex_owner(owner_account_entry)
+
             # Phase 2: decide. No transaction, no network - the field assignments
             # here are made on detached objects and persisted in phase 4.
             now = datetime.now(timezone.utc)
@@ -510,7 +554,8 @@ class UserMgmtCog(commands.Cog):
                 # up by that (found above by account id), not by Plexbie's name for them:
                 # a rename in Tautulli or Plex must not cost anyone their exemption.
                 primary = resolve_alias(tautulli_user.get('friendly_name') or tracked_user.plex_username, aliases)
-                exempt = primary in top or self._is_permanently_exempt(tracked_user)
+                exempt = (primary in top or self._is_permanently_exempt(tracked_user)
+                          or self._is_plex_owner(tracked_user, tautulli_user, owner_name, owner_account_id))
                 just_lost_exemption = bool(tracked_user.is_top_watcher) and not exempt
 
                 if exempt:
@@ -696,12 +741,30 @@ class UserMgmtCog(commands.Cog):
             for tracked_user in to_notify_exemption_lost:
                 await self._send_exemption_lost_dm(tracked_user)
 
+            unwarned = []
             for tracked_user in to_warn:
-                await self._send_warning_dm(tracked_user)
-                # Set unconditionally, as before: _send_warning_dm swallows its own
-                # delivery errors, and only marking on success would mean a user
-                # with closed DMs is warned every day and never removed.
+                if not await self._send_warning_dm(tracked_user):
+                    unwarned.append(tracked_user.plex_username)
+                # Set unconditionally, as before: only marking on success would mean
+                # a user nothing reaches is warned every day and never removed. The
+                # admins hear about those instead, below.
                 tracked_user.warning_sent = True
+            if unwarned:
+                cfg = self.services.config
+                logger.warning(f"Inactivity warning reached nobody: {', '.join(unwarned)}")
+                names = discord.utils.escape_mentions(
+                    ", ".join(unwarned[:15]) + (f" and {len(unwarned) - 15} more" if len(unwarned) > 15 else ""))
+                await self._alert_admins(
+                    "Inactivity warning not delivered",
+                    f"Plexbie couldn't warn {names} that they'll lose Plex access for not watching: "
+                    "no Discord DM, phone alert or email reached them (Manage → Messages says why). "
+                    "Unless they watch something, they're removed once they reach "
+                    f"{cfg.inactivity_removal_days} days, on tomorrow's check at the earliest. Tell them "
+                    "yourself, or turn on Never remove in Manage → People.",
+                    push=(f"Couldn't warn {unwarned[0]} about inactivity removal. Tell them yourself?"
+                          if len(unwarned) == 1 else
+                          f"Couldn't warn {len(unwarned)} people about inactivity removal. Tell them yourself?"),
+                    url="/manage?tab=people", tag="inactivity-undelivered")
 
             removed_ids = set()
             for tracked_user, plex_user_id in to_remove:
@@ -894,34 +957,41 @@ class UserMgmtCog(commands.Cog):
         """Wait for bot to be ready"""
         await self.bot.wait_until_ready()
 
-    async def _notify_without_discord(self, user: PlexUser, title: str, body: str, context: str) -> None:
-        """For members who joined without Discord: a phone alert from plexbie.com, else email."""
+    async def _notify_without_discord(self, user: PlexUser, title: str, body: str, context: str) -> str:
+        """For members who joined without Discord, or whose DMs are closed: a phone alert
+        from plexbie.com, else email. Returns notify_member's "push", "email" or "none"."""
         from core.notify import notify_member
-        await notify_member(self.services, title=title, body=body, context=context,
-                            plex_name=user.plex_username, email=user.plex_email)
+        return await notify_member(self.services, title=title, body=body, context=context,
+                                   plex_name=user.plex_username, email=user.plex_email,
+                                   discord_id=str(user.discord_id) if user.discord_id else None)
 
-    async def _dm_tracked(self, user: PlexUser, context: str, what: str, *, embed=None, content=None) -> None:
-        """DM a tracked member who has Discord; a closed DM or a failure is logged, never raised."""
+    async def _dm_tracked(self, user: PlexUser, context: str, what: str, *, embed=None, content=None,
+                          own_fallback: bool = False) -> bool:
+        """DM a tracked member who has Discord; a closed DM or a failure is logged, never raised.
+        True if the DM went. `own_fallback` as for send_user_dm."""
         try:
             discord_user = await self.bot.fetch_user(user.discord_id)
-            await send_user_dm(self.bot, self.services, discord_user, context=context, embed=embed, content=content)
+            await send_user_dm(self.bot, self.services, discord_user, context=context, embed=embed, content=content,
+                               own_fallback=own_fallback)
             logger.info(f"Sent {what} to {user.plex_username} (Discord: {user.discord_username})")
+            return True
         except discord.Forbidden:
             logger.warning(f"Cannot DM user {user.discord_username} - DMs are disabled")
         except Exception as e:
             logger.error(f"Error sending {what} to {user.plex_username}: {e}")
+        return False
 
-    async def _send_warning_dm(self, user: PlexUser):
-        """Send 25-day inactivity warning to user"""
-        if not user.discord_id:
-            cfg = self.services.config
-            await self._notify_without_discord(
-                user, "Watch something to keep your Plex access",
-                f"You haven't watched anything on the household Plex in {cfg.inactivity_warning_days} days. "
+    async def _send_warning_dm(self, user: PlexUser) -> bool:
+        """Send 25-day inactivity warning to user. By DM, else (no Discord, closed DMs) by
+        phone alert or email. True if it reached them by any of those."""
+        cfg = self.services.config
+        context = f"25-day inactivity warning for {user.plex_username}"
+        title = "Watch something to keep your Plex access"
+        body = (f"You haven't watched anything on the household Plex in {cfg.inactivity_warning_days} days. "
                 f"Watch anything in the next {cfg.inactivity_removal_days - cfg.inactivity_warning_days} days "
-                f"and your access stays; otherwise it's removed to make room.",
-                f"25-day inactivity warning for {user.plex_username}")
-            return
+                f"and your access stays; otherwise it's removed to make room.")
+        if not user.discord_id:
+            return await self._notify_without_discord(user, title, body, context) != "none"
 
         embed = discord.Embed(
             title="⚠️ Plex Inactivity Warning",
@@ -946,7 +1016,11 @@ class UserMgmtCog(commands.Cog):
 
         embed.set_footer(text="This is an automated message from Plexbie")
 
-        await self._dm_tracked(user, f"25-day inactivity warning for {user.plex_username}", "25-day warning", embed=embed)
+        # own_fallback: the phone alert below is the fallback, so the app copy that
+        # send_user_dm makes goes only with a DM that arrived, never twice.
+        if await self._dm_tracked(user, context, "25-day warning", embed=embed, own_fallback=True):
+            return True
+        return await self._notify_without_discord(user, title, body, context) != "none"
 
     async def _send_exemption_lost_dm(self, user: PlexUser):
         """Tell a user their top-three exemption has ended and the clock restarts.

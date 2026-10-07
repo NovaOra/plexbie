@@ -208,6 +208,16 @@ who's watching from one place instead of five.
   later, with the warning always delivered a full pass before any removal.
   The removal takes off the Plex account whose inactivity was measured, never
   whoever an old email or name now points at.
+- The warning goes by Discord DM; when their DMs are closed (or they have no
+  Discord), by phone/browser alert or email instead. If none of those reaches
+  them, the admins are told (admin channel and phone alerts; Manage → Messages
+  says why each try failed) so they can tell the person themselves or turn on
+  Never remove; the removal stays on schedule.
+- The Plex server owner is never warned or removed, whether or not their row
+  is linked to `BOT_OWNER_ID`. Plexbie learns who the owner is from plex.tv
+  (with `PLEX_TOKEN` or `PLEX_USERNAME`/`PLEX_PASSWORD` set), from the Plex
+  server, or from an owner's Plex sign-in on the website, and remembers it for
+  days when none of those can be asked.
 - Two brakes stop the daily check from emptying the server on bad data, and
   each tells the admins (admin channel and phone alerts):
   - if Tautulli hasn't recorded a play by anyone for more than 7 days, its
