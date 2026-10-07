@@ -112,7 +112,10 @@ export const community = (): Promise<Community> => wait({
 const demoStart = Date.now();
 function demoJourney(r: MediaRequest): MediaRequest {
   const t = (Date.now() - demoStart) / 1000;
-  if (t < 3) return { ...r, stage: "requested", progress: null };
+  // Answered under Manage → Requests while it waited: a decline ends it, an approval moves it on.
+  const answer = answers.get(r.id!);
+  if (answer && !answer.approve) return { ...r, stage: "declined", progress: null, updatedAt: answer.at };
+  if (t < 3 && !answer) return { ...r, stage: "requested", progress: null };
   if (t < 6) return { ...r, stage: "approved", progress: { detail: "Approved, looking for a copy" } };
   if (t < 13) {
     const pct = Math.min(100, Math.round(((t - 6) / 7) * 100));
@@ -125,7 +128,15 @@ function demoJourney(r: MediaRequest): MediaRequest {
   if (t < 21) return { ...r, stage: "importing", progress: { percent: 100, detail: "Plex usually picks it up within a few minutes" } };
   return { ...r, stage: "available", progress: null };
 }
-export const myRequests = () => wait([...mine].map((r) => withTicket(DEMO && r.slot === 214 ? demoJourney(r) : r)).sort((a, b) => b.slot - a.slot), DEMO ? 60 : 260);
+/** The member's own request as answered under Manage → Requests, matched by its number. */
+function answeredMine(r: MediaRequest): MediaRequest {
+  const answer = answers.get(everyone.find((x) => x.slot === r.slot)?.id ?? "");
+  if (!answer || r.stage !== "requested") return r;
+  return answer.approve
+    ? { ...r, stage: "approved", progress: { detail: "Approved, looking for a copy" }, updatedAt: answer.at }
+    : { ...r, stage: "declined", progress: null, updatedAt: answer.at };
+}
+export const myRequests = () => wait([...mine].map((r) => withTicket(DEMO && r.slot === 214 ? demoJourney(r) : answeredMine(r))).sort((a, b) => b.slot - a.slot), DEMO ? 60 : 260);
 
 export const search = (q: string, kind: MediaKind) => {
   const needle = q.trim().toLowerCase();
@@ -185,9 +196,12 @@ export const library = (kind: LibraryKind): Promise<LibraryItem[]> => wait(
 
 /** What the admin did in this dev session, so the sample lists react. */
 const decided = new Set<string>();
+/** Requests answered under Manage → Requests: approved (true) or declined. */
+const answers = new Map<string, { approve: boolean; at: string }>();
 const kept = new Map<string, boolean>();
 export const sampleDecide = (what: string, id: string, approve: boolean) => {
   decided.add(`${what}:${id}`);
+  if (what === "requests") answers.set(id, { approve, at: new Date().toISOString() });
   return wait({ ok: true, message: approve ? "Request approved and submitted to Seerr!" : "Declined." });
 };
 export const sampleExempt = (ratingKey: string, keep: boolean) => {
@@ -260,11 +274,10 @@ export const sampleCleanupSettings = (change: Partial<typeof cleanupSettings>) =
 export const admin = (section: string): Promise<unknown> => {
   const data: Record<string, unknown> = {
     requests: {
-      pending: [
-        { id: "3", slot: 216, title: "Dracula", kind: "audiobook", poster: null, seasons: null, requester: "Priya N.", requestedAt: ago(12), status: "pending" },
-        { id: "2", slot: 215, title: "The Daily Dweebs", kind: "tv", poster: byTitle("The Daily Dweebs").poster, seasons: [4], requester: "Jordan Lee", requestedAt: ago(40), status: "pending" },
-        { id: "1", slot: 209, title: "Tears of Steel", kind: "movie", poster: byTitle("Tears of Steel").poster, seasons: null, requester: "Sam Rivera", requestedAt: ago(60 * 5), status: "pending" },
-      ],
+      // The same requests All requests has waiting for a decision.
+      pending: allRequests("").rows.filter((r) => r.status === "pending").sort((a, b) => b.slot - a.slot)
+        .map((r) => ({ id: r.id!, slot: r.slot, title: r.title.title, kind: r.title.kind, poster: r.title.poster ?? null, seasons: r.seasons ?? null,
+          requester: r.requester, requestedAt: r.requestedAt, status: "pending" })),
       older: [],
       recent: [
         { id: "8", slot: 213, title: "Night of the Living Dead", kind: "movie", poster: null, seasons: null, requester: "Marcus T.", requestedAt: ago(60 * 5), status: "declined", resolvedBy: "you", resolvedAt: ago(60 * 2) },
@@ -500,14 +513,25 @@ const activity: Record<string, { at: string; by: string; did: string }[]> = {};
 /** In demo mode the member's No. 214 plays out here as it does on their own list. */
 function journeyRow(r: Row): Row {
   if (!DEMO || r.slot !== 214) return r;
-  const { stage, progress } = demoJourney(r);
+  const { stage, progress, updatedAt } = demoJourney(r);
+  if (stage === "declined") return { ...r, stage, progress, status: "declined", approvedBy: null, approvedAt: null, stageSince: updatedAt, updatedAt };
   return stage === "requested" ? { ...r, stage, progress, status: "pending", approvedBy: null, approvedAt: null } : { ...r, stage, progress };
+}
+
+/** A request answered under Manage → Requests, as All requests then shows it. */
+function answeredRow(r: Row): Row {
+  const answer = answers.get(r.id!);
+  if (!answer || r.status !== "pending") return r;
+  const now = answer.at;
+  return answer.approve
+    ? { ...r, stage: "approved", status: "approved", progress: { detail: "Approved, looking for a copy" }, approvedBy: "Sam Rivera", approvedAt: now, stageSince: now, updatedAt: now }
+    : { ...r, stage: "declined", status: "declined", progress: null, stageSince: now, updatedAt: now };
 }
 
 function allRequests(q: string, everything = false) {
   const query = q.trim().toLowerCase().replace(/^(no\.|#)\s*/, "").replace(/^0+/, "");
   const open = new Set(helps.filter((h) => h.status === "open").map((h) => h.request));
-  const live = everyone.map(journeyRow).map((r) => (r.help && !open.has(r.id!) ? { ...r, help: null, stuck: r.stuck.filter((s) => !s.startsWith("Help asked")) } : r));
+  const live = everyone.map(journeyRow).map(answeredRow).map((r) => (r.help && !open.has(r.id!) ? { ...r, help: null, stuck: r.stuck.filter((s) => !s.startsWith("Help asked")) } : r));
   if (query) {
     const words = (r: Row) => `${r.title.title} ${r.requester}`.toLowerCase();
     const found = [...live, ...archive].filter((r) => words(r).includes(query) || String(r.slot) === query).sort((a, b) => b.slot - a.slot);

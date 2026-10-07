@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { AdminCleanup, AdminPerson, AdminRequests, AdminTickets, Community, HealthCheck, MediaRequest, MessagePerson, Title } from "./types";
+import type { AdminAllRequests, AdminCleanup, AdminPerson, AdminRequests, AdminTickets, Community, HealthCheck, MediaRequest, MessagePerson, Title } from "./types";
 
 /** The sample household's screens, read the way the website reads them, must tell one story:
  *  in the review build, and in the public demo, where the member's newest request plays out. */
@@ -113,6 +113,35 @@ for (const demo of [false, true]) describe(demo ? "the demo's sample household" 
     expect(stages).toEqual(["requested", "approved", "downloading", "unpacking", "importing", "available"]);
   });
 
+  it("waits on the same requests in Manage → Requests and All requests", async () => {
+    const asked = (rows: { slot: number; title: string; requester: string }[]) => rows.map(({ slot, title, requester }) => ({ slot, title, requester })).sort((a, b) => a.slot - b.slot);
+    // In the demo the member's newest request waits for its first seconds, then moves on.
+    for (const second of [0, 2, 5, 30]) {
+      vi.setSystemTime(started + second * 1000);
+      const [now, everyone] = await done(Promise.all([s.admin("requests"), s.adminAll("")])) as [AdminRequests, AdminAllRequests];
+      const waiting = everyone.rows.filter((r) => r.stage === "requested").map((r) => ({ ...r, title: r.title.title }));
+      expect(asked(waiting), `${second} s in`).toEqual(asked(now.pending));
+      expect(everyone.counts!.waiting, `${second} s in`).toBe(now.pending.length);
+    }
+  });
+
+  it("files every message about a request in its requester's conversation", async () => {
+    const [everyone, now] = await done(Promise.all([s.adminAll("", true), s.admin("requests")])) as [AdminAllRequests, AdminRequests];
+    const askedBy = new Map<string, Set<string>>();
+    const add = (title: string, who: string) => askedBy.set(title, (askedBy.get(title) ?? new Set()).add(who));
+    for (const r of everyone.rows) add(r.title.title, r.requester);
+    for (const r of [...now.pending, ...now.recent]) add(r.title, r.requester);
+    for (const t of tickets.rows) add(t.title, t.who);
+    const people = await done(s.admin("messages")) as MessagePerson[];
+    expect(people.length).toBeGreaterThan(0);
+    for (const p of people) {
+      for (const m of await done(s.conversation(p.id))) {
+        const words = `${m.title ?? ""} ${m.text}`;
+        for (const [title, who] of askedBy) if (words.includes(title)) expect(who.has(p.name), `"${words.slice(0, 60)}" to ${p.name}`).toBe(true);
+      }
+    }
+  });
+
   it("warns nobody who is watching or in the top three, and only members are watching", async () => {
     const board = await done(s.community()) as Community;
     const people = await done(s.admin("people")) as AdminPerson[];
@@ -162,5 +191,49 @@ for (const demo of [false, true]) describe(demo ? "the demo's sample household" 
       ...requests.pending.filter((r) => !r.seasons).map((r) => r.title)];
     expect(asked.length).toBeGreaterThan(0);
     for (const t of asked) expect(onPlex.has(t) || books.has(t), t).toBe(false);
+  });
+
+  it("moves a decision made in Manage → Requests to All requests and the member's own list", async () => {
+    vi.setSystemTime(started + 30_000);
+    const before = await done(s.admin("requests")) as AdminRequests;
+    const own = before.pending.find((r) => r.requester === me)!;
+    const [yes, no] = before.pending.filter((r) => r.requester !== me);
+    expect(own).toBeDefined();
+    await done(s.sampleDecide("requests", yes.id, true));
+    await done(s.sampleDecide("requests", no.id, false));
+    await done(s.sampleDecide("requests", own.id, false));
+    const [now, everyone, theirs] = await done(Promise.all([s.admin("requests"), s.adminAll(""), s.myRequests()])) as [AdminRequests, AdminAllRequests, MediaRequest[]];
+    expect(now.pending.map((r) => r.slot)).toEqual(before.pending.filter((r) => r !== yes && r !== no && r !== own).map((r) => r.slot));
+    expect(everyone.counts!.waiting).toBe(now.pending.length);
+    const row = (slot: number) => everyone.rows.find((r) => r.slot === slot)!;
+    expect({ stage: row(yes.slot).stage, status: row(yes.slot).status, approvedBy: row(yes.slot).approvedBy }).toEqual({ stage: "approved", status: "approved", approvedBy: me });
+    expect({ stage: row(no.slot).stage, status: row(no.slot).status }).toEqual({ stage: "declined", status: "declined" });
+    expect(row(own.slot).stage).toBe("declined");
+    expect(theirs.find((r) => r.slot === own.slot)?.stage).toBe("declined");
+  });
+
+  // Only the demo's newest request waits in its first seconds; an answer then must hold once the journey moves on.
+  it.runIf(demo)("keeps an answer to the member's newest request given while it waited", async () => {
+    for (const approve of [false, true]) {
+      vi.setSystemTime(started);
+      vi.resetModules();
+      const fresh = await import("./sample");
+      const at = Date.now();
+      const waiting = (await done(fresh.admin("requests")) as AdminRequests).pending.find((r) => r.slot === 214)!;
+      expect(waiting.requester).toBe(me);
+      await done(fresh.sampleDecide("requests", waiting.id, approve));
+      for (const second of [2, 5, 30]) {
+        vi.setSystemTime(at + second * 1000);
+        const [now, everyone, theirs] = await done(Promise.all([fresh.admin("requests"), fresh.adminAll(""), fresh.myRequests()])) as [AdminRequests, AdminAllRequests, MediaRequest[]];
+        const row = everyone.rows.find((r) => r.slot === 214)!;
+        const own = theirs.find((r) => r.slot === 214)!;
+        const where = `${approve ? "approved" : "declined"}, ${second} s in`;
+        expect(now.pending.some((r) => r.slot === 214), where).toBe(false);
+        expect(everyone.counts!.waiting, where).toBe(now.pending.length);
+        expect(row.stage, where).toBe(own.stage);
+        if (approve) expect(row.status, where).toBe("approved");
+        else expect({ stage: row.stage, status: row.status }, where).toEqual({ stage: "declined", status: "declined" });
+      }
+    }
   });
 });
