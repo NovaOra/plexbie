@@ -17,7 +17,9 @@ export function BottomSheet({ titleId, title, onClose, className, children }: {
   useSheet(panel, onClose);
   return (
     // Clicks stop here: a sheet opened from inside a link card mustn't follow the link.
-    <motion.div className="m-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId}
+    // No aria-modal: useSheet already makes the page inert, and aria-modal would also
+    // hide the toasts beside the sheet on <body>, so a result said there went unheard.
+    <motion.div className="m-sheet" role="dialog" aria-labelledby={titleId}
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.15 } }}
       onClick={(e) => e.stopPropagation()}>
       <button type="button" className="m-sheet__scrim" aria-label="Close" onClick={onClose} />

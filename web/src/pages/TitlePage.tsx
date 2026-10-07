@@ -126,7 +126,17 @@ function Requested({ request }: { request: MediaRequest }) {
   );
 }
 
+/**
+ * A fresh page for every title. The router keeps the page when only the address's
+ * kind or id changes (a pick under More like this, a search result, Back, Forward),
+ * and nothing picked, sent or failed on one title may carry over to the next.
+ */
 export function TitlePage() {
+  const { kind, id } = useParams();
+  return <TitleView key={`${kind}/${id}`} />;
+}
+
+function TitleView() {
   const { kind, id } = useParams() as { kind: MediaKind; id: string };
   const { session } = useSession();
   const title = useLoad(() => api.title(kind, id), [kind, id]);

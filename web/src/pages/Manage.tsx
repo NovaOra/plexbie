@@ -72,19 +72,21 @@ async function attempt(act: () => Promise<Ack>): Promise<Ack> {
 
 /**
  * Admin actions, the same way everywhere: mark a row busy while it runs, and on
- * failure show the error (with `failText` as the headline when given) and
- * return null, so a caller only handles success. `later` refreshes a section
- * after the bot has had a moment to act.
+ * failure show the error (with `failText` as the headline when given, and to
+ * `onFail` for a caller that also says it in place) and return null, so a caller
+ * only handles success. `later` refreshes a section after the bot has had a
+ * moment to act.
  */
 function useAct() {
   const { toast, refresh } = useManage();
   const [busy, setBusy] = useState<string | null>(null);
-  const act = async (key: string | null, call: () => Promise<Ack>, opts: { failText?: string; buzzOnFail?: boolean } = {}) => {
+  const act = async (key: string | null, call: () => Promise<Ack>, opts: { failText?: string; buzzOnFail?: boolean; onFail?: (message: string) => void } = {}) => {
     if (key !== null) setBusy(key);
     const out = await attempt(call);
     if (key !== null) setBusy(null);
     if (out.ok) return out;
     if (opts.buzzOnFail) buzz(30);
+    opts.onFail?.(out.message);
     toast(opts.failText ? { tone: "error", text: opts.failText, detail: out.message } : { tone: "error", text: out.message });
     return null;
   };
@@ -1093,6 +1095,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
   const [p, setP] = useState<BlockedPreview | null>(null);
   const [failed, setFailed] = useState("");
   const [done, setDone] = useState("");
+  const [notDone, setNotDone] = useState("");
   /** The admin's changes, by file name. */
   const [picks, setPicks] = useState<Record<string, BlockedChoice>>({});
   /** "Wrong show?": another series for every file, and its episodes. */
@@ -1130,7 +1133,10 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
       ...c, name: f.name, ...(skip ? { skip: true } : {}),
       ...(tv ? { episodeIds, ...(series ? { seriesId: series.id } : {}) } : {}),
     }));
-    const out = await act("import", () => api.blockedImport(target.app, target.downloadId, choices), { failText: "Not imported" });
+    setNotDone("");
+    // Shown here too, not only in a toast: it stays beside the button while the admin decides
+    // what next. The toast is the one that's announced.
+    const out = await act("import", () => api.blockedImport(target.app, target.downloadId, choices), { failText: "Not imported", onFail: setNotDone });
     if (!out) return;
     setDone(out.message);
     toast({ text: "Imported", detail: out.message });
@@ -1240,6 +1246,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
           ) : (
             <>
               {blocker ? <p className="m-blocked__nope">{blocker}</p> : null}
+              {notDone ? <p className="m-blocked__nope">Not imported: {notDone}</p> : null}
               <HoldButton label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
                 disabled={readOnly || !!busy || !!blocker} onConfirm={() => void go()} />
             </>
@@ -2653,12 +2660,17 @@ export function Manage() {
           )}
         </div>
       </div>
-      {/* Always present, so screen readers hear each toast as it's added. */}
-      <div className="m-toasts" role="status" aria-live="polite">
-        <AnimatePresence initial={false}>
-          {toasts.map((t) => <ToastItem key={t.id} t={t} dismiss={dismiss} />)}
-        </AnimatePresence>
-      </div>
+      {/* Always present, so screen readers hear each toast as it's added. On body beside the
+          sheets, not in #root: an open sheet makes the page inert and covers it, and a result
+          from inside the sheet must still be seen and heard. */}
+      {createPortal(
+        <div className="m-toasts" role="status" aria-live="polite">
+          <AnimatePresence initial={false}>
+            {toasts.map((t) => <ToastItem key={t.id} t={t} dismiss={dismiss} />)}
+          </AnimatePresence>
+        </div>,
+        document.body,
+      )}
     </ManageCtx.Provider>
   );
 }
