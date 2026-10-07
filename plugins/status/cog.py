@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core.logging import get_logger
+from core.permissions import require_admin
 from core.services import BotServices
 
 logger = get_logger(__name__)
@@ -31,17 +32,12 @@ class StatusCog(commands.Cog):
         message: str
     ):
         """Make the bot send a message to a channel"""
-        # Check if user is admin
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                "You don't have permission to use this command.",
-                ephemeral=True
-            )
+        if not await require_admin(interaction):
             return
 
         try:
             # Send the message to the specified channel
-            # An administrator's own words: their pings work, as typed.
+            # A Plexbie admin's own words: their pings work, as typed.
             await channel.send(message, allowed_mentions=discord.AllowedMentions.all())
 
             # Confirm to the user (privately)

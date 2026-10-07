@@ -188,9 +188,9 @@ class HomeGuildTree(app_commands.CommandTree):
 
     discord.py runs ``interaction_check`` first, before it looks the command up,
     so it covers every slash command, autocomplete and context menu, ahead of
-    each command's own checks: the ``has_permissions(administrator=True)``
-    commands in user_mgmt, media_requests and watch_party, /say's own
-    Administrator check, and /reply. Those checks are left as they are.
+    each command's own checks. Admin commands then check ``require_admin`` (or
+    ``is_bot_admin``) themselves, never Discord's Administrator permission
+    alone, which would refuse ADMIN_ROLE_ID and the bot owner.
 
     Every command is guild_only and synced to the home server only, so every DM
     is refused except the bot owner's; a command meant for DMs has to be let

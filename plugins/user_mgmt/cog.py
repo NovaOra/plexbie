@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select, update
 
 from core.blocking import run_blocking
 from core.plex_account import can_sign_in, owner_account
-from core.permissions import AdminOnlyView
+from core.permissions import AdminOnlyView, require_admin
 from core.logging import get_logger
 from core.services import BotServices
 from core.admin_mirror import send_user_dm
@@ -1157,9 +1157,10 @@ class UserMgmtCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
     @app_commands.describe(plex_username="The Plex username to remove")
-    @app_commands.checks.has_permissions(administrator=True)
     async def remove_user(self, interaction: discord.Interaction, plex_username: str):
         """Manually remove a user from Plex with notification"""
+        if not await require_admin(interaction):
+            return
         await interaction.response.defer(ephemeral=True)
         ok, message = await self.remove_plex_user(plex_username, interaction.user.name)
         await interaction.followup.send(message, ephemeral=True)
@@ -1319,9 +1320,10 @@ class UserMgmtCog(commands.Cog):
     @app_commands.command(name="list-tracked-users", description="List all tracked Plex users in database")
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(administrator=True)
     async def list_tracked_users(self, interaction: discord.Interaction):
         """List all users being tracked in the database"""
+        if not await require_admin(interaction):
+            return
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -1423,7 +1425,6 @@ class UserMgmtCog(commands.Cog):
     @app_commands.command(name="list-plex-users", description="List Plex users on the server")
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(show="Which accounts to list (default: all)")
     @app_commands.choices(show=[
         app_commands.Choice(name="All accounts", value="all"),
@@ -1440,6 +1441,8 @@ class UserMgmtCog(commands.Cog):
         of this one: both read systemAccounts and applied the same validity rules,
         and this command already computed the invalid list in order to display it.
         """
+        if not await require_admin(interaction):
+            return
         await interaction.response.defer(ephemeral=True)
 
         invalid_only = show is not None and show.value == "invalid"
@@ -1537,9 +1540,10 @@ class UserMgmtCog(commands.Cog):
     @app_commands.command(name="manage-links", description="Manage Discord-Plex user links")
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(administrator=True)
     async def manage_links(self, interaction: discord.Interaction):
         """Open the user link management panel"""
+        if not await require_admin(interaction):
+            return
         await interaction.response.defer(ephemeral=True)
 
         try:

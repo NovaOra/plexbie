@@ -14,7 +14,7 @@ from discord.ext import commands
 from core.blocking import run_blocking
 from core.clients import ServiceError
 from core.logging import get_logger
-from core.permissions import AdminActionView, single_flight
+from core.permissions import AdminActionView, require_admin, single_flight
 from core.services import BotServices
 from core import notify
 from core.admin_mirror import dm_user_id
@@ -1751,7 +1751,6 @@ class MediaRequestsCog(commands.Cog):
     @app_commands.command(name="requests", description="Media requests still awaiting a decision")
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(administrator=True)
     async def list_requests(self, interaction: discord.Interaction):
         """Show requests with no recorded outcome, newest first.
 
@@ -1761,6 +1760,8 @@ class MediaRequestsCog(commands.Cog):
         than guess, those are counted separately and each entry carries a link to
         its approval message, where the presence of buttons is the real answer.
         """
+        if not await require_admin(interaction):
+            return
         await interaction.response.defer(ephemeral=True)
 
         try:

@@ -243,6 +243,79 @@ def test_nothing_dispatches_interactions_around_the_tree():
     assert offenders == []
 
 
+# --- admin commands take the same admins as the admin buttons ---
+
+def _admin_commands():
+    """Every admin slash command, with arguments that get it past its signature."""
+    from plugins.media_requests.cog import MediaRequestsCog
+    from plugins.status.cog import StatusCog
+    from plugins.user_mgmt.cog import UserMgmtCog
+    from plugins.watch_party.cog import WatchPartyCog
+
+    channel = SimpleNamespace(sent=[], mention="#general", name="general")
+
+    async def send(message, **kwargs):
+        channel.sent.append(message)
+    channel.send = send
+    return channel, [
+        (MediaRequestsCog.list_requests, ()),
+        (UserMgmtCog.remove_user, ("someone",)),
+        (UserMgmtCog.list_tracked_users, ()),
+        (UserMgmtCog.list_plex_users, (None,)),
+        (UserMgmtCog.manage_links, ()),
+        (WatchPartyCog.watchparty_active, ()),
+        (StatusCog.say_command, (channel, "hello")),
+    ]
+
+
+def test_admin_commands_refuse_before_doing_anything():
+    """One check for every admin command: refused here, not by Discord's own
+    Administrator check, which turns away ADMIN_ROLE_ID and the bot owner."""
+    channel, commands = _admin_commands()
+    for command, args in commands:
+        assert not any("has_permissions" in check.__qualname__ for check in command.checks), (
+            f"/{command.name} asks Discord for Administrator, refusing ADMIN_ROLE_ID and the bot owner"
+        )
+        for member, guild_id in ((FakeMember(12), HOME), (FakeMember(13, administrator=True), OTHER)):
+            interaction = FakeInteraction(member, PermConfig, guild_id=guild_id)
+            asyncio.run(command.callback(SimpleNamespace(), interaction, *args))
+            assert interaction.refusals == [permissions.DENIED_MESSAGE], (command.name, interaction.refusals)
+    assert channel.sent == [], "/say posted for someone who isn't an admin"
+
+
+def test_owner_and_admin_role_run_admin_commands_without_administrator():
+    """Through discord.py's own dispatch, like a real click."""
+    from discord.ext import commands
+    from plugins.watch_party.cog import WatchPartyCog
+
+    bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), tree_cls=permissions.HomeGuildTree)
+    bot.services = SimpleNamespace(config=PermConfig)
+    cog = WatchPartyCog.__new__(WatchPartyCog)  # not __init__: that starts the credit loops
+    cog.active_party = None
+    bot.tree.add_command(cog.watchparty_active)
+
+    def run(member, guild_id=HOME, administrator=False):
+        interaction = FakeInteraction(member, None, guild_id=guild_id,
+                                      data={"name": "watchparty-active", "type": 1})
+        interaction.client = bot
+        interaction._state, interaction.guild = None, None
+        interaction.permissions = discord.Permissions(administrator=administrator)
+        asyncio.run(bot.tree._call(interaction))
+        return interaction
+
+    ran = ["No active watch party."]
+    assert run(FakeMember(PermConfig.bot_owner_id)).followup.sent == ran, "the bot owner was refused"
+    assert run(FakeMember(14, roles=[FakeRole(PermConfig.admin_role_id)])).followup.sent == ran, (
+        "an ADMIN_ROLE_ID holder was refused"
+    )
+    assert run(FakeMember(15, administrator=True), administrator=True).followup.sent == ran
+
+    foreign = run(FakeMember(16, administrator=True), guild_id=OTHER, administrator=True)
+    assert foreign.refusals == [permissions.FOREIGN_MESSAGE]
+    member = run(FakeMember(17))
+    assert member.refusals == [permissions.DENIED_MESSAGE]
+
+
 # --- which server is home when GUILD_ID is blank ---
 
 class _Guild:

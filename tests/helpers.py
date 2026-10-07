@@ -80,6 +80,9 @@ class FakeResponse:
     async def send_message(self, content, ephemeral=False):
         self.sent.append(content)
 
+    async def defer(self, ephemeral=False, thinking=False):
+        self._done = True
+
     async def autocomplete(self, choices):
         self.choices.append(choices)
         self._done = True

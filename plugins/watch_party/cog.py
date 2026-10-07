@@ -14,6 +14,7 @@ from utils.formatting import episode_label
 from utils.embeds import truncate_field
 from core.discord_lookup import is_home
 from core.logging import get_logger
+from core.permissions import require_admin
 from core.services import BotServices
 from database.session import get_session
 from plugins.user_mgmt.models import PlexUser
@@ -495,9 +496,10 @@ class WatchPartyCog(commands.Cog):
     @app_commands.command(name="watchparty-active", description="Show active watch party")
     @app_commands.default_permissions(administrator=True)
     @app_commands.guild_only()
-    @app_commands.checks.has_permissions(administrator=True)
     async def watchparty_active(self, interaction: discord.Interaction):
         """Admin command to view active watch party"""
+        if not await require_admin(interaction):
+            return
         await interaction.response.defer(ephemeral=True)
 
         if not self.active_party:

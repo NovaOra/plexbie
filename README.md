@@ -504,7 +504,10 @@ reply is ephemeral unless stated otherwise.
 Admin visibility is enforced twice: `default_member_permissions` keeps the
 command out of the picker, and the handler re-checks at runtime. The second check
 is the one that matters — a guild administrator can override the first in server
-settings.
+settings. The runtime check is the same everywhere: Discord `administrator`, the
+`ADMIN_ROLE_ID` role, or `BOT_OWNER_ID`. Discord still hides the commands from an
+admin-role holder or bot owner who isn't a Discord administrator: allow the role
+or person under Server Settings → Integrations → Plexbie to show them.
 
 ---
 
@@ -950,9 +953,12 @@ docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config
   offers "Plexbie" to any page that asks, and pressing Allow there can sign that
   page's owner in as you. Press Allow only right after pressing **Sign in with
   Plex** on your household's own Plexbie address.
-- `/say` lets an administrator send a message as the bot. Every use is logged
-  with the invoking user and target channel. Remove the plugin if you would
-  rather not have it.
+- `/say` lets any Plexbie admin (Discord administrator, `ADMIN_ROLE_ID` holder
+  or `BOT_OWNER_ID`) send a message as the bot. It posts with Plexbie's own
+  channel access and its `@everyone`/`@here` pings, so an admin-role holder can
+  ping everyone or post in a channel they can't write to themselves. Every use is
+  logged with the invoking user and target channel. Remove the plugin if you
+  would rather not have it.
 
 ---
 
