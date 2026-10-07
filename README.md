@@ -729,8 +729,12 @@ with any Plexbie: members type your address when they sign in.
     address gets out, **Replace the address** on their Alerts page ends it, and
     every older one, at once (they then add Plexbie's source again); addresses made
     before this button existed keep working until the member first uses it.
-- **Alerts:** members turn on the website's alerts (on Android, and on iPhone from
-  Safari with the site on the Home Screen), which your install sends itself. The
+- **Alerts:** members turn on the website's alerts (on Android, and on iPhone or iPad
+  from Safari with the site on the Home Screen), which your install sends itself. When
+  a browser renews its alerts under a new address, the site passes that on by itself
+  for the member who turned them on, so they keep arriving; if that member isn't
+  signed in there right then, or the send fails, it goes on their next visit. The site added to
+  a Home Screen opens at its root; phones that added it earlier keep it as the same app. The
   app's own alerts go through the Plexbie project's Expo account, so they're off
   unless you set `APP_PUSH=expo`. The app then points members to the website.
   Logging out of the website turns off that browser's alerts, so a shared computer

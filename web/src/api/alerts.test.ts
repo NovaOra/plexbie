@@ -146,6 +146,115 @@ describe("whether alerts are on", () => {
   });
 });
 
+describe("keeping the server's copy", () => {
+  /** What the page sent in the background has reached the stubbed server. */
+  const settle = () => new Promise((done) => setTimeout(done, 0));
+  const sent = (fetch: ReturnType<typeof vi.fn>) => fetch.mock.calls.filter(([url]) => url === "/api/push/subscribe").length;
+  const day = (d: number) => vi.setSystemTime(new Date(2026, 9, d, 12));
+
+  it("sends it again once on a later day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    day(7);
+    const { fetch } = browser(subscription(), server);
+    await (await alerts()).turnOn("ana");
+    fetch.mockClear();
+    day(8);
+    const { alertState } = await alerts();
+    await expect(alertState("ana")).resolves.toBe("on");
+    await settle();
+    expect(sent(fetch)).toBe(1);
+    const [, init] = fetch.mock.calls[0];
+    expect(init?.headers).toMatchObject({ "X-Plexbie": "1" });
+    expect(JSON.parse(init?.body as string).subscription.endpoint).toBe(ENDPOINT);
+    await alertState("ana");
+    await (await alerts()).alertState("ana");
+    await settle();
+    expect(sent(fetch)).toBe(1);
+  });
+
+  it("sends a renewed address at once", async () => {
+    const { fetch, reg } = browser(subscription(), server);
+    await (await alerts()).turnOn("ana");
+    fetch.mockClear();
+    const renewed = "https://fcm.googleapis.com/fcm/send/new";
+    reg.pushManager.getSubscription.mockResolvedValue({
+      ...subscription(), endpoint: renewed, toJSON: () => ({ endpoint: renewed, keys: { p256dh: "p", auth: "a" } }),
+    });
+    await expect((await alerts()).alertState("ana")).resolves.toBe("on");
+    await settle();
+    expect(sent(fetch)).toBe(1);
+    expect(JSON.parse(fetch.mock.calls[0][1]?.body as string).subscription.endpoint).toBe(renewed);
+  });
+
+  it("sends nothing for someone else signed in on the same browser", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    day(7);
+    const { fetch } = browser(subscription(), server);
+    await (await alerts()).turnOn("ana");
+    fetch.mockClear();
+    day(8);
+    await expect((await alerts()).alertState("ben")).resolves.toBe("off");
+    await settle();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("tries again on the next visit when the server didn't take it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    day(7);
+    let down = false;
+    const { fetch } = browser(subscription(), (url) => (down && url === "/api/push/subscribe" ? json({ error: "Too many." }, 429) : server(url)));
+    await (await alerts()).turnOn("ana");
+    fetch.mockClear();
+    day(8);
+    down = true;
+    await (await alerts()).alertState("ana");
+    await settle();
+    expect(sent(fetch)).toBe(1);
+    down = false;
+    await (await alerts()).alertState("ana");
+    await settle();
+    expect(sent(fetch)).toBe(2);
+    await (await alerts()).alertState("ana");
+    await settle();
+    expect(sent(fetch)).toBe(2);
+  });
+
+  it("sends it once a visit when the browser won't store anything", async () => {
+    const { fetch } = browser(subscription(), server);
+    vi.stubGlobal("localStorage", { getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); }, removeItem() { throw new Error("denied"); } });
+    const { alertState, turnOn } = await alerts();
+    await turnOn("ana");
+    fetch.mockClear();
+    await alertState("ana");
+    await alertState("ana");
+    await settle();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("before alerts can be turned on", () => {
+  /** Safari without Push: not added to the Home Screen yet. */
+  const safari = (userAgent: string, maxTouchPoints: number) => {
+    vi.stubGlobal("navigator", { userAgent, maxTouchPoints });
+    vi.stubGlobal("window", {});
+  };
+
+  it("asks an iPad to add the site to its Home Screen first, though it says it's a Mac", async () => {
+    safari("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15", 5);
+    await expect((await alerts()).alertState("ana")).resolves.toBe("install-first");
+  });
+
+  it("asks an iPhone the same", async () => {
+    safari("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1", 5);
+    await expect((await alerts()).alertState("ana")).resolves.toBe("install-first");
+  });
+
+  it("doesn't ask a Mac, which has no touch screen", async () => {
+    safari("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/16.0 Safari/605.1.15", 0);
+    await expect((await alerts()).alertState("ana")).resolves.toBe("unsupported");
+  });
+});
+
 describe("turning alerts on", () => {
   it("says what the server said when it won't hand over its key", async () => {
     browser(null, () => json({ error: "Log in first." }, 401));

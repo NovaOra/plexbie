@@ -2401,6 +2401,12 @@ def test_the_alerts_worker_and_manifest_are_never_served_stale():
     assert out["/brand/og-card.png"] == (200, "public, max-age=3600"), "other files keep their hour"
 
 
+def test_the_installed_site_opens_at_the_root_and_stays_the_same_app():
+    manifest = json.loads((pathlib.Path(conftest.PROJECT_ROOT) / "web/public/manifest.webmanifest").read_text())
+    assert manifest["start_url"] == "/", "/app is only a redirect for old links now"
+    assert manifest["id"] == "/app", "a new id would make phones see a different app"
+
+
 def test_a_film_plex_matched_to_other_ids_is_still_found_by_its_file():
     """Plex matched Obsession (2026) to another IMDb entry with no TMDB id, so the
     'waiting for Plex' check told the admins it wasn't on Plex while Plex was playing it."""

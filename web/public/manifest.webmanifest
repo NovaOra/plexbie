@@ -4,7 +4,7 @@
   "short_name": "Plexbie",
   "description": "The household Plex: requests, what's new, and what's on.",
   "lang": "en",
-  "start_url": "/app",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#10172b",

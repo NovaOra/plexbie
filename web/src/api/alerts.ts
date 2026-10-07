@@ -4,7 +4,9 @@ import { SAMPLE } from "./client";
 
 export type AlertState = "unsupported" | "install-first" | "blocked" | "off" | "on";
 
-const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+// iPadOS Safari says it's a Mac; only the touch screen gives it away.
+const isIos = () => /iphone|ipad|ipod/i.test(navigator.userAgent)
+  || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const installed = () => window.matchMedia?.("(display-mode: standalone)").matches || (navigator as { standalone?: boolean }).standalone === true;
 
 const headers = { "Content-Type": "application/json", "X-Plexbie": "1" };
@@ -37,9 +39,42 @@ let owner: string | null = null;  // when the browser won't store it (private mo
 function ownerIs(who: string | null) {
   owner = who;
   try { if (who) localStorage.setItem(OWNER, who); else localStorage.removeItem(OWNER); } catch { /* private mode */ }
+  noteOwner(who);
+}
+/** The same, where the service worker can read it: when the browser renews the alerts
+ *  by itself, the worker only passes them on for this member (public/sw.js). */
+const OWNER_NOTE = "/alerts-owner";
+function noteOwner(who: string | null) {
+  if (typeof caches === "undefined") return;
+  caches.open("plexbie-alerts")
+    .then(async (c) => { if (who) await c.put(OWNER_NOTE, new Response(who)); else await c.delete(OWNER_NOTE); })
+    .catch(() => undefined);
 }
 function ownedBy(who: string) {
   try { return (localStorage.getItem(OWNER) ?? owner) === who; } catch { return owner === who; }
+}
+
+/** The server's copy of this browser's alerts, sent again once a day: the browser may
+ *  have renewed them under a new address without the worker hearing, or the server
+ *  dropped them. A new address goes at once, and a failed send on the next visit.
+ *  Best effort; nothing waits for it. */
+const SYNCED = "plexbie.alerts.synced";
+let synced: string | null = null;   // when the browser won't store it (private mode)
+let sending: string | null = null;  // already on its way this visit
+const today = (sub: PushSubscription) => `${new Date().toDateString()} ${sub.endpoint}`;
+function markSynced(sub: PushSubscription) {
+  synced = today(sub);
+  try { localStorage.setItem(SYNCED, synced); } catch { /* private mode */ }
+}
+function resync(sub: PushSubscription, who: string) {
+  const mark = today(sub);
+  try { synced = localStorage.getItem(SYNCED) ?? synced; } catch { /* private mode */ }
+  if (synced === mark || sending === mark) return;
+  sending = mark;
+  // Only marked once the server has it: a failed send is tried again on the next visit.
+  post("/push/subscribe", { subscription: sub.toJSON() })
+    .then(() => { markSynced(sub); noteOwner(who); }, () => undefined)
+    .finally(() => { if (sending === mark) sending = null; });
 }
 
 export async function alertState(who: string): Promise<AlertState> {
@@ -50,7 +85,9 @@ export async function alertState(who: string): Promise<AlertState> {
   if (Notification.permission === "denied") return "blocked";
   const reg = await navigator.serviceWorker.getRegistration("/");
   const sub = await reg?.pushManager.getSubscription();
-  return sub && ownedBy(who) ? "on" : "off";
+  if (!sub || !ownedBy(who)) return "off";
+  resync(sub, who);
+  return "on";
 }
 
 export async function turnOn(who: string): Promise<AlertState> {
@@ -66,6 +103,7 @@ export async function turnOn(who: string): Promise<AlertState> {
     ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(key) }));
   // Same browser, same keys: the server moves the alerts to this member if they were someone else's.
   await post("/push/subscribe", { subscription: sub.toJSON() });
+  markSynced(sub);
   ownerIs(who);
   return "on";
 }

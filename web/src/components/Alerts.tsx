@@ -44,13 +44,13 @@ export function AlertsPanel({ compact = false }: { compact?: boolean }) {
         <h2 id="alerts-h" className="h3">{state === "on" ? "Alerts are on" : "Get alerts on this phone"}</h2>
         {state === "install-first" ? (
           <p className="muted">
-            On iPhone, alerts work once Plexbie is on your Home Screen: tap <Share size={14} aria-label="Share" /> in Safari,
+            On iPhone or iPad, alerts work once Plexbie is on your Home Screen: tap <Share size={14} aria-label="Share" /> in Safari,
             then <b>Add to Home Screen</b> <SquarePlus size={14} aria-hidden />, open Plexbie from there and come back to this page.
           </p>
         ) : state === "blocked" ? (
           <p className="muted">Alerts are blocked for this site. Allow notifications for {location.host} in your browser or phone settings, then reload.</p>
         ) : state === "unsupported" ? (
-          <p className="muted">This browser can’t show alerts. Try Chrome on Android, or Safari on an iPhone with Plexbie on the Home Screen.</p>
+          <p className="muted">This browser can’t show alerts. Try Chrome on Android, or Safari on an iPhone or iPad with Plexbie on the Home Screen.</p>
         ) : (
           <p className="muted">
             {state === "on" ? "You’ll hear when a request is decided or arrives" : "Find out when a request is decided or arrives"}
