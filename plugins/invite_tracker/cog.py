@@ -7,6 +7,7 @@ from typing import Dict
 from datetime import datetime, timezone
 from sqlalchemy import select
 
+from core.discord_lookup import home_guild, is_home
 from core.permissions import require_admin
 from core.logging import get_logger
 from core.services import BotServices
@@ -31,14 +32,28 @@ class InviteTrackerCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        """Cache invites when bot is ready and connected"""
+        """Cache the household server's invites when bot is ready and connected.
+
+        Only that server: invites in any other server Plexbie was added to are
+        none of its business. With GUILD_ID blank there's none yet; on_home_server
+        loads it once Plexbie settles on one.
+        """
+        guild = home_guild(self.bot, self.services.config)
+        if guild is None:
+            logger.info("Invite cache: the household's server isn't known or reachable yet")
+            return
         logger.info("Loading invite cache...")
         try:
-            for guild in self.bot.guilds:
-                await self._update_invite_cache(guild)
-            logger.info(f"✅ Invite cache loaded for {len(self.bot.guilds)} guild(s)")
+            await self._update_invite_cache(guild)
+            logger.info(f"✅ Invite cache loaded for {guild.name}")
         except Exception as e:
             logger.error(f"Error loading invite cache: {e}")
+
+    @commands.Cog.listener()
+    async def on_home_server(self, guild: discord.Guild):
+        """Plexbie made a server home, or joined it, after start-up."""
+        if is_home(self.services.config, guild):
+            await self._update_invite_cache(guild)
 
     async def _update_invite_cache(self, guild: discord.Guild):
         """Update invite cache for a guild"""
@@ -86,7 +101,7 @@ class InviteTrackerCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         """Note which invite a new member used, and who made it."""
-        if member.bot:
+        if member.bot or not is_home(self.services.config, member.guild):
             return
 
         guild = member.guild
@@ -148,12 +163,16 @@ class InviteTrackerCog(commands.Cog):
     @commands.Cog.listener()
     async def on_invite_create(self, invite: discord.Invite):
         """Update cache when new invite is created"""
+        if not is_home(self.services.config, invite.guild):
+            return
         logger.info(f"Invite {invite.code} created in {invite.guild.name}")
         await self._update_invite_cache(invite.guild)
 
     @commands.Cog.listener()
     async def on_invite_delete(self, invite: discord.Invite):
         """Update cache when invite is deleted"""
+        if not is_home(self.services.config, invite.guild):
+            return
         logger.info(f"Invite {invite.code} deleted from {invite.guild.name}")
         if str(invite.guild.id) in self.invite_cache:
             self.invite_cache[str(invite.guild.id)].pop(invite.code, None)

@@ -12,6 +12,7 @@ from sqlalchemy import select, update
 
 from utils.formatting import episode_label
 from utils.embeds import truncate_field
+from core.discord_lookup import is_home
 from core.logging import get_logger
 from core.services import BotServices
 from database.session import get_session
@@ -174,6 +175,10 @@ class WatchPartyCog(commands.Cog):
         after: discord.VoiceState
     ):
         """Handle voice state changes for watch party tracking"""
+        # Only the household's server: the streamer stopping a stream in another
+        # server must not end the party here.
+        if not is_home(self.services.config, member.guild):
+            return
         logger.info(f"Voice state update: {member.name} - before_channel={before.channel}, after_channel={after.channel}, before_stream={before.self_stream}, after_stream={after.self_stream}")
 
         # Only care about the designated watch party channel

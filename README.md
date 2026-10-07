@@ -102,9 +102,9 @@ The bot serves its own website from the same container, on port 7979 out of the 
 - **Something wrong? Open a ticket:** a member flags a stuck request on the website, in the app, or with the
   button on Plexbie's approval DM. Admins work it on Manage → Tickets: take it, add notes only admins see,
   reply (the member answers from Discord, the website or the app), search again, and solve it.
-- **Plexbie's DMs, shared by the admins:** a DM to Plexbie alerts the admins, lands on Manage → Messages and
-  in its own thread under the admin channel. Answer as Plexbie, signed with your name, from the website, the
-  app or Discord.
+- **Plexbie's DMs, shared by the admins:** a DM to Plexbie from someone in your household's server alerts the
+  admins, lands on Manage → Messages and in its own thread under the admin channel. Answer as Plexbie, signed
+  with your name, from the website, the app or Discord.
 - **No Discord? No problem:** invite links, Sign in with Plex, and phone alerts (or email) for everything Discord
   members are DMed, including the heads-up before an account would lapse.
 - **Phone first:** installable, tactile (swipe to approve, hold to confirm), and checked for accessibility.
@@ -600,10 +600,11 @@ Turn off **Public Bot**, so nobody else can add Plexbie to a server of theirs:
 2. **Bot** → turn off **Public Bot** → Save Changes. (Discord refuses this while an install link is set.)
 
 The setup page's **Add Plexbie to my server** link still works for you. If someone adds
-Plexbie elsewhere anyway, it stays there but refuses every command and admin button, logs it,
-posts it in #plexbie-admin and alerts the admins (for the first few servers in an hour; after
-that only the log), and lists it on **Manage → Health** under
-"Other Discord servers". It never leaves a server by itself; remove it from that server yourself.
+Plexbie elsewhere anyway, it stays there but refuses every command and admin button and ignores
+joins, invites and voice there. It logs being added, posts that in #plexbie-admin and alerts the
+admins (for the first few servers in an hour; after that only the log), and lists the server on
+**Manage → Health** under "Other Discord servers". DMs from people who aren't in your household's
+server are ignored too. It never leaves a server by itself; remove it from that server yourself.
 
 ### Moving to a new Discord server
 
@@ -890,7 +891,9 @@ docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config
   re-check on every interaction.
 - **Bound to one server.** Commands, autocomplete and admin buttons are refused
   outside the `GUILD_ID` server (the `BOT_OWNER_ID` user excepted). With `GUILD_ID` blank and no
-  provable server, commands are off, never global. Keep Public Bot off.
+  provable server, commands are off, never global. Events from other servers are ignored, and
+  DMs reach the admins only from members of the `GUILD_ID` server and `BOT_OWNER_ID`; anyone else's
+  are left out of Manage → Messages and only noted in the log. Keep Public Bot off.
 - **Never commit `config/.env`.** It is gitignored, along with `config/*.db` and
   `logs/`.
 - `/say` lets an administrator send a message as the bot. Every use is logged

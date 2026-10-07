@@ -2329,7 +2329,7 @@ def test_app_alerts_are_off_unless_this_install_opts_in():
 
 # ------------------------------------------------- DMs: the shared inbox
 def _inbox_bot(dms, thread_posts, admin_posts):
-    """A bot with an admin channel (id 9) that can make threads, and people who can be DMed."""
+    """A bot with an admin channel (id 9) that can make threads, and household members who can be DMed."""
     class Thread:
         id, archived = 77, False
 
@@ -2347,9 +2347,18 @@ def _inbox_bot(dms, thread_posts, admin_posts):
             admin_posts.append(content)
             return Start()
 
+    class Home:
+        id = 4242
+
+        def get_member(self, uid):
+            return object()     # everyone here is in the household's server
+
     class Bot:
         services = FakeServices(Config())
         portal_actions = None
+
+        def get_guild(self, gid):
+            return Home() if gid == Home.id else None
 
         def get_channel(self, cid):
             return Thread() if int(cid) == 77 else Channel()
@@ -2367,6 +2376,7 @@ def _inbox_bot(dms, thread_posts, admin_posts):
             return U()
     bot = Bot()
     bot.services.config.admin_channel_id = 9
+    bot.services.config.guild_id = Home.id
     return bot
 
 

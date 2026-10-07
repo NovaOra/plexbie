@@ -1,6 +1,8 @@
 # path: portal/inbox.py
 """Plexbie's DMs as a shared inbox for the admins, the way Modmail bots work.
 
+- Only members of the household's server (and the bot owner) reach the admins this way:
+  anyone who shares any server with Plexbie can DM it, so DMs from outside are ignored.
 - Someone DMs Plexbie: it's logged on Manage → Messages (core.message_log), the admins get
   a phone/browser alert, and it's posted in that person's thread under the admin channel.
   On their first DM in a while Plexbie answers that the admins have it (a setting).
@@ -15,13 +17,16 @@ thread is private to them. Plexbie needs Create Public Threads and Send Messages
 Threads there; without them it posts in the admin channel itself (Health says so).
 Every button and /reply re-checks that the presser is an admin.
 """
+import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import discord
 from discord import app_commands
 
+from core.discord_lookup import home_guild, is_household_member
 from core.logging import get_logger
 from core.permissions import deny, is_bot_admin
 from database.kv_store import kv_get, kv_get_all, kv_set
@@ -37,6 +42,14 @@ EMAIL = re.compile(r"\s*[^@\s]+@[^@\s]+\.[^@\s]+\s*")   # /join-plex's email rep
 WHO = re.compile(r"[dp][\w .@+-]{1,120}")
 
 NONE = discord.AllowedMentions.none()
+
+#: Seconds between INFO lines about ignored DMs from the same person; the rest go to DEBUG.
+IGNORED_LOG_EVERY = 3600
+_ignored_logged: dict = {}
+#: Seconds before Discord is asked again about someone it didn't show to be a member.
+#: Until then only the member cache is checked, so someone who joins is heard at once.
+NOT_MEMBER_RECHECK = 600
+_not_members: dict = {}
 
 
 def signed(text: str, admin: str) -> str:
@@ -153,9 +166,56 @@ async def open_ticket_for(ident: dict) -> Optional[dict]:
     return best[1] if best else None
 
 
+def _forget_old(seen: dict, now: float, age: float) -> None:
+    """Keep a per-person dict small when many strangers write: drop entries past their window."""
+    if len(seen) > 1000:
+        for uid in [u for u, at in seen.items() if now - at > age]:
+            del seen[uid]
+
+
+async def _from_household(bot, author) -> bool:
+    """True for the bot owner and for members of the household's server; anyone else is
+    logged (once an hour per person at INFO) and ignored. While GUILD_ID is blank, only
+    the owner."""
+    config = getattr(getattr(bot, "services", None), "config", None)
+    if config is None:
+        return False
+    if config.bot_owner_id and author.id == config.bot_owner_id:
+        return True
+    now = time.monotonic()
+    last = _not_members.get(author.id)
+    ask = last is None or now - last > NOT_MEMBER_RECHECK
+    if await is_household_member(bot, config, author.id, ask=ask):
+        _not_members.pop(author.id, None)
+        return True
+    if ask and config.guild_id:
+        _not_members[author.id] = now
+        _forget_old(_not_members, now, NOT_MEMBER_RECHECK)
+    last = _ignored_logged.get(author.id)
+    level = logging.DEBUG
+    if last is None or now - last > IGNORED_LOG_EVERY:
+        level = logging.INFO
+        _ignored_logged[author.id] = now
+        _forget_old(_ignored_logged, now, IGNORED_LOG_EVERY)
+    if not config.guild_id:
+        why = "GUILD_ID is blank, so only the bot owner's DMs are taken"
+    elif home_guild(bot, config) is None:
+        why = f"Plexbie can't reach the household's server ({config.guild_id}) right now, or they aren't in it"
+    else:
+        why = f"they aren't in the household's server ({config.guild_id})"
+    logger.log(level, f"Ignored a DM from {author} ({author.id}): {why}, so it isn't logged or passed to the admins.")
+    return False
+
+
 async def on_dm(bot, message) -> None:
     """The on_message listener: log a DM to Plexbie, answer it once in a while, tell the admins."""
     from core import message_log
+    if getattr(message, "guild", None) is not None or getattr(message.author, "bot", False):
+        return      # a server message, or a bot
+    if not (message.content or "").strip() and not getattr(message, "attachments", None):
+        return      # a sticker or nothing: nothing to pass on (record_dm skips it too)
+    if not await _from_household(bot, message.author):
+        return
     key = await message_log.record_dm(message)
     if not key or EMAIL.fullmatch(message.content or ""):
         return

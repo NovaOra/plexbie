@@ -450,7 +450,10 @@ def _plexbie(config, guilds=(), tree=None, app=None):
             self.application = app or _app()
             self._home_settled, self._home_problem, self._told_foreign, self._synced = False, None, set(), None
             self._foreign_notices = []
-            self.channels, self.role_checks = {}, 0
+            self.channels, self.role_checks, self.dispatched = {}, 0, []
+
+        def dispatch(self, event, *args):
+            self.dispatched.append((event, *(getattr(a, "id", a) for a in args)))
 
         def get_guild(self, gid):
             return next((g for g in self.guilds if g.id == gid), None)

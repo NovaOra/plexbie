@@ -259,6 +259,7 @@ class Plexbie(commands.Bot):
             logger.warning(f"Couldn't save GUILD_ID to config/.env ({e}). Add GUILD_ID={guild.id} yourself, "
                            "or Plexbie decides again at the next start.")
         await self._sync_to_home(guild.id)
+        self.dispatch("home_server", guild)     # e.g. the invite tracker loads its invites
         why = ("your channel and role settings are there" if reason == "settings"
                else "it is the only server Plexbie is in and the bot's owner owns it")
         logger.warning(f"🏠 GUILD_ID was blank, so Plexbie made '{guild.name}' ({guild.id}) its household's server "
@@ -274,6 +275,7 @@ class Plexbie(commands.Bot):
         if gid and guild.id == gid:
             logger.info(f"Plexbie joined its household's server '{guild.name}' ({guild.id})")
             await self._sync_to_home(guild.id)
+            self.dispatch("home_server", guild)
             self._check_role_order()
             return
         if not gid:
@@ -391,6 +393,11 @@ class Plexbie(commands.Bot):
                 except Exception as e:
                     logger.warning(f"Shutdown: {e}")
         await super().close()
+
+    async def on_message(self, message):
+        """Only slash commands, so messages aren't parsed as text commands. Otherwise every
+        "@Plexbie ..." in any server or DM logs a CommandNotFound at ERROR. DMs still reach
+        portal/inbox.on_dm, a listener of its own, and bot.wait_for still sees them."""
 
     async def on_command_error(self, ctx, error):
         """Global error handler"""

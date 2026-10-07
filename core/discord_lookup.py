@@ -18,6 +18,37 @@ def home_guild(bot, config):
     return bot.get_guild(config.guild_id) if (bot and config.guild_id) else None
 
 
+def is_home(config, guild) -> bool:
+    """True for the household's server (a guild or its id). False for any other,
+    for no server at all (a DM), and while GUILD_ID is blank."""
+    home = getattr(config, "guild_id", None)
+    gid = getattr(guild, "id", guild)
+    return bool(home) and gid is not None and int(gid) == int(home)
+
+
+async def is_household_member(bot, config, user_id: int, ask: bool = True) -> bool:
+    """True when the user is a member of the household's server.
+
+    The member cache first (full while the Server Members intent is on), else
+    Discord is asked (ask=False: the cache only). Discord is asked for the server
+    too while it isn't cached (start-up, or Discord briefly without it). False
+    while GUILD_ID is blank, when Plexbie isn't in that server, and when Discord
+    says no or can't be asked.
+    """
+    guild = home_guild(bot, config)
+    if guild is not None and guild.get_member(user_id) is not None:
+        return True
+    if not ask or not (bot and config.guild_id):
+        return False
+    try:
+        if guild is None:
+            guild = await bot.fetch_guild(config.guild_id)
+        await guild.fetch_member(user_id)
+        return True
+    except Exception:       # NotFound, Forbidden, any other HTTP error or no connection: not shown to be a member
+        return False
+
+
 def admin_channel(bot, config):
     """The admin channel from the bot's cache, or None."""
     return bot.get_channel(int(config.admin_channel_id)) if (bot and config.admin_channel_id) else None
