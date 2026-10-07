@@ -404,7 +404,7 @@ async def _push_app(apps: List[tuple], payload: Dict[str, Any], live: Optional[D
 
 
 async def push_app_live(apps: List[tuple], data: Dict[str, Any]) -> int:
-    """A live-progress update ({"op": "show" | "end", "id", ...}) to these phones. Best-effort."""
+    """A live-progress update ({"op": "show" | "end", "id", "ts", ...}) to these phones. Best-effort."""
     try:
         return await _push_app(apps, {}, live=data)
     except Exception as e:

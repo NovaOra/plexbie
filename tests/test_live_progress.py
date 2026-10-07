@@ -141,3 +141,23 @@ def test_two_requests_for_the_same_season_are_one_notification():
         await tick(T0 + timedelta(minutes=41))
     sent = _run(steps)
     assert [(d["op"], d["id"]) for d in sent] == [("show", "232")]
+
+
+def test_every_update_carries_when_it_was_sent():
+    """A phone that was offline can get its updates late and out of order: each one
+    says when it was sent (milliseconds), so a late "show" can't undo an "end"."""
+    async def steps(p, tick):
+        await _request("100", "Sintel")
+        await _request("200", "Spring")
+        p.now["Sintel"] = p.now["Spring"] = {"stage": "downloading", "percent": 5}
+        await tick(T0)
+        p.now["Sintel"] = {"stage": "available"}
+        from database.kv_store import kv_delete
+        from database.request_store import REQUESTS_NAMESPACE
+        await kv_delete(REQUESTS_NAMESPACE, "200")
+        await tick(T0 + timedelta(minutes=1))
+    sent = _run(steps)
+    start = int(T0.timestamp() * 1000)
+    assert sorted((d["op"], d["id"], d.get("ts")) for d in sent) == [
+        ("end", "100", start + 60_000), ("end", "200", start + 60_000),
+        ("show", "100", start), ("show", "200", start)]

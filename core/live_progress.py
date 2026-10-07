@@ -10,6 +10,9 @@ holds the notification bar:
   - a download that hasn't moved for STALL is taken down (and comes back if it moves);
   - each update tells the phone to drop it by itself after the app's timeout unless
     another update comes, so a bot that goes quiet can't leave one behind.
+Each update carries "ts", when it was sent (milliseconds since the epoch): a phone that
+was offline can get them late and out of order, and the app can ignore one older than
+the last it applied, so a late "show" can't bring back one that has ended.
 """
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -103,6 +106,7 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
     if not notify.app_push_on():
         return 0
     now = now or datetime.now(timezone.utc)
+    ts = int(now.timestamp() * 1000)
     phones = await _live_apps()
     states = await kv_get_all(NAMESPACE)
     if not phones and not states:
@@ -136,7 +140,7 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
         # Deleted: take its notification down on the phones it was on.
         state = states[key] if isinstance(states[key], dict) else {}
         if state.get("shown") and phones_of(state.get("owners")):
-            sent += await notify.push_app_live(phones_of(state.get("owners")), {"op": "end", "id": key})
+            sent += await notify.push_app_live(phones_of(state.get("owners")), {"op": "end", "id": key, "ts": ts})
         gone.append(key)
     for key, rec in records.items():
         state = states.get(key) if isinstance(states.get(key), dict) else None
@@ -146,7 +150,7 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
         if rec.get("status") != "approved" or (apps and key not in shown_for):
             if state:
                 if state.get("shown") and apps:
-                    sent += await notify.push_app_live(apps, {"op": "end", "id": key})
+                    sent += await notify.push_app_live(apps, {"op": "end", "id": key, "ts": ts})
                 gone.append(key)
             continue
         if not apps and not state:
@@ -166,7 +170,7 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
         stage, pct = live.get("stage"), live.get("percent")
         if stage in FINISHED:
             if state and state.get("shown") and apps:
-                sent += await notify.push_app_live(apps, {"op": "end", "id": key})
+                sent += await notify.push_app_live(apps, {"op": "end", "id": key, "ts": ts})
             if state:
                 gone.append(key)
             continue
@@ -185,13 +189,13 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
             if due:
                 sent += await notify.push_app_live(apps, {
                     "op": "show", "id": key, "slot": rec.get("_slot"), "title": _title(rec), "text": _text(live),
-                    "stage": stage, "percent": pct if isinstance(pct, int) else None,
+                    "stage": stage, "percent": pct if isinstance(pct, int) else None, "ts": ts,
                 })
                 state.update(shown=True, sent=now.isoformat(), sentStage=stage, sentPercent=pct)
         elif state.get("shown"):
             # Stalled, gone back to searching, or nobody's phone wants it any more.
             if apps:
-                sent += await notify.push_app_live(apps, {"op": "end", "id": key})
+                sent += await notify.push_app_live(apps, {"op": "end", "id": key, "ts": ts})
             state["shown"] = False
         keep[key] = state
     if keep:
