@@ -810,6 +810,8 @@ docker run --rm -v "$PWD:/src" -w /src -e PYTHONDONTWRITEBYTECODE=1 \
   plexbie:latest python tests/run_all.py
 ```
 
+The website has its own tests, run with `npm test` in `web/` (after `npm ci`).
+
 The README's GIFs and screenshots come from the website's demo mode (invented
 titles, code-drawn covers). To re-record them, run `npm run dev` in `web/`, then
 `node scripts/demo-gifs.mjs` (prints the ffmpeg command for the GIFs) and
@@ -962,7 +964,8 @@ is not affiliated with or endorsed by Plex, Inc., Discord Inc. or TMDB.
 
 Pull requests are welcome. Please:
 
-1. Run `python tests/run_all.py`; everything should pass.
+1. Run `python tests/run_all.py`, and `npm test` in `web/` if you changed the
+   website; everything should pass.
 2. Add a test that fails before your change and passes after.
 3. Respect the three conventions in [Architecture](#architecture). The pattern
    tests will tell you if you have not.

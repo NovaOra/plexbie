@@ -50,6 +50,27 @@ jobs:
       # The README claims `pytest tests/` also works. This is what keeps that true.
       - run: pytest tests/ -q
 
+  web:
+    name: website tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Matches the Dockerfile's web stage.
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      # Stubbed fetch only: no bot, no network.
+      - run: npm test
+
   image:
     name: docker image builds
     runs-on: ubuntu-latest

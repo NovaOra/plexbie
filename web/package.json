@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "vitest run",
     "preview": "vite preview",
     "build:preview": "VITE_SAMPLE=1 vite build --outDir dist-preview --emptyOutDir",
     "build:demo": "VITE_SAMPLE=1 VITE_DEMO=1 vite build --outDir dist-demo --emptyOutDir && printf '/*\\n  X-Robots-Tag: noindex\\n' > dist-demo/_headers",
@@ -30,6 +31,7 @@
     "oxlint": "^1.81.0",
     "playwright-core": "^1.63.0",
     "typescript": "~7.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.3"
   }
 }

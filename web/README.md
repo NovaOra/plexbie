@@ -14,6 +14,7 @@ Two sites from one React + TypeScript + Vite codebase:
 npm ci
 npm run dev            # http://localhost:5173 with invented sample data (?as=guest|visitor|member)
 npm run build          # production build, no sample data
+npm test               # unit tests (vitest), against a stubbed fetch
 npm run dev:project    # the project site (plexbie.com)
 npm run build:project  # its static build, in dist-project/ (VITE_REPO_PUBLIC=false hides GitHub links)
 npx wrangler deploy --config cloudflare/wrangler.jsonc   # publish it (the maintainer's Cloudflare)
