@@ -7,6 +7,7 @@ from typing import Any, Dict, Union
 from aiohttp import web
 
 from core.logging import get_logger
+from core.security import plain_server_header
 from core.services import BotServices
 from core.webhook_security import WebhookValidator, create_validated_handler
 
@@ -27,17 +28,13 @@ async def read_json_object(request: web.Request) -> Union[Dict[str, Any], web.Re
     return data
 
 
-async def _plain_server_header(request, response) -> None:
-    response.headers["Server"] = "Plexbie"           # not which Python and aiohttp versions
-
-
 class WebhookServer:
     """HTTP server for webhooks from Sonarr, Radarr, Plex, Seerr and Tautulli."""
 
     def __init__(self, services: BotServices):
         self.services = services
         self.app = web.Application()
-        self.app.on_response_prepare.append(_plain_server_header)
+        self.app.on_response_prepare.append(plain_server_header)
         self.runner = None
         self.validator = WebhookValidator(services.config)
         self.bound_addresses = []

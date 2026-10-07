@@ -1091,6 +1091,11 @@ docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config
   website and app say to try again later.
 - **Never commit `config/.env`.** It is gitignored, along with `config/*.db` and
   `logs/`.
+- **`config/.env` is never readable by other users, even for a moment.** Plexbie
+  rewrites it through a temp file that is created with its final permissions: owner
+  read-write and group read-only (Unraid's `users`), or tighter if the file already was.
+  If the config folder can't be written (a read-only mount, the wrong owner, a full
+  disk), the setup page names the file and says so.
 - **Only press Allow on a Plex sign-in you started yourself.** Every Plex sign-in
   (website, invite page and app) asks plex.tv for its PIN from the visitor's own
   browser, never from the server, and plex.tv refuses an approval from a different

@@ -344,7 +344,10 @@ async function api(path, body) {
     const d = await r.json().catch(() => ({}));
     throw new Error(d.error || "Check the details and try again.");
   }
-  if (!r.ok) throw new Error("The server answered " + r.status);
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.error || "The server answered " + r.status);
+  }
   return r.json();
 }
 // Show the code screen until the code from the log is accepted.

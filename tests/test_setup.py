@@ -48,7 +48,61 @@ def test_write_env_keeps_comments_and_order_and_appends_new_keys():
     lines = p.read_text().splitlines()
     assert lines[:5] == ["# top", "DISCORD_BOT_TOKEN=abc.def", "# why", "PLEX_URL=http://10.0.0.5:32400", "#PLEX_TOKEN=commented"]
     assert lines[-1] == "TMDB_API_KEY=k"
-    assert oct(p.stat().st_mode & 0o777) == "0o600"
+
+
+def test_env_keeps_its_mode_but_never_more_than_owner_and_group_read():
+    """Owner read-write, group read-only (docker/entrypoint.sh): a share user in
+    the group can still read it, nobody else ever can."""
+    from core.config import rename_env_keys
+    modes = {}
+    for before in (None, 0o600, 0o640, 0o644, 0o666):
+        p = _env("OVERSEERR_URL=http://s:5055\n")
+        if before is None:
+            p.unlink()
+        else:
+            os.chmod(p, before)
+        setup.write_env(p, {"PLEX_URL": "http://p:32400"})
+        modes[before] = p.stat().st_mode & 0o777
+        if before is not None:
+            os.chmod(p, before)
+            rename_env_keys(p)
+            assert p.stat().st_mode & 0o777 == modes[before], (oct(before), "renaming keeps the same mode")
+    assert modes == {None: 0o640, 0o600: 0o600, 0o640: 0o640, 0o644: 0o640, 0o666: 0o640}, \
+        {k and oct(k): oct(v) for k, v in modes.items()}
+
+
+def test_env_secrets_never_sit_in_a_file_others_can_read():
+    """The temp file is created with its final mode, not written and then
+    narrowed: even for a moment, nobody else could open it."""
+    import stat
+    from core.config import rename_env_keys
+    p = _env("OVERSEERR_TOKEN=old\n")
+    os.chmod(p, 0o600)
+    seen = []
+
+    def look(*_):
+        for f in p.parent.iterdir():
+            if f != p and f.stat().st_size:
+                seen.append((f.name, stat.S_IMODE(f.stat().st_mode)))
+    real = {name: getattr(os, name) for name in ("chmod", "fchmod", "replace")}
+
+    def spy(name):
+        def call(*a, **kw):
+            look()
+            return real[name](*a, **kw)
+        return call
+    old_umask = os.umask(0)                 # a plain open() would make it world-readable
+    for name in real:
+        setattr(os, name, spy(name))
+    try:
+        setup.write_env(p, {"DISCORD_BOT_TOKEN": "secret.token"})
+        rename_env_keys(p)
+    finally:
+        for name, fn in real.items():
+            setattr(os, name, fn)
+        os.umask(old_umask)
+    assert seen and all(mode == 0o600 for _, mode in seen), seen
+    assert sorted(f.name for f in p.parent.iterdir()) == [".env"], "no temp file is left behind"
 
 
 def test_values_with_spaces_or_hashes_are_quoted_so_dotenv_reads_them_back():
@@ -784,3 +838,76 @@ def test_the_address_check_proves_it_reaches_this_plexbie():
                                   or "Nothing answered" in missing["message"])
     assert not nonsense["ok"] and "isn't an address" in nonsense["message"]
     assert stray == 404 and left == {}, "a probe answers only while its own check runs"
+
+
+def test_a_config_folder_plexbie_cant_write_to_is_said_plainly():
+    """A read-only or full config folder showed only "The server answered 500".
+    The page names config/.env, not the temp file or marker that failed first."""
+    def save_with(p, broken):
+        async def steps(c, s):
+            undo = broken(p)
+            try:
+                r = await c.post("/setup/api/save", json={"values": {"PLEX_URL": "http://p:32400"}})
+                body = (await r.json()) if r.content_type == "application/json" else None
+                return r.status, r.content_type, body, os.getenv("PLEX_URL")
+            finally:
+                undo()
+        return _scenario(p, steps)
+
+    def read_only(p):
+        p.parent.chmod(0o500)
+        return lambda: p.parent.chmod(0o700)
+
+    def busy(p):                                   # a single-file bind mount can't be replaced
+        real = os.replace
+
+        def refuse(src, dst, *a, **kw):
+            raise OSError(16, "Device or resource busy", str(src), None, str(dst))
+        os.replace = refuse
+        return lambda: setattr(os, "replace", real)
+
+    cases = [busy] + ([read_only] if os.geteuid() != 0 else [])    # root writes anywhere
+    for broken in cases:
+        p = _env("")
+        status, kind, body, plex_url = save_with(p, broken)
+        assert status == 500 and kind == "application/json", (broken.__name__, status, kind)
+        error = body["error"]
+        assert not body["ok"] and f"couldn't save {p} (" in error and "writable" in error, error
+        assert ".tmp" not in error and setup.IN_PROGRESS not in error, error
+        assert plex_url is None, "a failed save leaves the running settings alone"
+        assert p.read_text() == "" and not list(p.parent.glob("*.tmp")), broken.__name__
+
+
+def test_connect_writes_its_webhook_secrets_while_holding_the_save_lock():
+    """Two saves at once could each read .env and the second drop the first's keys."""
+    p = _env("")
+    held = []
+
+    def spy(path, values):
+        held.append(s_ref[0]._saving.locked())
+        raise RuntimeError("stop here")
+    s_ref = []
+
+    async def steps(c, s):
+        s_ref.append(s)
+        real, real_lan = setup.write_env, setup._lan_address
+        setup.write_env, setup._lan_address = spy, (lambda: "10.0.0.2")
+        try:
+            await c.post("/setup/api/connect", json={"service": "seerr", "values": {}})
+        finally:
+            setup.write_env, setup._lan_address = real, real_lan
+
+    _scenario(p, steps)
+    assert held == [True], held
+
+
+def test_the_setup_page_and_webhooks_share_one_plain_server_header():
+    """Responses say "Plexbie", not which Python and aiohttp versions."""
+    from core import security, webhooks
+
+    async def steps(c, s):
+        return (await c.get("/setup/api/state")).headers.get("Server")
+
+    assert _scenario(_env(""), steps) == "Plexbie"
+    assert security.plain_server_header in setup.Setup(_env("")).app().on_response_prepare
+    assert webhooks.plain_server_header is security.plain_server_header

@@ -35,6 +35,7 @@ from dotenv import dotenv_values, load_dotenv
 
 from core.blocking import run_blocking
 from core.clients import ServiceError
+from core.security import plain_server_header
 
 PAGE = Path(__file__).with_name("setup.html")
 DISCORD_API = "https://discord.com/api/v10"
@@ -313,10 +314,8 @@ def write_env(path: Path, values: Dict[str, str]) -> None:
             lines[i] = f"{key}={_quote(left.pop(key))}"
     if left:
         lines += ["", "# Added by setup"] + [f"{k}={_quote(v)}" for k, v in left.items()]
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    tmp.write_text("\n".join(lines) + "\n")
-    os.chmod(tmp, 0o600)
-    tmp.replace(path)
+    from core.config import replace_env_file
+    replace_env_file(path, "\n".join(lines) + "\n")
 
 
 def _quote(value: str) -> str:
@@ -339,8 +338,11 @@ def _lan_address() -> str:
         return "<this server>"
 
 
-async def _plain_server_header(request, response) -> None:
-    response.headers["Server"] = "Plexbie"
+class Unwritable(Exception):
+    """config/.env couldn't be saved: said as such on the page, not as a bare 500."""
+    def __init__(self, env_file: Path, e: OSError):
+        super().__init__(f"Plexbie couldn't save {env_file} ({e.strerror or e}). "
+                         "Is the config folder writable by the user Plexbie runs as?")
 
 
 def _why(e: BaseException) -> str:
@@ -430,9 +432,12 @@ class Setup:
         if not clean:
             return
         async with self._saving:
-            self.env_file.parent.mkdir(parents=True, exist_ok=True)
-            (self.env_file.parent / IN_PROGRESS).touch()
-            await run_blocking(write_env, self.env_file, clean)
+            try:
+                self.env_file.parent.mkdir(parents=True, exist_ok=True)
+                (self.env_file.parent / IN_PROGRESS).touch()
+                await run_blocking(write_env, self.env_file, clean)
+            except OSError as e:
+                raise Unwritable(self.env_file, e) from e
         for k, v in clean.items():
             os.environ[k] = v
 
@@ -470,6 +475,8 @@ class Setup:
             if request.path.startswith("/setup/api/"):
                 return web.json_response({"ok": False, "error": str(e)}, status=400)
             raise
+        except Unwritable as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
 
     async def more(self, request: web.Request) -> web.Response:
         """Everything the guided steps don't ask about, by template section."""
@@ -538,9 +545,13 @@ class Setup:
         # addresses beyond loopback, which are kept as they are.
         binds = [a.strip() for a in (os.getenv("WEBHOOK_BIND") or "127.0.0.1").split(",") if a.strip()]
         widened = all(a in ("127.0.0.1", "::1", "localhost") for a in binds)
-        local = {**new_secrets(os.environ), **({"WEBHOOK_BIND": "0.0.0.0"} if widened else {})}
-        await run_blocking(write_env, self.env_file, local)
-        os.environ.update(local)
+        async with self._saving:
+            local = {**new_secrets(os.environ), **({"WEBHOOK_BIND": "0.0.0.0"} if widened else {})}
+            try:
+                await run_blocking(write_env, self.env_file, local)
+            except OSError as e:
+                raise Unwritable(self.env_file, e) from e
+            os.environ.update(local)
         base = f"http://{ip}:{os.getenv('WEBHOOK_PORT') or 7980}"
         from core.config import env
         cfg = SimpleNamespace(seerr_url=env("SEERR_URL", ""), seerr_token=env("SEERR_TOKEN", ""),
@@ -1032,7 +1043,7 @@ class Setup:
 
     def app(self) -> web.Application:
         app = web.Application(client_max_size=256 * 1024, middlewares=[self._home_only, self._gate, self._refuse_bad_values])
-        app.on_response_prepare.append(_plain_server_header)
+        app.on_response_prepare.append(plain_server_header)
         r = app.router
         r.add_get("/setup/api/state", self.state)
         r.add_post("/setup/api/save", self.save)

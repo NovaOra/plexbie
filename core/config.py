@@ -62,11 +62,29 @@ def rename_env_keys(path) -> list:
             present.add(RENAMED[key])
             done.append(key)
     if done:
-        tmp = path.with_suffix(".renaming")
-        tmp.write_text("\n".join(lines) + "\n")
-        os.chmod(tmp, path.stat().st_mode & 0o777)
-        tmp.replace(path)
+        replace_env_file(path, "\n".join(lines) + "\n")
     return done
+
+
+def replace_env_file(path, text: str) -> None:
+    """Swap config/.env for `text` in one step, through a temp file beside it that is
+    created with its final mode, so the secrets are never in a file others may read.
+    The mode is the file's own, never more than owner read-write and group read
+    (docker/entrypoint.sh), or exactly that for a new file."""
+    import secrets
+    from pathlib import Path
+    path = Path(path)
+    mode = (path.stat().st_mode & 0o640) | 0o600 if path.exists() else 0o640
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(fd, "w") as f:
+            os.fchmod(f.fileno(), mode)          # the same under any umask
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _env_int(name: str) -> Optional[int]:
@@ -82,16 +100,6 @@ def _env_int_default(name: str, default: int) -> int:
     opaque "Fatal error" with no mention of which variable was at fault.
     """
     return _int_or_none(os.getenv(name), source=name, fallback=default)
-
-
-_TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    """An on/off env var; anything it doesn't recognise means the default."""
-    raw = os.getenv(name, "").strip().lower()
-    return True if raw in _TRUE else False if raw in _FALSE else default
-
 
 
 def public_url(value: str) -> str:

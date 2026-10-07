@@ -19,7 +19,7 @@ README = ROOT / "README.md"
 ENV_EXAMPLE = ROOT / "config" / ".env.example"
 
 ENV_READ = re.compile(
-    r'(?:os\.getenv|os\.environ\.get|_env_int(?:_default)?|_env_bool|(?<![\w.])env)\(\s*["\']([A-Z][A-Z0-9_]*)["\']'
+    r'(?:os\.getenv|os\.environ\.get|_env_int(?:_default)?|(?<![\w.])env)\(\s*["\']([A-Z][A-Z0-9_]*)["\']'
 )
 
 

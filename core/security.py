@@ -78,3 +78,8 @@ def secure_equals(provided: Optional[str], expected: Optional[str]) -> bool:
     if provided is None or expected is None:
         return False
     return hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8"))
+
+
+async def plain_server_header(request, response) -> None:
+    """aiohttp on_response_prepare hook for the setup page and the webhook listener."""
+    response.headers["Server"] = "Plexbie"           # not which Python and aiohttp versions
