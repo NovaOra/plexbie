@@ -320,7 +320,8 @@ class Actions:
             return []
         rows = await run_blocking(plex_invites.list_pending, self.config)
         known = await self._joiners_by_email()
-        return [{**r, "who": known.get(r["email"].lower())} for r in rows]
+        # An invite to a Plex username has no email: nobody's record can say who it's for.
+        return [{**r, "who": known.get(r["email"].lower()) if r["email"] else None} for r in rows]
 
     async def _joiners_by_email(self) -> dict:
         from sqlalchemy import select

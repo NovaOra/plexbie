@@ -706,7 +706,8 @@ so the household can do everything above without Discord:
   ask to join. A pending Plex invite can be sent again to a corrected address
   only when it went to an email address (one sent to a Plex username lists no
   email, so Plexbie can't tell it from the others); either address can be at
-  most 254 characters.
+  most 254 characters. Those username invites are listed by their Plex name,
+  with a pointer to change or cancel them on plex.tv instead of buttons.
 - **Members without Discord** are told what Discord members are DMed (request
   decisions, arrivals, inactivity warnings, removal) by phone/browser alerts
   from the site, or by email when `SMTP_*` is set.

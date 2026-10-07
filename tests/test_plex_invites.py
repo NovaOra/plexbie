@@ -477,3 +477,36 @@ def test_fixing_an_empty_address_changes_no_records():
     assert who == {"discord_id": None, "name": None}
     assert records == [{"555": {"username": "alt", "status": "approved"}}, {"w1": {"email": "", "plex_name": "kid"}}]
     assert tracked == ""
+
+
+def test_an_invite_with_no_email_is_never_put_down_to_someone():
+    """Invites to a Plex username list with no email; someone whose own record has
+    an empty email isn't who that invite is for."""
+    from database.kv_store import kv_set
+    from plugins.user_invites.cog import WEB_JOINS_NAMESPACE
+    from plugins.user_mgmt.models import PlexUser
+    from portal.actions import Actions
+    from helpers import FakeServices
+    from core.config import Config
+    session_module, db = _db()
+    account = Account(["", "wrong@proton.me"])
+    account.invites[0].username = "kid2"
+
+    async def go():
+        await session_module.init_database(f"sqlite:///{db}")
+        try:
+            await kv_set(WEB_JOINS_NAMESPACE, "w1", {"email": "wrong@proton.me", "plex_name": "alt"})
+            async with session_module.get_session() as s:
+                s.add(PlexUser(discord_id=555, discord_username="kid", plex_username="kid", plex_email=""))
+                await s.commit()
+            actions = Actions(bot=None, services=FakeServices(Config(plex_token="owner-token")), data=None, public_url="")
+            return await actions.plex_invites({"admin": True})
+        finally:
+            await session_module.engine.dispose()
+
+    original = _with(account)
+    try:
+        rows = asyncio.run(go())
+    finally:
+        plex_invites.owner_account = original
+    assert {(r["email"], r["name"], r["who"]) for r in rows} == {("", "kid2", None), ("wrong@proton.me", "", "alt")}, rows

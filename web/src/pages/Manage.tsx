@@ -1704,14 +1704,16 @@ function PlexInvites() {
       <ul className="m-rows">
         <AnimatePresence initial={false}>
           {rows.map((i) => (
-            <motion.li key={i.email} {...fold}>
+            // An invite to a Plex username has no email, so the name and time tell it apart.
+            <motion.li key={i.email || `${i.name}|${i.sentAt}`} {...fold}>
               <article className="m-person">
-                <Initial name={i.who || i.email} big />
+                <Initial name={i.who || i.email || i.name} big />
                 <div className="m-person__body">
-                  <h3 className="m-card__title">{i.who || i.email}</h3>
-                  <span className="muted m-person__meta">{i.who ? `${i.email} · ` : ""}sent {since(i.sentAt)}</span>
+                  <h3 className="m-card__title">{i.who || i.email || i.name || "A Plex invite"}</h3>
+                  <span className="muted m-person__meta">{i.who && i.email ? `${i.email} · ` : ""}sent {since(i.sentAt)}</span>
+                  {i.email ? null : <span className="m-person__note">Sent to a Plex username, so change or cancel it on plex.tv.</span>}
                 </div>
-                {editing === i.email ? null : (
+                {!i.email || editing === i.email ? null : (
                   <div className="m-person__actions m-person__actions--two">
                     <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => { setEditing(i.email); setNext(""); }}>
                       <Mail size={16} aria-hidden /> Change email
@@ -1719,7 +1721,7 @@ function PlexInvites() {
                     <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || busy.has(i.email)} onConfirm={() => void cancel(i)} />
                   </div>
                 )}
-                  {editing === i.email ? (
+                  {i.email && editing === i.email ? (
                     <form className="m-plex-invite__edit" onSubmit={(e) => { e.preventDefault(); void change(i); }}>
                       <div className="field">
                       <label htmlFor={`pi-${i.email}`}>The right email</label>

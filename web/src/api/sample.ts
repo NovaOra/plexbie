@@ -263,6 +263,7 @@ export const admin = (section: string): Promise<unknown> => {
     },
     plexinvites: [
       { email: "jordan@example.com", name: "", sentAt: ago(60 * 3), who: "Jordan Lee" },
+      { email: "", name: "riley.plex", sentAt: ago(60 * 24 * 2), who: null },
       { email: "old-typo@exmaple.com", name: "", sentAt: ago(60 * 24 * 40), who: null },
     ],
     joins: [
