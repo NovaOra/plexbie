@@ -14,6 +14,11 @@ Seerr arrival check ran as a task nothing held on to.
 The film/TV and book cards decline through one shared body (each keeping the
 button ids already-posted cards carry), and both season follow-ups build the
 same "Can't be found" callback, so a fix made to one reaches the other.
+
+The website's own approve and decline are pinned end to end too: a request made
+in Seerr is decided there without waiting on the lock it already holds, a refusal
+or a failed approval leaves the request open with nobody told, and a show with
+no TheTVDB entry is approved for a hand download instead of going to Seerr.
 """
 import asyncio
 import logging
@@ -103,12 +108,14 @@ class _Channel:
 class _World:
     """A database, a bot, and the outside world (downloads, Seerr, DMs) as counters."""
 
-    def __init__(self, card=None, download=lambda fmt: True):
+    def __init__(self, card=None, download=lambda fmt: True, seerr=None):
         from plugins.media_requests import cog
 
         self.cog = cog
         self.card = card or _Message()
-        self.services = SimpleNamespace(config=SimpleNamespace(admin_channel_id=1))
+        self.services = SimpleNamespace(config=SimpleNamespace(admin_channel_id=1), seerr=seerr,
+                                        sonarr=SimpleNamespace(configured=False),
+                                        radarr=SimpleNamespace(configured=False))
         self.bot = SimpleNamespace(services=self.services)
         self.downloads, self.fulfils, self.dms = [], [], []
         self.gate = None
@@ -169,6 +176,12 @@ class _World:
         from database.request_store import save_request
         await save_request(MID, user_id=1, media={"title": "The Book", "author": "A. Writer", "request_format": fmt,
                                                   "open_library_key": "/works/OL1W"}, media_type=fmt)
+
+    async def save_seerr_show(self):
+        """A show requested in Seerr itself, mirrored here as Seerr's request 41."""
+        from database.request_store import save_request
+        await save_request(MID, user_id=1, media={"id": 456, "media_type": "tv", "name": "The Show"}, seasons=[2],
+                           media_type="tv", extra={"source": "seerr", "overseerr_request_id": 41})
 
     async def press(self, view_type, custom_id, message=None):
         """Click a button the way discord.py does: a failure goes to the view's on_error."""
@@ -553,3 +566,186 @@ def test_a_season_search_that_finds_nothing_opens_a_help_request_from_either_fol
         for owner, name, value in saved:
             setattr(owner, name, value)
     assert opened == [(bot, MID, [2]), (bot, MID, [2])], opened
+
+
+# ------------------------------------------- the website's own decisions
+
+class _Seerr:
+    """Seerr as a decision sees it: the paths posted to, the show details it gives
+    (an exception: it can't be asked) and, with refuse, an error for every post."""
+    configured = True
+
+    def __init__(self, show=None, refuse=None):
+        self.show, self.refuse, self.posts = show, refuse, []
+
+    async def get(self, path, **params):
+        if isinstance(self.show, Exception):
+            raise self.show
+        return self.show
+
+    async def post(self, path, body, raw=False):
+        self.posts.append(path)
+        if self.refuse is not None:
+            raise self.refuse
+        return (201, '{"id": 9}') if raw else {}
+
+
+def test_a_website_decision_on_a_seerr_request_is_made_in_seerr_and_recorded_once():
+    from database.request_store import get_request
+    for approve, path, said in ((True, "request/41/approve", "Good news"), (False, "request/41/decline", "Sorry")):
+        seerr = _Seerr()
+        w = _World(seerr=seerr)
+
+        async def scenario():
+            await w.save_seerr_show()
+            # It holds the request's lock already: waiting on it again would hang forever.
+            result = await asyncio.wait_for(w.website(approve), 5)
+            return result, await get_request(MID)
+
+        result, record = w.run(scenario)
+        assert result == {"ok": True, "message": f"{'Approved' if approve else 'Declined'} The Show in Seerr."}, result
+        assert seerr.posts == [path], seerr.posts
+        assert record["status"] == ("approved" if approve else "declined")
+        assert record["resolved_by"] == "web admin"
+        assert len(w.dms) == 1 and said in w.dms[0], w.dms
+        assert w.fulfils == [], "a request made in Seerr was submitted to Seerr a second time"
+        assert w.cog._DECISION_LOCKS == {}
+
+
+def test_a_seerr_request_that_seerr_refuses_stays_pending():
+    from core.clients import ServiceError
+    w = _World(seerr=_Seerr(refuse=ServiceError("Seerr answered HTTP 500", 500)))
+
+    async def scenario():
+        await w.save_seerr_show()
+        return await w.website(True), await w.status()
+
+    result, status = w.run(scenario)
+    assert result["ok"] is False and "Seerr didn't take that" in result["message"], result
+    assert status == "pending"
+    assert w.dms == [], "the requester heard about a decision Seerr never took"
+
+
+def test_a_failed_approval_from_the_website_stays_pending_and_tells_nobody():
+    w = _World()
+
+    async def refused(view):
+        w.fulfils.append(view._title())
+        return {"success": False, "mode": "failed",
+                "followup_message": "Failed to submit to Seerr or restore monitoring. Please try manually."}
+    w._patches.append((w.cog.AdminApprovalView, "_fulfill_request", refused))
+
+    async def scenario():
+        await w.save_film()
+        return await w.website(True), await w.status()
+
+    result, status = w.run(scenario)
+    assert result == {"ok": False, "message": "Failed to submit to Seerr or restore monitoring. Please try manually."}
+    assert status == "pending", "a failed approval was recorded, so it can't be tried again"
+    assert w.dms == [], "the requester was given good news for a failed approval"
+    assert w.card.edits == [], "the card was closed"
+
+
+def test_a_website_decline_records_who_and_tells_the_requester():
+    from database.request_store import get_request
+    w = _World()
+
+    async def scenario():
+        await w.save_film()
+        return await w.website(False), await get_request(MID)
+
+    result, record = w.run(scenario)
+    assert result == {"ok": True, "message": "Declined The Film."}
+    assert record["status"] == "declined" and record["resolved_by"] == "web admin"
+    assert w.fulfils == []
+    assert w.dms == ["❌ Sorry, your request for **The Film** was declined."], w.dms
+    assert _buttons_gone(w.card)
+    assert any(f.name == "❌ Declined by" and "(on the website)" in f.value for f in w.card.edits[-1]["embed"].fields)
+
+
+def test_an_approve_and_a_decline_at_once_give_one_decision():
+    for first in (True, False):
+        w = _World()
+
+        async def scenario():
+            await w.save_film()
+            results = await asyncio.gather(w.website(first), w.website(not first))
+            return results, await w.status()
+
+        results, status = w.run(scenario)
+        won = [r for r in results if r["ok"]]
+        assert len(won) == 1, results
+        assert status == ("approved" if first else "declined")
+        assert [r["message"] for r in results if not r["ok"]] == [f"Already {status}."], results
+        assert w.fulfils == (["The Film"] if first else []), w.fulfils
+        assert len(w.dms) == 1, f"the requester was told {len(w.dms)} times: {w.dms}"
+
+
+def test_a_decline_made_in_seerr_is_recorded_once():
+    from database.request_store import get_request
+    from webhooks import seerr_handler as module
+    seerr = _Seerr()
+    w = _World(seerr=seerr)
+    event = {"notification_type": "MEDIA_DECLINED", "subject": "The Show (2020)", "message": "",
+             "media": {"media_type": "tv", "tmdbId": "456", "status": "PENDING"},
+             "request": {"request_id": "41", "requestedBy_username": "Robin"}, "extra": []}
+
+    async def scenario():
+        await w.save_seerr_show()
+        events = module.SeerrEvents(w.bot)
+        await events.dispatch("MEDIA_DECLINED", event)
+        await events.dispatch("MEDIA_DECLINED", event)     # Seerr sends it again: nothing more happens
+        return await get_request(MID)
+
+    record = w.run(scenario)
+    assert record["status"] == "declined" and record["resolved_by"] == "Seerr"
+    assert w.dms == ["❌ Sorry, your request for **The Show** was declined."], w.dms
+    assert seerr.posts == [], "Seerr's own decision was sent back to it"
+
+
+# ------------------------------------------- a show with no TheTVDB entry
+
+def _approve_show(tmdb_id, seerr):
+    """Approve a saved show through the real _fulfill_request, against a Seerr stub.
+    Returns the result, the stored request and the shows followed up in Sonarr."""
+    from core import season_search
+    from database.request_store import get_request, save_request
+    w = _World(seerr=seerr)
+    w._patches = [p for p in w._patches if p[1] != "_fulfill_request"]
+    followed = []
+    w._patches.append((season_search, "follow_up_new_show", lambda services, **kw: followed.append(kw["tmdb_id"])))
+
+    async def scenario():
+        await save_request(MID, user_id=1, media={"id": tmdb_id, "media_type": "tv", "name": "Faraway Downs"},
+                           seasons="all", media_type="tv")
+        view = w.cog.AdminApprovalView()
+        assert await view._load_from_saved(MID, w.bot)
+        return await view._fulfill_request(), await get_request(MID)
+
+    return (*w.run(scenario), followed)
+
+
+def test_a_show_with_no_tvdb_entry_is_approved_for_a_hand_download_not_sent_to_seerr():
+    from core.clients import ServiceError
+    from plugins.media_requests.cog import NO_TVDB_NOTE
+    seerr = _Seerr(show={"name": "Faraway Downs", "externalIds": {"tvdbId": None}},
+                   refuse=ServiceError("Seerr would drop this request", 500))
+    result, record, followed = _approve_show(204999, seerr)
+    assert seerr.posts == [], "sent to Seerr, which quietly deletes a request Sonarr can't take"
+    assert result["success"] is True and result["mode"] == "manual", result
+    assert result["admin_note"] == NO_TVDB_NOTE
+    assert "by hand" in result["user_message"]
+    assert record["no_tvdb"] is True, "Manage → All requests can't flag it for a hand download"
+    assert followed == [], "Sonarr was asked to search for a show it can't have"
+
+
+def test_a_show_seerr_can_pass_on_or_cant_check_is_sent_to_seerr_once():
+    for tmdb_id, show in ((1396, {"name": "Breaking Bad", "externalIds": {"tvdbId": 81189}}),
+                          (1397, RuntimeError("Seerr unreachable"))):
+        seerr = _Seerr(show=show)
+        result, record, followed = _approve_show(tmdb_id, seerr)
+        assert seerr.posts == ["request"], (tmdb_id, seerr.posts)
+        assert result["success"] is True and result["mode"] == "seerr", result
+        assert not record.get("no_tvdb"), tmdb_id
+        assert record["overseerr_request_id"] == 9, "Seerr's number for it wasn't kept"
+        assert followed == [tmdb_id], followed
