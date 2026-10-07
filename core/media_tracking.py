@@ -132,7 +132,8 @@ class TrackedMedia:
         if self.season_number is not None:
             return season_number == int(self.season_number)
 
-        return True
+        # All seasons: the first season to start, but not the specials.
+        return season_number != 0
 
     def mark_requester_notified(self, reason: str):
         """Persist that the requester has already been notified about Plex availability."""
@@ -204,11 +205,12 @@ class MediaTrackingManager:
         self.tracked_media: Dict[str, TrackedMedia] = {}
         self.load_tracking_data()
 
-    def _get_tracking_key(self, tmdb_id: int, season_number: Optional[int] = None) -> str:
-        """Generate unique tracking key"""
-        if season_number is not None:
-            return f"tv:{tmdb_id}:s{season_number}"
-        return f"movie:{tmdb_id}" if tmdb_id else f"tv:{tmdb_id}"
+    def _get_tracking_key(
+        self, tmdb_id: int, media_type: str, season_number: Optional[int] = None
+    ) -> str:
+        """Generate unique tracking key: a film and a show can share a TMDB id"""
+        key = f"{media_type}:{tmdb_id}"
+        return f"{key}:s{season_number}" if season_number is not None else key
 
     def load_tracking_data(self):
         """Load tracking data from file"""
@@ -216,9 +218,21 @@ class MediaTrackingManager:
             try:
                 with open(TRACKING_FILE) as f:
                     data = json.load(f)
-                    for key, media_data in data.items():
-                        self.tracked_media[key] = TrackedMedia.from_dict(media_data)
+                moved = 0
+                for key, media_data in data.items():
+                    media = TrackedMedia.from_dict(media_data)
+                    # Older versions filed a show requested with all its seasons
+                    # under movie:{id}, where no episode arrival looked for it.
+                    if media.media_type == "tv" and key == f"movie:{media.tmdb_id}":
+                        new_key = self._get_tracking_key(media.tmdb_id, "tv", media.season_number)
+                        if new_key not in data:
+                            key = new_key
+                            moved += 1
+                    self.tracked_media[key] = media
                 logger.info(f"Loaded {len(self.tracked_media)} tracked media items")
+                if moved:
+                    self.save_tracking_data()
+                    logger.info(f"Moved {moved} tracked show(s) from a movie: key to tv:")
             except Exception as e:
                 logger.error(f"Error loading media tracking data: {e}")
 
@@ -259,7 +273,7 @@ class MediaTrackingManager:
         requester_plex_name: Optional[str] = None,
     ) -> TrackedMedia:
         """Register a new media request from media_requests plugin"""
-        key = self._get_tracking_key(tmdb_id, season_number)
+        key = self._get_tracking_key(tmdb_id, media_type, season_number)
 
         tracked = TrackedMedia(
             tmdb_id=tmdb_id,
@@ -283,16 +297,18 @@ class MediaTrackingManager:
 
 
     def get_tracked_media(
-        self, tmdb_id: int, season_number: Optional[int] = None
+        self, tmdb_id: int, season_number: Optional[int] = None, media_type: Optional[str] = None
     ) -> Optional[TrackedMedia]:
-        """Get tracked media by TMDB ID and season"""
-        key = self._get_tracking_key(tmdb_id, season_number)
-        tracked = self.tracked_media.get(key)
+        """Get tracked media by TMDB ID and season. Without a media type, a
+        season means a show and no season a film. A season of a show falls back
+        to the show requested with all its seasons."""
+        media_type = media_type or ("tv" if season_number is not None else "movie")
+        tracked = self.tracked_media.get(self._get_tracking_key(tmdb_id, media_type, season_number))
         if tracked:
             return tracked
 
-        if season_number is not None:
-            return self.tracked_media.get(f"tv:{tmdb_id}")
+        if media_type == "tv" and season_number is not None:
+            return self.tracked_media.get(self._get_tracking_key(tmdb_id, "tv"))
 
         return None
 
@@ -304,7 +320,7 @@ class MediaTrackingManager:
         episode_title: Optional[str] = None,
     ) -> Optional[TrackedMedia]:
         """Mark an episode as available in Plex and check if notification should be sent"""
-        tracked = self.get_tracked_media(tmdb_id, season_number)
+        tracked = self.get_tracked_media(tmdb_id, season_number, media_type="tv")
 
         if not tracked:
             return None

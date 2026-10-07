@@ -176,16 +176,20 @@ async def close_approval_dm(bot, rec: dict, title: str) -> None:
         logger.info(f"Couldn't take the ticket button off the approval DM for {title}: {e}")
 
 
-async def mark_arrived(bot, tmdb_id, user_id=None, plex_id=None) -> int:
+async def mark_arrived(bot, tmdb_id, user_id=None, plex_id=None, media_type=None) -> int:
     """A requester was told their title is on Plex: their approved requests for it are
     marked arrived (so a stale "Open a ticket" press is refused) and the approval DM's
-    button comes off. Returns how many requests it marked."""
+    button comes off. With `media_type`, a film never marks a show with the same TMDB
+    id (or the other way round). Returns how many requests it marked."""
     from datetime import datetime, timezone
     from database.request_store import all_requests, set_fields
     marked = 0
     for key, rec in (await all_requests()).items():
         media = rec.get("media") or {}
         if str(media.get("id")) != str(tmdb_id) or rec.get("arrived_at") or rec.get("status") != "approved":
+            continue
+        kind = media.get("media_type") or rec.get("media_type")
+        if media_type and kind and kind != media_type:
             continue
         mine = (user_id and str(rec.get("user_id") or "") == str(user_id)) or \
                (plex_id and str(rec.get("plex_account_id") or "") == str(plex_id))

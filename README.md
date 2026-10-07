@@ -242,6 +242,11 @@ who's watching from one place instead of five.
   **Latest + Monitor** as buttons; a show TMDB lists no seasons for yet says so.
 - New additions are announced from Plex webhooks, enriched with TMDB metadata,
   and episodes arriving in a batch are collapsed into a single updating message.
+  Whoever requested a title is told once it's on Plex (a DM, or a phone alert
+  or email for a website request without Discord): a film when it arrives, a
+  show when episode 1 of the first season they asked for does, or of any
+  season but the specials for **All Seasons**. A film and a show that share a
+  TMDB id are tracked apart.
 - Unwatched media can be reported and, optionally, deleted after a configurable
   period, with an exemption list and a dry-run mode. A title is deleted through
   Sonarr or Radarr (with its files) and from Plex, found by its TMDB, TheTVDB or

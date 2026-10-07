@@ -18,7 +18,7 @@ async def _handle_grab(payload: Dict[str, Any]) -> None:
     logger.info(f"Radarr Grab: {title} ({movie.get('year')}) - TMDB: {tmdb_id}")
     if tmdb_id:
         tracker = get_media_tracker()
-        tracked = tracker.get_tracked_media(tmdb_id)
+        tracked = tracker.get_tracked_media(tmdb_id, media_type="movie")
         if tracked:
             tracked.download_id = payload.get("downloadId", "")
             tracked.download_status = "downloading"

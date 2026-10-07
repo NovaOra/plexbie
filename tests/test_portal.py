@@ -1352,6 +1352,25 @@ def test_the_approval_dm_loses_its_ticket_button_once_it_is_on_plex():
     assert edits == [(555, "✅ Approved: Arrival\n🎬 **Arrival** is on Plex now.", None)]
 
 
+def test_a_film_arriving_never_marks_a_show_with_the_same_tmdb_id():
+    from database.request_store import get_request, mark_resolved, save_request
+    from portal.ticket_view import mark_arrived
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(601, user_id=7, media={"id": 42, "media_type": "movie", "title": "The Film"})
+        await save_request(602, user_id=7, media={"id": 42, "media_type": "tv", "name": "The Show"})
+        await save_request(603, user_id=7, media={"id": 42, "title": "Untyped"})   # older record: id alone
+        for rid in (601, 602, 603):
+            await mark_resolved(rid, "approved", "Sam")
+        n = await mark_arrived(None, 42, user_id=7, media_type="movie")
+        return n, [await get_request(rid) for rid in (601, 602, 603)]
+
+    n, (film, show, untyped) = asyncio.run(scenario())
+    assert n == 2 and film.get("arrived_at") and untyped.get("arrived_at")
+    assert not show.get("arrived_at"), "the show hasn't arrived"
+
+
 # ------------------------------------------------------- works out of the box
 def test_the_website_is_on_by_default_with_no_borrowed_address():
     import os

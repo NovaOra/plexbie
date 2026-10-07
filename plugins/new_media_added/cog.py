@@ -1075,7 +1075,7 @@ class NewMediaAddedCog(commands.Cog):
                 from core.media_tracking import get_media_tracker
 
                 tracker = get_media_tracker()
-                tracked_media = tracker.get_tracked_media(tmdb_id)
+                tracked_media = tracker.get_tracked_media(tmdb_id, media_type="movie")
                 if tracked_media and tracked_media.should_notify_for_movie_arrival():
                     await self._send_requester_availability_dm(
                         tracked_media,
@@ -1096,7 +1096,7 @@ class NewMediaAddedCog(commands.Cog):
 
             # Try to find by TMDB ID first (most reliable)
             if tmdb_id:
-                tracked = tracker.get_tracked_media(tmdb_id, season)
+                tracked = tracker.get_tracked_media(tmdb_id, season, media_type="tv")
                 if tracked:
                     return True
 
@@ -1156,7 +1156,8 @@ class NewMediaAddedCog(commands.Cog):
             from portal.ticket_view import mark_arrived
             if not tracked_media.requester_user_id:
                 await self._notify_website_requester(tracked_media, dm_message, reason)
-                await mark_arrived(self.bot, tracked_media.tmdb_id, plex_id=tracked_media.requester_plex_id)
+                await mark_arrived(self.bot, tracked_media.tmdb_id, plex_id=tracked_media.requester_plex_id,
+                                   media_type=tracked_media.media_type)
                 return
 
             user = await self.bot.fetch_user(tracked_media.requester_user_id)
@@ -1165,7 +1166,8 @@ class NewMediaAddedCog(commands.Cog):
                                content=dm_message)
             tracked_media.mark_requester_notified(reason)
             # The approval DM's "Open a ticket" comes off now it's here.
-            await mark_arrived(self.bot, tracked_media.tmdb_id, user_id=tracked_media.requester_user_id)
+            await mark_arrived(self.bot, tracked_media.tmdb_id, user_id=tracked_media.requester_user_id,
+                               media_type=tracked_media.media_type)
 
             from core.media_tracking import get_media_tracker
             get_media_tracker().save_tracking_data()
