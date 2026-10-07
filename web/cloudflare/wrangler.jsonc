@@ -14,7 +14,12 @@
   "vars": { "HOME": "https://home.plexbie.com" },
   // The site's own visit counts (POST /e), read by the dashboard in stats/. Its salt is
   // a secret: `cloudflare/node_modules/.bin/wrangler secret put STATS_SALT --config cloudflare/wrangler.jsonc`.
-  "d1_databases": [{ "binding": "STATS", "database_name": "plexbie-stats", "database_id": "6119b409-4f85-4450-aff9-eee46eda0f36" }],
+  // A new database gets its table from migrations/: `cloudflare/node_modules/.bin/wrangler d1
+  // migrations apply plexbie-stats --remote --config cloudflare/wrangler.jsonc`.
+  "d1_databases": [{ "binding": "STATS", "database_name": "plexbie-stats", "database_id": "6119b409-4f85-4450-aff9-eee46eda0f36",
+    "migrations_dir": "migrations" }],
+  // At most 60 events a minute from one address (one IPv6 /64); more are dropped.
+  "ratelimits": [{ "name": "EVENT_LIMIT", "namespace_id": "4801", "simple": { "limit": 60, "period": 60 } }],
   "triggers": { "crons": ["17 3 * * *"] },
   "routes": [
     { "pattern": "plexbie.com", "custom_domain": true },

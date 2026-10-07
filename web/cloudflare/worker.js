@@ -12,6 +12,16 @@
 const FORWARD = [/^\/api\//, /^\/img\//, /^\/auth\/mobile\//, /^\/download\//, /^\/app-source\//];
 const REDIRECT = [/^\/app(\/|$)/, /^\/invite(\/|$)/, /^\/auth\//, /^\/setup(\/|$)/];
 
+// The site's own pages (not what's passed through from HOME) say what they may load: only
+// this site, plus the films and posters on media.plexbie.com. Styles allow inline too:
+// the animation library holds the hero's outgoing word in place with a style element it adds.
+const PAGE_HEADERS = {
+  "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https://media.plexbie.com; media-src 'self' https://media.plexbie.com; "
+    + "style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+};
+
 // ---- stats -------------------------------------------------------------------------
 // The project site counts its own visits (POST /e from src/project/track.ts) into the D1
 // database STATS, read by the maintainer's dashboard (stats/). No cookies, nothing stored
@@ -21,14 +31,26 @@ const REDIRECT = [/^\/app(\/|$)/, /^\/invite(\/|$)/, /^\/auth\//, /^\/setup(\/|$
 //
 // The maintainer's own visits aren't counted: any browser that has opened the dashboard
 // (it leaves a plexbie_me cookie across plexbie.com; visitors never get one), and the
-// addresses in the EXCLUDE_IPS secret (comma-separated IPs, or IPv4 ranges like
-// 203.0.113.0/24), for devices at home that never open it.
+// addresses in the EXCLUDE_IPS secret (comma-separated IPs, or ranges like 203.0.113.0/24
+// or 2001:db8:1:2::/64), for devices at home that never open it.
+//
+// Each address (each IPv6 /64, counted as a salted hash) may send 60 events a minute (the
+// EVENT_LIMIT binding in wrangler.jsonc); past that they're dropped. Pages and referrers are
+// stored only when they look like what the site itself sends, so made-up text can't fill the
+// dashboard's lists. The events table itself is in migrations/0001_events.sql.
 
 /** Where an event may come from: this site, or the public demo (demo.plexbie.com), which
  *  sends its own visits here. Each is stored with its site, so the dashboard can tell them apart. */
 const SITES = { "https://plexbie.com": "plexbie.com", "https://www.plexbie.com": "plexbie.com", "https://demo.plexbie.com": "demo" };
 const EVENTS = new Set(["pageview", "engage", "click", "outbound", "channel", "video", "seen"]);
 const BOTS = /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|monitor|curl|wget|python|go-http|java\//i;
+/** The pages there are: this site's, and the demo's (a household's site with sample data).
+ *  Any other address is a page that doesn't exist, stored as "(not found)". */
+const PAGES = /^\/(?:privacy|terms|library|search|schedule|channel|manage|alerts|invite|title\/[a-z]+\/[\w%.-]{1,60})?\/?$/;
+/** Where a visit came from, as track.ts sends it: a campaign tag, or another site's name. */
+const SOURCE = /^(?:tag:[\w./-]{1,60}|[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+)$/i;
+/** A campaign tag with anything else in it (?ref=hacker news) tidied to fit, so it still counts. */
+const tidy = (r) => (r.startsWith("tag:") ? `tag:${r.slice(4).replace(/[^\w./-]+/g, "-").slice(0, 60)}` : r);
 const clip = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
 
 function agent(ua) {
@@ -49,13 +71,51 @@ function v4(ip) {
   return parts.reduce((n, x) => n * 256 + Number(x), 0);
 }
 
+/** An IPv6 address as a 128-bit BigInt (:: and a trailing IPv4 part allowed), or null. */
+function v6(ip) {
+  let text = ip;
+  const tail = /:(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (tail) {
+    const n = v4(tail[1]);
+    if (n === null) return null;
+    text = `${text.slice(0, -tail[1].length)}${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const gap = 8 - head.length - rest.length;
+  if (halves.length === 2 ? gap < 1 : gap !== 0) return null;
+  const groups = [...head, ...Array(halves.length === 2 ? gap : 0).fill("0"), ...rest];
+  if (!groups.every((g) => /^[0-9a-f]{1,4}$/i.test(g))) return null;
+  return groups.reduce((n, g) => (n << 16n) | BigInt(parseInt(g, 16)), 0n);
+}
+
 function matches(ip, rule) {
   const [base, bits] = rule.split("/");
-  if (bits === undefined) return ip.toLowerCase() === base.toLowerCase();
-  const a = v4(ip), b = v4(base), size = Number(bits);
-  if (a === null || b === null || !Number.isInteger(size) || size < 0 || size > 32) return false;
-  const block = 2 ** (32 - size);
-  return Math.floor(a / block) === Math.floor(b / block);
+  if (bits === undefined) {
+    const a = v6(ip);
+    return ip.toLowerCase() === base.toLowerCase() || (a !== null && a === v6(base));
+  }
+  if (!/^\d{1,3}$/.test(bits)) return false;
+  const size = Number(bits);
+  const a = v4(ip), b = v4(base);
+  if (a !== null && b !== null) {
+    if (!Number.isInteger(size) || size < 0 || size > 32) return false;
+    const block = 2 ** (32 - size);
+    return Math.floor(a / block) === Math.floor(b / block);
+  }
+  const x = v6(ip), y = v6(base);
+  if (x === null || y === null || !Number.isInteger(size) || size < 0 || size > 128) return false;
+  const shift = BigInt(128 - size);
+  return x >> shift === y >> shift;
+}
+
+/** Who the rate limit counts: the address, or for IPv6 its /64 (one household's network),
+ *  hashed with the salt like the visitor number, so the limiter never holds an address. */
+function limitKey(ip, salt) {
+  const a = v6(ip);
+  return visitorOf("limit", salt, a === null ? ip : `${(a >> 64n).toString(16)}/64`, "");
 }
 
 function isMaintainer(request, env) {
@@ -70,7 +130,6 @@ async function visitorOf(day, salt, ip, ua) {
   return [...hash.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** One event, its body already read (the reply goes out before this runs). */
 /** The request body as text, read no further than `limit` bytes ("" past it). */
 async function readCapped(request, limit) {
   if (!request.body) return "";
@@ -90,12 +149,13 @@ async function readCapped(request, limit) {
   return new TextDecoder().decode(all);
 }
 
+/** One event, its body already read (the reply goes out before this runs). */
 async function record(request, text, env) {
   const origin = request.headers.get("Origin") || "";
   const ua = request.headers.get("User-Agent") || "";
   // Not counted: no salt (the visitor number could then be turned back into an address),
-  // other sites, bots and blank browsers, oversized bodies, anyone asking not to be, and
-  // the maintainer.
+  // other sites, bots and blank browsers, oversized bodies, anyone asking not to be, the
+  // maintainer, and anyone sending more than the rate limit allows.
   const site = Object.hasOwn(SITES, origin) ? SITES[origin] : null;
   if (!env.STATS || !env.STATS_SALT || !site || !ua || BOTS.test(ua)
       || text.length > 2048 || request.headers.get("Sec-GPC") === "1" || request.headers.get("DNT") === "1"
@@ -103,15 +163,19 @@ async function record(request, text, env) {
   let e;
   try { e = JSON.parse(text); } catch { return; }
   if (!e || !EVENTS.has(e.e)) return;
+  const ip = request.headers.get("CF-Connecting-IP") || "";
+  if (env.EVENT_LIMIT && !(await env.EVENT_LIMIT.limit({ key: await limitKey(ip, env.STATS_SALT) })).success) return;
   const value = Number(e.v);
   const now = Date.now();
   const day = new Date(now).toISOString().slice(0, 10);
-  const ip = request.headers.get("CF-Connecting-IP") || "";
+  const path = typeof e.p === "string" ? (PAGES.test(e.p) ? e.p : "(not found)") : null;
+  const r = typeof e.r === "string" ? tidy(e.r) : "";
+  const referrer = SOURCE.test(r) ? r : null;
   const { browser, os, device } = agent(ua);
   await env.STATS.prepare(`INSERT INTO events (ts, day, event, path, label, value, referrer, country, region, browser, os, device, visitor, site)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(
-    now, day, e.e, clip(e.p, 200), clip(e.l, 120), Number.isFinite(value) && value >= 0 && value <= 86400 ? value : null,
-    clip(e.r, 120), request.cf?.country || null, clip(request.cf?.region, 60), browser, os, device,
+    now, day, e.e, path, clip(e.l, 120), Number.isFinite(value) && value >= 0 && value <= 86400 ? value : null,
+    referrer, request.cf?.country || null, clip(request.cf?.region, 60), browser, os, device,
     await visitorOf(day, env.STATS_SALT, ip, ua), site,
   ).run();
 }
@@ -159,6 +223,9 @@ export default {
       // alerts, and their links lead here, then HOME); an update check just finds nothing.
       return new Response("Not here: this is the Plexbie project's site.", { status: 404 });
     }
-    return env.ASSETS.fetch(request);
+    const page = await env.ASSETS.fetch(request);
+    const out = new Response(page.body, page);
+    for (const [k, v] of Object.entries(PAGE_HEADERS)) out.headers.set(k, v);
+    return out;
   },
 };

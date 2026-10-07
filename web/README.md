@@ -25,6 +25,13 @@ node scripts/demo-gifs.mjs out/  # click through the README demos and save their
 
 Every other wrangler command that uses the Cloudflare login (`secret put`,
 `r2 object put`, `d1 execute`) goes through the same pinned copy, from `web/`.
+A new stats database gets its `events` table from `cloudflare/migrations/`:
+`cloudflare/node_modules/.bin/wrangler d1 migrations apply plexbie-stats --remote --config cloudflare/wrangler.jsonc`
+(on a database that already has it, nothing changes).
+
+plexbie.com's Worker sends a Content-Security-Policy with the site's pages (`PAGE_HEADERS`
+in `cloudflare/worker.js`): only the site itself, plus the films and posters on
+media.plexbie.com. Anything new the site loads from elsewhere goes in that list too.
 
 Add `?demo` to any dev URL for demo mode: every title, author and blurb is made up and
 covers are drawn in code, so recordings show no real artwork. `demo-gifs.mjs` prints the
