@@ -23,6 +23,7 @@ from core.blocking import run_blocking
 from core.logging import get_logger
 from database.kv_store import kv_get, kv_get_all, kv_set
 from database.request_store import get_request
+from portal.cleanup import kept_forever, library_keys
 from portal.data import Data
 from core.discord_lookup import admin_channel, admin_discord_ids, home_guild
 
@@ -459,6 +460,7 @@ class Actions:
                 "title": info["title"],
                 "type": info.get("type"),
                 "year": info.get("year"),
+                "ids": info.get("ids") or {},
                 "added_at": info.get("added_at"),
                 "exempted_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -480,11 +482,10 @@ class Actions:
         if not cog.services.plex_server:
             raise web.HTTPServiceUnavailable(text='{"error":"Plex isn\'t connected."}', content_type="application/json")
         config = await self.data.cleanup_config()
-        skipped = set(config.get("exclude_libraries") or [])
         kept = config.get("exempt_items") or {}
-        found = await cog._find_media_matches(words, skip_libraries=skipped)
+        found = await cog._find_media_matches(words, skipping=config)
         return [{"ratingKey": m["rating_key"], "title": m["title"], "type": m["type"], "year": m.get("year"),
-                 "kept": m["rating_key"] in kept} for m in found[:20]]
+                 "kept": kept_forever(kept, m["rating_key"], m["type"], m.get("ids") or {})} for m in found[:20]]
 
     def _cleanup_cog(self):
         cog = self.bot.get_cog("MediaCleanupCog") if self.bot else None
@@ -496,6 +497,14 @@ class Actions:
         """Change what the Discord cleanup panel and /cleanup config change, with the same limits."""
         self.limit(user["user"]["id"], "admin")
         cog = self._cleanup_cog()
+        # Each skipped library's section key, so it stays skipped if it's renamed in
+        # Plex. Read first: nothing may wait between loading cog.config and saving it.
+        libraries = {}
+        if "excludedLibraries" in body and cog.services.plex_server:
+            try:
+                libraries = await run_blocking(library_keys, cog.services.plex_server)
+            except Exception as e:
+                logger.info(f"Couldn't read Plex's libraries for the skipped ones' keys ({e})")
         if not await cog.load_data():
             return {"ok": False, "message": CLEANUP_UNREADABLE}
         # Checked in full before cog.config changes: a refusal halfway through would
@@ -525,6 +534,11 @@ class Actions:
             if not isinstance(libs, list) or not all(isinstance(x, str) for x in libs):
                 raise web.HTTPBadRequest(text='{"error":"Unknown libraries."}', content_type="application/json")
             updates["exclude_libraries"] = sorted(set(libs))
+            known = cog.config.get("exclude_library_keys")
+            known = known if isinstance(known, dict) else {}
+            updates["exclude_library_keys"] = {name: libraries.get(name) or known[name]
+                                               for name in updates["exclude_libraries"]
+                                               if libraries.get(name) or known.get(name)}
             changes.append(f"skipping {', '.join(updates['exclude_libraries']) or 'nothing'}")
         if "channelId" in body:
             cid = body["channelId"]

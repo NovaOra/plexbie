@@ -3,7 +3,7 @@
 import asyncio
 import copy
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any, Iterable
+from typing import Optional, List, Dict, Any
 
 import discord
 from discord import app_commands
@@ -30,6 +30,7 @@ SEERR_DELETED = 7
 
 from portal.cleanup import aware as _aware  # noqa: E402  (plexapi's zone-less local times)
 from portal.cleanup import EMPTY_HISTORY_TITLES, current_warnings, days_left, _iso  # noqa: E402
+from portal.cleanup import guid_ids, kept_forever, missing_skipped, skipped_library  # noqa: E402
 
 
 def _ids_of(item) -> Dict[str, str]:
@@ -42,6 +43,17 @@ def _ids_of(item) -> Dict[str, str]:
             if k in ("tmdb", "tvdb", "imdb") and v:
                 out.setdefault(k, v)
     return out
+
+
+def _listed_ids(item) -> Dict[str, str]:
+    """_ids_of, read as library.all() or a search listed the item (see _copy_keys):
+    without a request to Plex for one it has no ids for."""
+    was = getattr(item, "_autoReload", True)
+    item._autoReload = False
+    try:
+        return _ids_of(item)
+    finally:
+        item._autoReload = was
 
 
 def _copy_keys(item, ids: Optional[Dict[str, str]] = None) -> set:
@@ -88,8 +100,8 @@ DEFAULT_CONFIG = {
     "enabled": True,
     "inactivity_days": 90,  # 3 months
     "dry_run": True,  # Set to False to actually delete
-    "exclude_libraries": [],  # Library names to exclude from cleanup
-    "exempt_items": {},  # rating_key -> {title, type, added_at, exempted_at}
+    "exclude_libraries": [],  # Library names to exclude from cleanup; "exclude_library_keys" (name -> section key) once known
+    "exempt_items": {},  # rating_key -> {title, type, year, ids, added_at, exempted_at}
     "notification_channel_id": None,
     "notify_days_before": 7,  # Warn 7 days before deletion
 }
@@ -525,19 +537,19 @@ class MediaCleanupCog(commands.Cog):
         server = self.services.plex_server
         views = everyones_views(server, REQUEST_EXPIRY_DAYS)
         exempt = self.config.get("exempt_items", {}) or {}
-        excluded = set(self.config.get("exclude_libraries", []) or [])
         kept = set()
         for sec in server.query("/library/sections").findall("Directory"):
             stype = sec.get("type")
             if stype not in ("movie", "show"):
                 continue
             kind = "tv" if stype == "show" else "movie"
-            whole_library = sec.get("title") in excluded
+            whole_library = skipped_library(self.config, sec.get("title"), sec.get("key"))
             root = server.query(f"/library/sections/{sec.get('key')}/all?includeGuids=1")
             for el in root.findall("Video" if stype == "movie" else "Directory"):
                 rk = el.get("ratingKey")
                 played = views.get(rk)
-                if not whole_library and rk not in exempt and not (played and played >= cutoff):
+                if not whole_library and not kept_forever(exempt, rk, stype, guid_ids(el)) \
+                        and not (played and played >= cutoff):
                     continue
                 for g in el.findall("Guid"):
                     gid = g.get("id") or ""
@@ -849,7 +861,10 @@ class MediaCleanupCog(commands.Cog):
         One that's damaged, or that no check has dated for WARNINGS_LAPSE (Plexbie
         down, cleanup off), starts again: that only delays removals.
         `braked` is the daily check: a run that would remove more than BRAKE_TITLES
-        and BRAKE_SHARE of the library removes nothing and tells the admins.
+        and BRAKE_SHARE of the library removes nothing and tells the admins. Any run
+        removes nothing while a skipped library matches nothing in Plex (renamed
+        before its section key was recorded, or removed), and tells the admins once
+        for each such library.
         """
         persist = True
         now = datetime.now(timezone.utc)
@@ -867,7 +882,21 @@ class MediaCleanupCog(commands.Cog):
         warned = dict(warned)
 
         self._titles_scanned, self._history_unreadable = 0, False
+        self._skipped_missing, self._skipped_keys_found = None, {}
         items_to_notify, items_to_delete = await run_blocking(self._scan_libraries_for_cleanup, warned)
+
+        if self._skipped_keys_found:
+            # A skipped library found by its name: its section key keeps it skipped once renamed.
+            keys = self.config.get("exclude_library_keys")
+            self.config["exclude_library_keys"] = {**(keys if isinstance(keys, dict) else {}), **self._skipped_keys_found}
+            if await self.save_config():
+                logger.info(f"Media cleanup: recorded the Plex keys of the skipped libraries {sorted(self._skipped_keys_found)}")
+        if self._skipped_missing is not None:
+            await self._hold_for_missing_libraries()
+        if self._skipped_missing:
+            logger.warning(f"Media cleanup: Plex has no library {', '.join(self._skipped_missing)} that cleanup skips "
+                           "(renamed or removed?); removing nothing until the skipped libraries are picked again")
+            items_to_delete = []
 
         if self._history_unreadable:
             await self.send_cleanup_notification([], "paused")
@@ -886,6 +915,23 @@ class MediaCleanupCog(commands.Cog):
             await self.send_cleanup_notification(items_to_delete, "held")
             items_to_delete = []
         return items_to_notify, items_to_delete
+
+    async def _hold_for_missing_libraries(self) -> None:
+        """Tell the admins about each skipped library Plex has newly lost, once: it holds
+        every removal from then on, and the household's warnings still go out meanwhile."""
+        try:
+            told = await kv_get(CLEANUP_NAMESPACE, "skipped_missing", [])
+        except Exception as e:
+            logger.warning(f"Media cleanup: couldn't read which missing skipped libraries the admins were told about ({e})")
+            told = []
+        told = told if isinstance(told, list) else []
+        if any(name not in told for name in self._skipped_missing):
+            await self.send_cleanup_notification([{"title": name} for name in self._skipped_missing], "missing")
+        if sorted(told) != sorted(self._skipped_missing):
+            try:
+                await kv_set(CLEANUP_NAMESPACE, "skipped_missing", self._skipped_missing)
+            except Exception as e:
+                logger.error(f"Couldn't record which missing skipped libraries the admins were told about: {e}")
 
     def _scan_libraries_for_cleanup(self, warned: Optional[Dict[str, str]] = None):
         """Blocking: walk every eligible library and classify each item.
@@ -909,13 +955,21 @@ class MediaCleanupCog(commands.Cog):
 
         checked = []  # (item, result or None) for every film and show in Plex
         judged = 0
-        for library in self.services.plex_server.library.sections():
+        sections = self.services.plex_server.library.sections()
+        listed = [(library.title, str(library.key)) for library in sections]
+        names = self.config.get("exclude_libraries") or []
+        recorded = self.config.get("exclude_library_keys")
+        recorded = recorded if isinstance(recorded, dict) else {}
+        self._skipped_missing = missing_skipped(self.config, listed)
+        self._skipped_keys_found = {title: key for title, key in listed if title in names and not recorded.get(title)}
+        for library in sections:
             # Only process movie and show libraries
             if library.type not in ["movie", "show"]:
                 continue
 
-            # Skip excluded libraries; their copies still keep the same title elsewhere
-            if library.title in self.config["exclude_libraries"]:
+            # Skip excluded libraries (by name, or by key once renamed); their copies
+            # still keep the same title elsewhere
+            if skipped_library(self.config, library.title, library.key):
                 logger.info(f"Skipping excluded library: {library.title}")
                 checked.extend((item, None) for item in library.all())
                 continue
@@ -932,7 +986,28 @@ class MediaCleanupCog(commands.Cog):
             self._history_unreadable = True
             return [], []
         self._titles_scanned = judged
+        self._log_lost_exemptions(checked)
         return self._judge_copies_together(checked, {} if warned is None else warned)
+
+    def _log_lost_exemptions(self, checked) -> None:
+        """Blocking: log each title kept forever that Plex no longer has, by its key or
+        by the ids kept with it. One kept by ids comes back kept if Plex lists it again."""
+        exempt = self.config.get("exempt_items") or {}
+        try:
+            present = {str(item.ratingKey) for item, _ in checked}
+            lost = [rk for rk in exempt if rk not in present]
+            listed = [(item.type, _listed_ids(item)) for item, _ in checked] if lost else []
+        except Exception as e:
+            logger.debug(f"Media cleanup: couldn't check the kept titles against Plex: {e}")
+            return
+        for rk in lost:
+            kept = exempt[rk] if isinstance(exempt[rk], dict) else {}
+            if any(kept_forever({rk: kept}, "", kind, ids) for kind, ids in listed):
+                continue
+            later = ("it stays kept if Plex lists it again" if kept.get("ids") else
+                     "if it's added back, keep it again (/cleanup exempt add, or Manage → Cleanup on the website)")
+            logger.warning(f"Media cleanup: {kept.get('title') or 'a title'} is kept forever, but Plex no longer has it "
+                           f"(key {rk}); {later}")
 
     def _judge_copies_together(self, checked, warned: Dict[str, str]):
         """Blocking: (items_to_notify, items_to_delete) from the per-item results.
@@ -1034,8 +1109,10 @@ class MediaCleanupCog(commands.Cog):
             # Get the item's rating key for tracking
             rating_key = str(item.ratingKey)
 
+            # By its key, or by the ids kept with the exemption: a title Plex lists
+            # again under a new key stays kept.
             exempt_items = self.config.get("exempt_items", {})
-            if rating_key in exempt_items:
+            if kept_forever(exempt_items, rating_key, item.type, _listed_ids(item)):
                 logger.info(f"Skipping exempt media item: {item.title} ({item.type})")
                 return None
 
@@ -1322,7 +1399,7 @@ class MediaCleanupCog(commands.Cog):
         """Send notification about cleanup actions"""
         # Its own channel if one was picked in the cleanup settings, else the admin channel.
         channel_id = self.config.get("notification_channel_id") or self.services.config.admin_channel_id
-        if notification_type in ("held", "paused"):
+        if notification_type in ("held", "paused", "missing"):
             # Only an admin can act on it.
             channel_id = self.services.config.admin_channel_id or channel_id
         if not channel_id:
@@ -1420,6 +1497,21 @@ class MediaCleanupCog(commands.Cog):
                     color=discord.Color.orange(),
                 )
 
+            elif notification_type == "missing":
+                titles = [item["title"] for item in items]
+                names = " and ".join(filter(None, [", ".join(titles[:-1]), titles[-1]]))
+                one = len(titles) == 1
+                embed = discord.Embed(
+                    title="🛑 Media Cleanup Held",
+                    description=(f"Cleanup skips {names}, but Plex no longer has {'a library' if one else 'libraries'} "
+                                 f"by {'that name' if one else 'those names'}. Cleanup can't tell whether "
+                                 f"{'it was' if one else 'they were'} renamed (and {'its' if one else 'their'} titles "
+                                 "would no longer be skipped) or removed, so nothing is removed until the libraries "
+                                 "cleanup skips are picked again under Manage → Cleanup on the website. Warnings "
+                                 "still go out."),
+                    color=discord.Color.orange(),
+                )
+
             embed.set_footer(text="Use /cleanup config to adjust settings")
             await channel.send(embed=embed)
 
@@ -1434,18 +1526,18 @@ class MediaCleanupCog(commands.Cog):
         return f"{prefix} {title}"
 
     async def _find_media_matches(self, title_query: str, media_type: Optional[str] = None,
-                                  skip_libraries: Iterable[str] = ()) -> List[Dict]:
+                                  skipping: Optional[Dict] = None) -> List[Dict]:
         """Find candidate Plex media items matching a title query."""
-        return await run_blocking(self._find_media_matches_blocking, title_query, media_type, skip_libraries)
+        return await run_blocking(self._find_media_matches_blocking, title_query, media_type, skipping)
 
     def _find_media_matches_blocking(self, title_query: str, media_type: Optional[str] = None,
-                                     skip_libraries: Iterable[str] = ()) -> List[Dict]:
+                                     skipping: Optional[Dict] = None) -> List[Dict]:
         """Blocking: search every eligible library for a title.
 
         Runs in a worker thread. One request per library section to search, and it
         already reduces everything to plain dicts, so no lazy plexapi object
-        escapes back to the event loop. Libraries named in skip_libraries aren't
-        asked at all.
+        escapes back to the event loop. The libraries the cleanup settings
+        `skipping` skip aren't asked at all.
         """
         matches = []
         normalized_query = title_query.casefold().strip()
@@ -1455,7 +1547,7 @@ class MediaCleanupCog(commands.Cog):
                 continue
             if media_type and library.type != media_type:
                 continue
-            if library.title in skip_libraries:
+            if skipping and skipped_library(skipping, library.title, library.key):
                 continue
 
             try:
@@ -1479,6 +1571,7 @@ class MediaCleanupCog(commands.Cog):
                     "title": item_title,
                     "type": item.type,
                     "year": item_year,
+                    "ids": _listed_ids(item),
                     "added_at": item.addedAt.isoformat() if getattr(item, "addedAt", None) else None,
                     "score": score,
                 })
@@ -1510,6 +1603,7 @@ class MediaCleanupCog(commands.Cog):
             "title": item.title,
             "type": item.type,
             "year": getattr(item, "year", None),
+            "ids": _ids_of(item),
             "added_at": item.addedAt.isoformat() if getattr(item, "addedAt", None) else None,
         }
 
@@ -1684,6 +1778,7 @@ class MediaCleanupCog(commands.Cog):
             "title": match["title"],
             "type": match["type"],
             "year": match.get("year"),
+            "ids": match.get("ids") or {},
             "added_at": match.get("added_at"),
             "exempted_at": datetime.now(timezone.utc).isoformat(),
         }

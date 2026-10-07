@@ -89,7 +89,7 @@ class _Plex:
 
         class Lib:
             def __init__(self, key, title, kind, items):
-                self.title, self.type, self._items = title, kind, items
+                self.key, self.title, self.type, self._items = key, title, kind, items
 
             def all(self):
                 return self._items

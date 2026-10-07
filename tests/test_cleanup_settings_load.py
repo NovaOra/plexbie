@@ -528,15 +528,21 @@ def test_website_keep_forever_is_stored_even_if_a_save_fails_meanwhile():
 
 # --- keeping any title from the website, as /cleanup exempt add does ---
 
+class _Guid:
+    def __init__(self, i):
+        self.id = i
+
+
 class _Title:
-    def __init__(self, rk, title, kind, year):
+    def __init__(self, rk, title, kind, year, guids=()):
         self.ratingKey, self.title, self.type, self.year = rk, title, kind, year
+        self.guids = [_Guid(g) for g in guids]
         self.addedAt = datetime(2024, 3, 1, tzinfo=timezone.utc)
 
 
 class _Section:
-    def __init__(self, title, kind, items):
-        self.title, self.type, self.items = title, kind, items
+    def __init__(self, key, title, kind, items):
+        self.key, self.title, self.type, self.items = key, title, kind, items
         self.searched = 0
 
     def search(self, title=None):
@@ -549,9 +555,10 @@ class _Plex:
 
     def __init__(self):
         self.shelves = [
-            _Section("Movies", "movie", [_Title(201, "Sintel", "movie", 2010), _Title(123, "Spring", "movie", 2019)]),
-            _Section("TV Shows", "show", [_Title(301, "Caminandes", "show", 2013)]),
-            _Section("Home Videos", "movie", [_Title(401, "Sintel", "movie", 2021)]),
+            _Section(1, "Movies", "movie", [_Title(201, "Sintel", "movie", 2010, ["tmdb://45745"]),
+                                            _Title(123, "Spring", "movie", 2019)]),
+            _Section(2, "TV Shows", "show", [_Title(301, "Caminandes", "show", 2013, ["tvdb://276587", "tmdb://46316"])]),
+            _Section(3, "Home Videos", "movie", [_Title(401, "Sintel", "movie", 2021)]),
         ]
         self.library = self
         self.fetched = []

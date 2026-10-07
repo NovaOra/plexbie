@@ -1078,7 +1078,8 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
                 <div className="m-set-block">
                   <span className="m-field-label" id="m-libs">Libraries cleanup skips</span>
                   <div className="m-chips" role="group" aria-labelledby="m-libs">
-                    {libraries.map((lib) => {
+                    {/* A skipped library Plex no longer has stays listed, so it can be let go: until then cleanup removes nothing. */}
+                    {[...libraries, ...settings.excludedLibraries.filter((l) => !libraries.includes(l))].map((lib) => {
                       const skipped = settings.excludedLibraries.includes(lib);
                       return (
                         <button key={lib} type="button" aria-pressed={skipped} className={`m-chipbtn${skipped ? " is-on" : ""}`} disabled={readOnly}

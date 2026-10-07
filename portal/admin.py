@@ -15,6 +15,7 @@ from core.logging import get_logger
 from database.kv_store import kv_get_all, kv_set
 from database.request_store import SEERR_SOURCES
 from database.session import get_session
+from portal.cleanup import library_keys, skipped_names
 from portal.data import Data, _iso, predates_outcomes, tmdb_art
 from core.discord_lookup import PUBLIC_BOT_FIX, home_guild, home_health_items
 
@@ -486,6 +487,7 @@ class Admin:
             logger.info(f"portal admin: countdown unavailable ({e})")
             clock = {}
         exempt_meta = config.get("exempt_items", {}) or {}
+        libraries = await self._libraries()
         leaving = sorted((c for c in clock.values() if not c.get("exempt")), key=lambda c: c["daysLeft"])
         return {
             "settings": {
@@ -493,10 +495,11 @@ class Admin:
                 "practice": bool(config.get("dry_run")),
                 "inactivityDays": config.get("inactivity_days"),
                 "warnDaysBefore": config.get("notify_days_before"),
-                "excludedLibraries": config.get("exclude_libraries", []),
+                # A renamed skipped library under its new name, found by its section key.
+                "excludedLibraries": skipped_names(config, libraries),
                 "channelId": str(config.get("notification_channel_id") or "") or None,
             },
-            "libraries": await self._library_names(),
+            "libraries": sorted(libraries),
             "channels": self._text_channels(),
             "warning": [self._row(c) for c in leaving if c.get("warning")],
             "upcoming": [self._row(c) for c in leaving if not c.get("warning")][:30],
@@ -512,19 +515,19 @@ class Admin:
         return {"ratingKey": rk, "title": title or live.get("title") or "Unknown",
                 "type": kind or live.get("type"), "year": stored.get("year") or live.get("year")}
 
-    async def _library_names(self) -> List[str]:
-        """Plex library names, for choosing which ones cleanup skips."""
+    async def _libraries(self) -> Dict[str, str]:
+        """Plex libraries ({title: section key}), for choosing which ones cleanup skips."""
         from core.blocking import run_blocking
         server = self.services.plex_server
         if not server:
-            return []
+            return {}
 
         async def load():
-            return sorted(s.title for s in await run_blocking(lambda: server.library.sections()))
+            return await run_blocking(library_keys, server)
         try:
             return await self.cache.get("admin:libraries", 600, load)
         except Exception:
-            return []
+            return {}
 
     def _text_channels(self) -> List[dict]:
         """Text channels the bot can post in, for the cleanup notices."""

@@ -72,7 +72,7 @@ def test_no_history_means_nothing_is_deleted_that_day():
     cog = _cog(history_fails=True)
 
     class Lib:
-        title, type = "TV", "show"
+        title, type, key = "TV", "show", 1
 
         def all(self):
             return [Show(1, [Episode(viewed=None)])]
@@ -385,17 +385,17 @@ def test_a_request_that_never_reaches_sonarr_opens_a_ticket():
 
 
 def _libraries(cog, *sections, excluded=()):
-    """Plex sections as (title, type, items); `excluded` are skipped by cleanup."""
+    """Plex sections as (title, type, items[, section key]); `excluded` are skipped by cleanup."""
     class Lib:
-        def __init__(self, title, kind, items):
-            self.title, self.type, self._items = title, kind, items
+        def __init__(self, title, kind, items, key):
+            self.title, self.type, self._items, self.key = title, kind, items, key
 
         def all(self):
             return self._items
 
     class Library:
         def sections(self):
-            return [Lib(*s) for s in sections]
+            return [Lib(*s[:3], s[3] if len(s) > 3 else n) for n, s in enumerate(sections, 1)]
     cog.services.plex_server.library = Library()
     cog.config["exclude_libraries"] = list(excluded)
 

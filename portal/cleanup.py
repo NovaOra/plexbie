@@ -16,6 +16,9 @@ every copy as long as any one of them isn't due (see _judge_copies_together):
                   about it (days_left; the "warned" record in the cleanup store);
   exempt titles and excluded libraries never count down, and nothing does while
   the watch history comes back empty across a big library (EMPTY_HISTORY_TITLES).
+  A title is exempt by its Plex key or by the ids kept with its exemption
+  (kept_forever), and a library is skipped by its name or by the section key
+  recorded with that name (skipped_library).
 
 Plex's lastViewedAt on an item is only the bot's own account (the owner's), so the
 household's watching comes from the server's history instead (everyones_views).
@@ -80,6 +83,80 @@ def _tmdb(el) -> Optional[int]:
     return None
 
 
+def guid_ids(el) -> Dict[str, str]:
+    """A listed film's or show's TMDB / TheTVDB / IMDb ids, from its Guid tags
+    ("tmdb://1396"), read as the cleanup task reads them off plexapi's guids."""
+    out: Dict[str, str] = {}
+    for g in el.findall("Guid"):
+        gid = g.get("id") or ""
+        if "://" in gid:
+            k, v = gid.split("://", 1)
+            if k in ("tmdb", "tvdb", "imdb") and v:
+                out.setdefault(k, v)
+    return out
+
+
+def kept_forever(exempt: dict, rating_key, kind: str, ids: Dict[str, str]) -> bool:
+    """Whether a film or show (`kind` "movie" or "show") is on the keep-forever list:
+    by its Plex key, or by an id stored with a kept title of the same type. So one Plex
+    lists again under a new key (removed and added back, a rebuilt library) stays kept;
+    a film's TMDB number and a show's are different titles."""
+    if str(rating_key) in exempt:
+        return True
+    for kept in exempt.values():
+        stored = kept.get("ids") if isinstance(kept, dict) and kept.get("type") == kind else None
+        if isinstance(stored, dict) and any(v and str(stored.get(k) or "") == str(v) for k, v in ids.items()):
+            return True
+    return False
+
+
+def _recorded_keys(config: dict) -> Dict[str, str]:
+    keys = config.get("exclude_library_keys")
+    return keys if isinstance(keys, dict) else {}
+
+
+def skipped_library(config: dict, title, key) -> bool:
+    """Whether cleanup skips the Plex library `title` (section `key`): by the name an
+    admin picked, or by the section key recorded with that name, so a library renamed
+    since is still skipped."""
+    names = config.get("exclude_libraries") or []
+    keys = _recorded_keys(config)
+    return title in names or (key is not None and str(key) in {str(keys[n]) for n in names if keys.get(n)})
+
+
+def missing_skipped(config: dict, libraries) -> List[str]:
+    """The skipped libraries Plex has neither by name nor by recorded key, from its
+    libraries as (title, section key) pairs: renamed before its key was recorded, or
+    removed. Cleanup can't tell which, so it removes nothing while there are any."""
+    keys = _recorded_keys(config)
+    titles = {title for title, _ in libraries}
+    present = {str(key) for _, key in libraries}
+    return [n for n in config.get("exclude_libraries") or []
+            if n not in titles and str(keys.get(n) or "") not in present]
+
+
+def skipped_names(config: dict, libraries: Dict[str, str]) -> List[str]:
+    """The skipped libraries by the names Plex gives them now (`libraries` is
+    {title: section key}): a renamed one under its new name, one Plex no longer has
+    under the name it was skipped by. A library since given a renamed one's old name
+    is skipped by that name too, so both are listed."""
+    keys = _recorded_keys(config)
+    titles = {str(key): title for title, key in libraries.items()}
+    out: List[str] = []
+    for name in config.get("exclude_libraries") or []:
+        renamed = titles.get(str(keys.get(name) or ""))
+        now = [n for n in (name if name in libraries else None, renamed) if n] or [name]
+        for n in now:
+            if n not in out:
+                out.append(n)
+    return out
+
+
+def library_keys(server) -> Dict[str, str]:
+    """Blocking: {title: section key} of every Plex library."""
+    return {s.title: str(s.key) for s in server.library.sections()}
+
+
 def aware(when: datetime) -> datetime:
     """plexapi's datetimes are the server's local time, without a zone."""
     return when.astimezone(timezone.utc) if when.tzinfo is None else when
@@ -133,14 +210,13 @@ def compute(server, config: dict, requests: List[dict],
     views = everyones_views(server, days)
     notify = days - int(config.get("notify_days_before", 7))
     exempt = config.get("exempt_items", {}) or {}
-    excluded = set(config.get("exclude_libraries", []) or [])
     warned = warned or {}
     out: Dict[str, dict] = {}
     judged = 0
 
     for sec in server.query("/library/sections").findall("Directory"):
         stype = sec.get("type")
-        if stype not in ("movie", "show") or sec.get("title") in excluded:
+        if stype not in ("movie", "show") or skipped_library(config, sec.get("title"), sec.get("key")):
             continue
         root = server.query(f"/library/sections/{sec.get('key')}/all?includeGuids=1")
         for el in root.findall("Video" if stype == "movie" else "Directory"):
@@ -148,9 +224,9 @@ def compute(server, config: dict, requests: List[dict],
             rk = el.get("ratingKey")
             tmdb = _tmdb(el)
             year = el.get("year") or ""
-            entry = {"ratingKey": rk, "tmdb": tmdb, "title": el.get("title"), "type": stype,
+            entry = {"ratingKey": rk, "tmdb": tmdb, "ids": guid_ids(el), "title": el.get("title"), "type": stype,
                      "year": int(year) if year.isdigit() else None}
-            if rk in exempt:
+            if kept_forever(exempt, rk, stype, entry["ids"]):
                 out[rk] = {**entry, "exempt": True}
                 continue
             last, newest = views.get(rk), None

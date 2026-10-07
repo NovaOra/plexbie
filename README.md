@@ -289,7 +289,16 @@ who's watching from one place instead of five.
   with the same id, or the same title and year (Plex has no id for some
   copies): while any copy is watched, exempt or in a skipped library, none is
   removed and no warning is sent for it, and a removal waits until every copy
-  is due.
+  is due. A title kept forever is matched by its Plex key and by its TMDB,
+  TheTVDB or IMDb id, so one removed from Plex and added back (or in a rebuilt
+  library) stays kept; titles kept before this came in have only their key,
+  and Plexbie's log names a kept title Plex no longer has. A skipped library is
+  matched by its name and by its Plex section key, recorded when you pick it
+  under Manage → Cleanup or at the next check, so renaming it in Plex keeps it
+  skipped (the website shows it under its new name). A skipped library that
+  matches nothing in Plex stops every removal: each check still warns and
+  removes nothing until you let it go under Manage → Cleanup, where it stays
+  listed. The admin channel is told once, when Plex first loses it.
 - Cleanup's brakes: a title is removed only once its whole warning has passed,
   `notify_days_before` days (7 by default) counted from the first warning about
   it. So lowering the inactivity days, adding a library or no longer skipping
