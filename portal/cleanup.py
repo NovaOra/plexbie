@@ -11,8 +11,11 @@ every copy as long as any one of them isn't due (see _judge_copies_together):
       history (for a show, any episode: the whole show is one thing),
       when it was added (for a show, its newest episode, so a new season is fresh),
       the newest request for it in media tracking;
-  removal       = last activity + inactivity_days (90 by default);
-  exempt titles and excluded libraries never count down.
+  removal       = last activity + inactivity_days (90 by default), and never
+                  sooner than notify_days_before (7) after the bot first warned
+                  about it (days_left; the "warned" record in the cleanup store);
+  exempt titles and excluded libraries never count down, and nothing does while
+  the watch history comes back empty across a big library (EMPTY_HISTORY_TITLES).
 
 Plex's lastViewedAt on an item is only the bot's own account (the owner's), so the
 household's watching comes from the server's history instead (everyones_views).
@@ -26,6 +29,15 @@ from typing import Dict, List, Optional
 from utils.guids import guid_number
 
 TRACKING_FILE = Path("config/media_tracking.json")
+
+#: Plex's watch history coming back empty across more titles than this is taken as
+#: history it couldn't read (a fresh or restored Plex database, an account that can't
+#: see the others' plays), not as months of nobody watching anything.
+EMPTY_HISTORY_TITLES = 50
+#: The record of when titles were first warned counts only while the bot keeps
+#: checking (it's dated each check). After a longer gap - Plexbie down, cleanup
+#: switched off, Plex unreachable - every title due gets a whole new warning.
+WARNINGS_LAPSE = timedelta(days=3)
 
 
 def _ts(value) -> Optional[datetime]:
@@ -73,6 +85,28 @@ def aware(when: datetime) -> datetime:
     return when.astimezone(timezone.utc) if when.tzinfo is None else when
 
 
+def days_left(inactive: int, config: dict, warned: Optional[str], now: datetime) -> int:
+    """Days until media_cleanup removes a title idle for `inactive` days; 0 when it's due.
+
+    Not before inactivity_days, and not before notify_days_before have passed since it
+    was first warned about (`warned`, an ISO time; None while it hasn't been), so a
+    title never goes without the whole warning first, whatever brought it past the
+    threshold: lower inactivity days, a library added or no longer skipped, downtime."""
+    first = _iso(warned)
+    since = (now - first).days if first else 0
+    return max(0, int(config.get("inactivity_days", 90)) - inactive,
+               int(config.get("notify_days_before", 7)) - since)
+
+
+def current_warnings(warned, checked, now: datetime) -> Dict[str, str]:
+    """The "warned" record as it stands: {} when it isn't one, or when the check that
+    last dated it (`checked`, an ISO time) is missing or more than WARNINGS_LAPSE ago."""
+    last = _iso(checked)
+    if not isinstance(warned, dict) or not last or now - last > WARNINGS_LAPSE:
+        return {}
+    return warned
+
+
 def everyones_views(server, days: int) -> Dict[str, datetime]:
     """The last time anyone (every account, managed users too) watched each film, and
     any episode of each show, by Plex key, over the last `days` (+2). Raises if Plex's
@@ -90,15 +124,19 @@ def everyones_views(server, days: int) -> Dict[str, datetime]:
     return latest
 
 
-def compute(server, config: dict, requests: List[dict]) -> Dict[str, dict]:
-    """{ratingKey: {...}} for every film and show the cleanup task would consider."""
+def compute(server, config: dict, requests: List[dict],
+            warned: Optional[Dict[str, str]] = None) -> Dict[str, dict]:
+    """{ratingKey: {...}} for every film and show the cleanup task would consider.
+    `warned` is the bot's record of when it first warned about each title."""
     now = datetime.now(timezone.utc)
     days = int(config.get("inactivity_days", 90))
     views = everyones_views(server, days)
     notify = days - int(config.get("notify_days_before", 7))
     exempt = config.get("exempt_items", {}) or {}
     excluded = set(config.get("exclude_libraries", []) or [])
+    warned = warned or {}
     out: Dict[str, dict] = {}
+    judged = 0
 
     for sec in server.query("/library/sections").findall("Directory"):
         stype = sec.get("type")
@@ -106,6 +144,7 @@ def compute(server, config: dict, requests: List[dict]) -> Dict[str, dict]:
             continue
         root = server.query(f"/library/sections/{sec.get('key')}/all?includeGuids=1")
         for el in root.findall("Video" if stype == "movie" else "Directory"):
+            judged += 1
             rk = el.get("ratingKey")
             tmdb = _tmdb(el)
             entry = {"ratingKey": rk, "tmdb": tmdb, "title": el.get("title"), "type": stype}
@@ -143,7 +182,9 @@ def compute(server, config: dict, requests: List[dict]) -> Dict[str, dict]:
                 "exempt": False,
                 "lastActivity": last.isoformat(),
                 "reason": reason,
-                "daysLeft": max(0, days - inactive),
+                "daysLeft": days_left(inactive, config, warned.get(rk), now),
                 "warning": inactive >= notify,
             }
+    if not views and judged > EMPTY_HISTORY_TITLES:
+        return {}   # the bot takes this history as unreadable and judges nothing
     return out

@@ -967,7 +967,7 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
               ) : null}
 
               <div className="m-set-row">
-                <span><b>Run a scan now</b><span className="muted">{live ? "Live: anything past its time is deleted right away." : "Same check the daily run does."}</span></span>
+                <span><b>Run a scan now</b><span className="muted">{live ? "Live: anything whose warning has run out is deleted right away, with no daily limit." : "Same check the daily run does, without its daily limit."}</span></span>
                 {live
                   ? <HoldButton label="Scan now" ms={1400} disabled={readOnly || scanning} onConfirm={() => void scan()} />
                   : <button type="button" className="btn m-btn" disabled={readOnly || scanning || !settings.enabled} onClick={() => void scan()}>

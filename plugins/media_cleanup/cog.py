@@ -28,6 +28,7 @@ CLEANUP_NAMESPACE = "media_cleanup"
 SEERR_DELETED = 7
 
 from portal.cleanup import aware as _aware  # noqa: E402  (plexapi's zone-less local times)
+from portal.cleanup import EMPTY_HISTORY_TITLES, current_warnings, days_left, _iso  # noqa: E402
 
 
 def _ids_of(item) -> Dict[str, str]:
@@ -73,6 +74,13 @@ class ArrAmbiguous(Exception):
 CHECK_EVERY = timedelta(hours=24)
 
 REQUEST_EXPIRY_DAYS = 90
+
+#: The daily check removes nothing, and tells the admins, when it would remove more
+#: than this many titles and more than this share of the titles it judged. A mistaken
+#: setting or a Plex fault shouldn't empty the server overnight; an admin's own scan
+#: (Discord's panel or Manage → Cleanup) is their go-ahead.
+BRAKE_TITLES = 5
+BRAKE_SHARE = 0.1
 
 # Default configuration
 DEFAULT_CONFIG = {
@@ -328,6 +336,11 @@ class MediaCleanupCog(commands.Cog):
         description="Media exempt from automatic cleanup",
         parent=cleanup,
     )
+
+    #: How many titles the last library walk judged, for the daily check's brake.
+    _titles_scanned = 0
+    #: The last library walk found the watch history empty across a big library.
+    _history_unreadable = False
 
     def __init__(self, bot: commands.Bot, services: BotServices):
         self.bot = bot
@@ -732,9 +745,7 @@ class MediaCleanupCog(commands.Cog):
             # to list its episodes - hundreds of blocking round-trips on a real
             # library. Inline, that froze the event loop (and the Discord
             # heartbeat) for minutes and triggered gateway reconnects.
-            items_to_notify, items_to_delete = await run_blocking(
-                self._scan_libraries_for_cleanup
-            )
+            items_to_notify, items_to_delete = await self._due_for_cleanup(braked=True)
 
             # Sent each day of the warning window, on purpose: it counts down to the removal.
             if items_to_notify:
@@ -827,10 +838,58 @@ class MediaCleanupCog(commands.Cog):
             logger.debug(f"Could not look up recent media request timestamp for {getattr(item, 'title', '<unknown>')}: {e}")
             return None
 
-    def _scan_libraries_for_cleanup(self):
+    async def _due_for_cleanup(self, braked: bool):
+        """(items_to_notify, items_to_delete) from a library walk, with the record of
+        when each title was first warned read before it and saved after.
+
+        If that record can't be read, everything due is only warned about that day.
+        One that's damaged, or that no check has dated for WARNINGS_LAPSE (Plexbie
+        down, cleanup off), starts again: that only delays removals.
+        `braked` is the daily check: a run that would remove more than BRAKE_TITLES
+        and BRAKE_SHARE of the library removes nothing and tells the admins.
+        """
+        persist = True
+        now = datetime.now(timezone.utc)
+        try:
+            stored = await kv_get(CLEANUP_NAMESPACE, "warned", {})
+            warned = current_warnings(stored, await kv_get(CLEANUP_NAMESPACE, "warned_checked"), now)
+        except Exception as e:
+            logger.warning(f"Media cleanup: couldn't read when titles were first warned ({e}); "
+                           "warning only, deleting nothing today")
+            warned, persist = {}, False
+        else:
+            if stored and not warned:
+                logger.warning("Media cleanup: the record of when titles were first warned is damaged or out of "
+                               "date; every title due gets a whole new warning")
+        warned = dict(warned)
+
+        self._titles_scanned, self._history_unreadable = 0, False
+        items_to_notify, items_to_delete = await run_blocking(self._scan_libraries_for_cleanup, warned)
+
+        if self._history_unreadable:
+            await self.send_cleanup_notification([], "paused")
+        elif persist and self._titles_scanned:
+            # Dated with the check, so a gap in checks shows (see WARNINGS_LAPSE).
+            try:
+                await kv_set(CLEANUP_NAMESPACE, "warned", warned)
+                await kv_set(CLEANUP_NAMESPACE, "warned_checked", now.isoformat())
+            except Exception as e:
+                logger.error(f"Couldn't record when titles were first warned: {e}")
+
+        limit = max(BRAKE_TITLES, int(self._titles_scanned * BRAKE_SHARE))
+        if braked and len(items_to_delete) > limit:
+            logger.warning(f"Media cleanup: {len(items_to_delete)} titles are due, more than the daily check "
+                           f"removes by itself ({limit}); deleting nothing and asking the admins")
+            await self.send_cleanup_notification(items_to_delete, "held")
+            items_to_delete = []
+        return items_to_notify, items_to_delete
+
+    def _scan_libraries_for_cleanup(self, warned: Optional[Dict[str, str]] = None):
         """Blocking: walk every eligible library and classify each item.
 
         Runs in a worker thread. Returns (items_to_notify, items_to_delete).
+        `warned` is when each title was first warned ({rating key: ISO time}); it's
+        brought up to date in place, and nothing is removed before its whole warning.
 
         Kept synchronous end to end so that no plexapi call - including the lazy
         per-show season/episode requests inside check_item_for_cleanup - can end
@@ -846,6 +905,7 @@ class MediaCleanupCog(commands.Cog):
             return [], []
 
         checked = []  # (item, result or None) for every film and show in Plex
+        judged = 0
         for library in self.services.plex_server.library.sections():
             # Only process movie and show libraries
             if library.type not in ["movie", "show"]:
@@ -860,11 +920,18 @@ class MediaCleanupCog(commands.Cog):
             logger.info(f"Checking library: {library.title}")
 
             for item in library.all():
+                judged += 1
                 checked.append((item, self.check_item_for_cleanup(item, views)))
 
-        return self._judge_copies_together(checked)
+        if not views and judged > EMPTY_HISTORY_TITLES:
+            logger.warning(f"Media cleanup: Plex's watch history is empty across {judged} titles; "
+                           "taking it as unreadable and deleting nothing today")
+            self._history_unreadable = True
+            return [], []
+        self._titles_scanned = judged
+        return self._judge_copies_together(checked, {} if warned is None else warned)
 
-    def _judge_copies_together(self, checked):
+    def _judge_copies_together(self, checked, warned: Dict[str, str]):
         """Blocking: (items_to_notify, items_to_delete) from the per-item results.
 
         A title can be in Plex more than once (a 4K library, overlapping folders), but
@@ -873,9 +940,13 @@ class MediaCleanupCog(commands.Cog):
         being watched (or exempt, or in a skipped library) keeps them all, and one only
         due a warning holds back the removal. Copies are linked through any key they
         share, also by way of a third copy.
+
+        A copy past its threshold that wasn't first warned notify_days_before days ago
+        (`warned`) is warned about instead; `warned` is then brought up to date.
         """
         rank = {None: 0, "notify": 1, "delete": 2}
         if not any(result for _, result in checked):
+            warned.clear()
             return [], []
 
         try:
@@ -898,10 +969,24 @@ class MediaCleanupCog(commands.Cog):
             for key in rest:
                 parent[group(key)] = group(first)
 
+        now = datetime.now(timezone.utc)
+        keyed = [(keys, self._after_warning(result, warned, now)) for keys, result in keyed]
+
         least = {}
         for keys, result in keyed:
             g = group(next(iter(keys)))
             least[g] = min(least.get(g, 2), rank[result and result["action"]])
+
+        # Kept while every copy of the title is due; set today for one warned about for
+        # the first time; forgotten once a copy is watched, exempt or skipped, or the
+        # title is gone from Plex, so a later idle spell starts a whole new warning.
+        first = {}
+        for keys, result in keyed:
+            if result and least[group(next(iter(keys)))]:
+                since = warned.get(result["rating_key"])
+                first[result["rating_key"]] = since if _iso(since) else now.isoformat()
+        warned.clear()
+        warned.update(first)
 
         items_to_notify = []
         items_to_delete = []
@@ -917,6 +1002,17 @@ class MediaCleanupCog(commands.Cog):
                 items_to_delete.append(result)
 
         return items_to_notify, items_to_delete
+
+    def _after_warning(self, result: Optional[Dict], warned: Dict[str, str], now: datetime) -> Optional[Dict]:
+        """A copy's result with its warning taken into account (portal/cleanup.days_left,
+        which the website's countdown uses too): one due for removal before its whole
+        warning has passed is warned about instead."""
+        if not result:
+            return result
+        left = days_left(result["days_inactive"], self.config, warned.get(result["rating_key"]), now)
+        if not left:
+            return result
+        return {**result, "action": "notify", "days_until_deletion": left}
 
     def _everyones_views(self) -> Dict[str, datetime]:
         """Blocking: when anyone last watched each film / any episode of each show
@@ -1223,6 +1319,9 @@ class MediaCleanupCog(commands.Cog):
         """Send notification about cleanup actions"""
         # Its own channel if one was picked in the cleanup settings, else the admin channel.
         channel_id = self.config.get("notification_channel_id") or self.services.config.admin_channel_id
+        if notification_type in ("held", "paused"):
+            # Only an admin can act on it.
+            channel_id = self.services.config.admin_channel_id or channel_id
         if not channel_id:
             logger.info("Cleanup report skipped: no admin channel set")
             return
@@ -1276,6 +1375,47 @@ class MediaCleanupCog(commands.Cog):
                         value=f"+ {len(items) - 10} more items",
                         inline=False
                     )
+
+            elif notification_type == "held":
+                scan = "🔄 Run Scan Now in `/cleanup panel` (or Scan now under Manage → Cleanup on the website)"
+                if self.config["dry_run"]:
+                    description = (f"{len(items)} item(s) would be due for removal, more than the daily check "
+                                   "removes by itself, so live it would remove none of them. Practice mode removes "
+                                   f"nothing either way; {scan} lists them all as would-remove, and once live, "
+                                   "that scan is what removes them.")
+                else:
+                    description = (f"{len(items)} item(s) are due for removal, more than the daily check removes "
+                                   f"by itself, so none were removed. If that's expected, press {scan} to remove "
+                                   "them.")
+                embed = discord.Embed(
+                    title=f"🛑 Media Cleanup Held{' (DRY RUN)' if self.config['dry_run'] else ''}",
+                    description=description + " If not, check the inactivity days and the skipped libraries.",
+                    color=discord.Color.orange(),
+                )
+
+                for item in items[:10]:  # Show max 10
+                    embed.add_field(
+                        name=f"{'🎬' if item['type'] == 'movie' else '📺'} {item['title']}",
+                        value=f"Inactive for {item['days_inactive']} days",
+                        inline=False
+                    )
+
+                if len(items) > 10:
+                    embed.add_field(
+                        name="And more...",
+                        value=f"+ {len(items) - 10} more items",
+                        inline=False
+                    )
+
+            elif notification_type == "paused":
+                embed = discord.Embed(
+                    title="⏸️ Media Cleanup Paused",
+                    description=(f"Plex's watch history came back empty across more than {EMPTY_HISTORY_TITLES} "
+                                 "titles, so it's taken as unreadable: nothing was removed or warned about. "
+                                 "Check that Plexbie's Plex account can see everyone's plays; cleanup picks up "
+                                 "again once someone has watched something."),
+                    color=discord.Color.orange(),
+                )
 
             embed.set_footer(text="Use /cleanup config to adjust settings")
             await channel.send(embed=embed)
@@ -1387,9 +1527,7 @@ class MediaCleanupCog(commands.Cog):
         # Same traversal as the daily loop, off the event loop. This path is
         # reached from a click, so blocking here would freeze the bot for
         # every other user while one admin's scan ran.
-        items_to_notify, items_to_delete = await run_blocking(
-            self._scan_libraries_for_cleanup
-        )
+        items_to_notify, items_to_delete = await self._due_for_cleanup(braked=False)
 
         if items_to_notify:
             await self.send_cleanup_notification(items_to_notify, "warning")

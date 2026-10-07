@@ -252,6 +252,24 @@ who's watching from one place instead of five.
   copies): while any copy is watched, exempt or in a skipped library, none is
   removed and no warning is sent for it, and a removal waits until every copy
   is due.
+- Cleanup's brakes: a title is removed only once its whole warning has passed,
+  `notify_days_before` days (7 by default) counted from the first warning about
+  it. So lowering the inactivity days, adding a library or no longer skipping
+  one warns first and removes nothing that day; the countdown on the website
+  and in the app follows the same rule. (Right after the upgrade that brings
+  this in, titles already in the warning window get a full warning again.) A
+  title watched, exempted or skipped meanwhile starts over, and so does every
+  warning after more than 3 days without a check (Plexbie down, cleanup
+  switched off, Plex unreachable). Practice mode keeps the same record: once you
+  switch to live, the titles it has been warning about for the whole warning
+  period are removed by the next check, within the daily limit below. The daily
+  check removes nothing when it would remove more than 5 titles and more than a
+  tenth of the titles it looked at: it lists them in the admin channel instead,
+  and a manual scan (Discord's panel or Manage → Cleanup) is the go-ahead that
+  removes them; a manual scan has no such limit. If Plex's watch history comes
+  back empty across more than 50 titles, it's taken as unreadable: nothing is
+  removed or warned about that day, the admin channel is told, and the website
+  and app show no countdown until someone has watched something.
 - Request expiry, part of the same daily check: 90 days after a title's newest
   request, Plexbie turns its monitoring off in Sonarr or Radarr (no new
   episodes or upgrades; no files are touched), and turns it back on when someone

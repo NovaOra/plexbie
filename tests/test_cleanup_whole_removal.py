@@ -6,7 +6,7 @@ Seerr kept the old request, so the next request ("Season 1") was refused as "no 
 available to request" and never reached Sonarr. And Plex's lastViewedAt is only the
 owner's: a show the household was watching looked untouched."""
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import conftest  # noqa: F401
 
@@ -283,7 +283,7 @@ def test_a_scan_says_how_many_titles_were_kept():
     async def quiet(items, kind):
         pass
     cog.load_data, cog.enforce_request_monitor_cleanup, cog.send_cleanup_notification = ready, monitor, quiet
-    cog._scan_libraries_for_cleanup = lambda: ([], [_doomed(movie)])
+    cog._scan_libraries_for_cleanup = lambda warned=None: ([], [_doomed(movie)])
     cog._scan_lock = asyncio.Lock()
     out = asyncio.run(_website(cog).cleanup_scan(ADMIN))
     assert out["ok"] and "0 were removed" in out["message"], out
@@ -307,7 +307,7 @@ def test_switching_cleanup_off_during_a_scan_stops_its_removals():
     async def quiet(items, kind):
         pass
 
-    def walk():
+    def walk(warned=None):
         cog.config["enabled"] = False                 # another admin, mid-scan
         return [], [_doomed(movie)]
     cog.load_data, cog.enforce_request_monitor_cleanup, cog.send_cleanup_notification = ready, monitor, quiet
@@ -405,6 +405,11 @@ def _watched(movie, days):
     return movie
 
 
+def _warned(*keys):
+    """Titles whose whole warning has passed: first warned 30 days ago."""
+    return {str(key): (datetime.now(timezone.utc) - timedelta(days=30)).isoformat() for key in keys}
+
+
 def test_a_copy_watched_in_another_library_keeps_the_title():
     """The same film in Movies and Movies 4K: the 4K copy sat idle, so Radarr's entry
     (and its files) went and Seerr was cleared, while the other copy was watched weekly."""
@@ -420,7 +425,7 @@ def test_a_copy_due_soon_holds_back_the_removal_but_still_warns():
     idle = Movie(1, "Dune", 2021, ["tmdb://438631"])
     soon = _watched(Movie(2, "Dune", 2021, ["tmdb://438631"]), 85)
     _libraries(cog, ("Movies 4K", "movie", [idle]), ("Movies", "movie", [soon]))
-    notify, delete = cog._scan_libraries_for_cleanup()
+    notify, delete = cog._scan_libraries_for_cleanup(_warned(1))
     assert delete == [] and [n["rating_key"] for n in notify] == ["2"]
 
 
@@ -429,7 +434,7 @@ def test_a_title_idle_in_every_library_is_still_removed():
     a, b = Movie(1, "Dune", 2021, ["tmdb://438631"]), Movie(2, "Dune", 2021, ["tmdb://438631"])
     other = _watched(Movie(3, "Heat", 1995, ["tmdb://949"]), 5)
     _libraries(cog, ("Movies 4K", "movie", [a]), ("Movies", "movie", [b, other]))
-    notify, delete = cog._scan_libraries_for_cleanup()
+    notify, delete = cog._scan_libraries_for_cleanup(_warned(1, 2))
     assert notify == [] and sorted(d["rating_key"] for d in delete) == ["1", "2"]
 
 
@@ -451,7 +456,7 @@ def test_a_film_and_a_show_with_the_same_tmdb_number_are_different_titles():
     show = Show(2, [Episode(viewed=3)], title="Breaking Bad")
     show.guids = [Guid("tmdb://1396")]
     _libraries(cog, ("Movies", "movie", [film]), ("TV", "show", [show]))
-    notify, delete = cog._scan_libraries_for_cleanup()
+    notify, delete = cog._scan_libraries_for_cleanup(_warned(1))
     assert [d["rating_key"] for d in delete] == ["1"]
 
 
@@ -465,7 +470,7 @@ def test_a_copy_plex_has_no_ids_for_still_keeps_the_title():
     cog = _cog()
     idle, remake = Movie(1, "Dune", 2021), _watched(Movie(2, "Dune", 1984), 5)
     _libraries(cog, ("Movies 4K", "movie", [idle]), ("Movies", "movie", [remake]))
-    assert [d["rating_key"] for d in cog._scan_libraries_for_cleanup()[1]] == ["1"], "a namesake isn't a copy"
+    assert [d["rating_key"] for d in cog._scan_libraries_for_cleanup(_warned(1))[1]] == ["1"], "a namesake isn't a copy"
 
 
 def test_copies_linked_through_a_third_copy_are_judged_together():
@@ -493,6 +498,6 @@ def test_copies_are_judged_without_fetching_each_item_again():
     clips = [Clip(10 + n, f"Birthday {n}") for n in range(3)]
     _libraries(cog, ("Movies", "movie", [Movie(1, "Dune", 2021, ["tmdb://438631"])]),
                ("Home Videos", "movie", clips), excluded=["Home Videos"])
-    assert [d["rating_key"] for d in cog._scan_libraries_for_cleanup()[1]] == ["1"]
+    assert [d["rating_key"] for d in cog._scan_libraries_for_cleanup(_warned(1))[1]] == ["1"]
     assert fetched == []
     assert all(c.__dict__.get("_autoReload", True) for c in clips), "plexapi's own setting is put back"

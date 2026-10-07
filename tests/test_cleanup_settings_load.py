@@ -410,7 +410,7 @@ def test_portal_refuses_when_cleanup_settings_cannot_be_read():
             return {}
         cog.services.plex_server = object()
         cog.enforce_request_monitor_cleanup = enforce_request_monitor_cleanup
-        cog._scan_libraries_for_cleanup = lambda: ([], [])
+        cog._scan_libraries_for_cleanup = lambda warned=None: ([], [])
 
         class Bot:
             def get_cog(self, name):
@@ -650,7 +650,7 @@ def _stale_library(cog):
     cog.services.plex_server = object()
     cog.enforce_request_monitor_cleanup, cog.delete_media_items = monitor, delete_media_items
     cog.send_cleanup_notification, cog.reconcile_seerr = quiet, nothing
-    cog._scan_libraries_for_cleanup = lambda: ([], [{"title": "Old Film", "type": "movie", "rating_key": "5",
+    cog._scan_libraries_for_cleanup = lambda warned=None: ([], [{"title": "Old Film", "type": "movie", "rating_key": "5",
                                                      "days_inactive": 400}])
     return removed
 

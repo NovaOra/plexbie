@@ -106,11 +106,16 @@ class Data:
             return {}
 
         async def load():
+            from plugins.media_cleanup.cog import CLEANUP_NAMESPACE
             requests = await run_blocking(cleanupdata.request_times)
             server = self.services.plex_server
             if server is None:
                 raise RuntimeError("Plex is not connected")
-            return await run_blocking(cleanupdata.compute, server, config, requests)
+            # When the bot first warned about each title: none goes before its whole warning.
+            warned = cleanupdata.current_warnings(await kv_get(CLEANUP_NAMESPACE, "warned", {}),
+                                                  await kv_get(CLEANUP_NAMESPACE, "warned_checked"),
+                                                  datetime.now(timezone.utc))
+            return await run_blocking(cleanupdata.compute, server, config, requests, warned)
         result = await self.cache.get("cleanup:countdown", 1800, load)
         practice = bool(config.get("dry_run"))
         return {rk: {**c, "practice": practice} for rk, c in result.items()}
