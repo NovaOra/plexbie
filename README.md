@@ -220,7 +220,14 @@ who's watching from one place instead of five.
 - New additions are announced from Plex webhooks, enriched with TMDB metadata,
   and episodes arriving in a batch are collapsed into a single updating message.
 - Unwatched media can be reported and, optionally, deleted after a configurable
-  period, with an exemption list and a dry-run mode.
+  period, with an exemption list and a dry-run mode. A title is deleted through
+  Sonarr or Radarr (with its files) and from Plex, found by its TMDB, TheTVDB or
+  IMDb id; by name only when exactly one entry has the same title and year and
+  none of its ids disagree with Plex's. If Sonarr or Radarr is set up but doesn't
+  answer, or has several entries by that name that can't be told apart (or a
+  year is missing), the title is kept and tried again at the next daily check.
+  Only titles really removed are reported as removed; a manual scan says how
+  many were kept.
 - Audiobook and ebook downloads are watched, waited on until they stop changing,
   then renamed and filed into an Audiobookshelf-shaped library. A multi-disc
   release whose tracks share names (`CD1/01.mp3`, `CD2/01.mp3`) is filed as

@@ -160,6 +160,169 @@ def test_seerrs_leftovers_from_earlier_removals_are_cleared_unless_still_in_sona
     assert seerr.deleted == ["media/1", "media/5"]
 
 
+class Guid:
+    def __init__(self, i):
+        self.id = i
+
+
+class Movie:
+    type = "movie"
+
+    def __init__(self, key, title, year=None, guids=(), delete_fails=False):
+        self.ratingKey, self.title, self.year = key, title, year
+        self.guids = [Guid(g) for g in guids]
+        self.addedAt = datetime.now() - timedelta(days=400)
+        self.lastViewedAt = None
+        self.delete_fails, self.deleted = delete_fails, False
+
+    def delete(self):
+        if self.delete_fails:
+            raise ConnectionError("Plex is down")
+        self.deleted = True
+
+
+class BrokenArr(Arr):
+    async def get(self, path, **params):
+        from core.clients import ServiceError
+        raise ServiceError("Radarr answered 503", 503)
+
+
+class RefusingArr(Arr):
+    async def delete(self, path, **params):
+        from core.clients import ServiceError
+        raise ServiceError("Radarr answered 500", 500)
+
+
+def _removal(radarr, seerr=None):
+    cog = _cog()
+    cog.services.radarr = radarr
+    cog.services.seerr = seerr or Seerr([])
+    cog.tracking_data = {}
+
+    async def nothing():
+        return None
+    cog.save_tracking_data = nothing
+    return cog
+
+
+def _doomed(movie):
+    return {"item": movie, "type": "movie", "rating_key": str(movie.ratingKey), "title": movie.title,
+            "days_inactive": 120}
+
+
+def test_removal_reads_plex_ids_and_year_off_the_event_loop():
+    """plexapi fetches an unset attribute of a partial object over HTTP: reading guids or
+    year while deleting would block the loop (and the Discord heartbeat) for each title."""
+    def off_the_loop():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        raise AssertionError("a lazy Plex attribute was read on the event loop")
+
+    class LazyMovie(Movie):
+        @property
+        def guids(self):
+            off_the_loop()
+            return self._guids
+
+        @guids.setter
+        def guids(self, value):
+            self._guids = value
+
+        @property
+        def year(self):
+            off_the_loop()
+            return self._year
+
+        @year.setter
+        def year(self, value):
+            self._year = value
+
+    radarr = Arr("Radarr", [{"id": 7, "title": "Dune", "year": 2021, "tmdbId": 438631}])
+    cog = _removal(radarr)
+    movie = LazyMovie(1, "Dune", 2021, ["tmdb://438631"])
+    doomed = cog.check_item_for_cleanup(movie, {})            # in the worker thread, as the scan runs it
+    assert doomed["action"] == "delete" and doomed["ids"] == {"tmdb": "438631"} and doomed["year"] == 2021
+    deleted = asyncio.run(cog.delete_media_items([doomed]))
+    assert radarr.deleted == ["movie/7"] and len(deleted) == 1
+
+
+def test_a_sonarr_or_radarr_error_deletes_nothing_and_counts_nothing():
+    """With Radarr down, Plex's copy went anyway: the files were gone while Radarr still
+    monitored the title, and it was announced as removed. Now it waits for the next day."""
+    seerr = Seerr([{"id": 133, "tmdbId": 438631, "mediaType": "movie", "status": 5}])
+    cog = _removal(BrokenArr("Radarr", []), seerr)
+    movie = Movie(1, "Dune", 2021, ["tmdb://438631"])
+    assert asyncio.run(cog.delete_media_items([_doomed(movie)])) == []
+    assert not movie.deleted, "no Plex-only delete while Radarr can't be asked"
+    assert seerr.deleted == [] and cog.tracking_data == {}
+
+
+def test_a_failed_sonarr_or_radarr_delete_keeps_the_title_too():
+    seerr = Seerr([{"id": 133, "tmdbId": 438631, "mediaType": "movie", "status": 5}])
+    radarr = RefusingArr("Radarr", [{"id": 7, "title": "Dune", "year": 2021, "tmdbId": 438631}])
+    cog = _removal(radarr, seerr)
+    movie = Movie(1, "Dune", 2021, ["tmdb://438631"])
+    assert asyncio.run(cog.delete_media_items([_doomed(movie)])) == []
+    assert not movie.deleted, "no Plex-only delete when Radarr found it but couldn't remove it"
+    assert seerr.deleted == [] and cog.tracking_data == {}
+
+
+def test_a_scan_says_how_many_titles_were_kept():
+    from test_cleanup_settings_load import ADMIN, _website
+    cog = _removal(BrokenArr("Radarr", []))
+    movie = Movie(1, "Dune", 2021, ["tmdb://438631"])
+
+    async def ready():
+        return True
+
+    async def monitor():
+        return {}
+
+    async def quiet(items, kind):
+        pass
+    cog.load_data, cog.enforce_request_monitor_cleanup, cog.send_cleanup_notification = ready, monitor, quiet
+    cog._scan_libraries_for_cleanup = lambda: ([], [_doomed(movie)])
+    out = asyncio.run(_website(cog).cleanup_scan(ADMIN))
+    assert out["ok"] and "0 were removed" in out["message"], out
+    assert "1 couldn't be removed and will be tried again at the next check" in out["message"], out
+
+
+def test_not_in_radarr_but_removed_from_plex_counts_as_deleted():
+    cog = _removal(Arr("Radarr", []))
+    movie = Movie(1, "Home Video", 2020)
+    assert len(asyncio.run(cog.delete_media_items([_doomed(movie)]))) == 1
+    assert movie.deleted and "1" in cog.tracking_data
+
+
+def test_a_title_neither_radarr_nor_plex_removed_is_not_counted():
+    seerr = Seerr([{"id": 133, "tmdbId": 438631, "mediaType": "movie", "status": 5}])
+    cog = _removal(Arr("Radarr", []), seerr)
+    movie = Movie(1, "Dune", 2021, ["tmdb://438631"], delete_fails=True)
+    assert asyncio.run(cog.delete_media_items([_doomed(movie)])) == []
+    assert seerr.deleted == [], "Seerr keeps its record of a title still on disk"
+    assert cog.tracking_data == {}
+
+
+def test_the_title_fallback_needs_one_exact_match_with_the_same_year_and_no_conflicting_id():
+    rows = [{"id": 1, "title": "Dune", "year": 1984, "tmdbId": 841},
+            {"id": 2, "title": "Dune", "year": 2021, "tmdbId": 438631},
+            {"id": 3, "title": "Solaris", "year": 2002},
+            {"id": 4, "title": "Solaris", "year": 2002},
+            {"id": 5, "title": "Heat", "year": 1995, "imdbId": "tt0113277"}]
+
+    def removed(movie):
+        radarr = Arr("Radarr", rows)
+        asyncio.run(_removal(radarr).delete_media_items([_doomed(movie)]))
+        return radarr.deleted, movie.deleted
+
+    assert removed(Movie(1, "Dune", 2021, ["tmdb://999"])) == ([], True), "another film: only Plex has it"
+    assert removed(Movie(1, "Dune")) == ([], False), "no year in Plex: either Dune could be meant, so it's kept"
+    assert removed(Movie(1, "Solaris", 2002)) == ([], False), "two entries fit: neither is guessed, so it's kept"
+    assert removed(Movie(1, "Heat", 1995, ["tmdb://949"])) == (["movie/5"], True), "no conflicting id: still found"
+
+
 def test_a_request_that_never_reaches_sonarr_opens_a_ticket():
     """Seerr refused The Boys ("no seasons available to request") and Plexbie took it as
     handled; ten minutes on, it still wasn't in Sonarr and nobody was told."""

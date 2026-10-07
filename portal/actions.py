@@ -481,9 +481,12 @@ class Actions:
             return {"ok": False, "message": "Plex isn't reachable right now, so nothing was scanned."}
         self.data.cache.drop("cleanup:countdown")
         n, d, would = len(result["notify"]), len(result["deleted"]), result["dry_run"]
+        kept = result.get("kept", 0)
         logger.info(f"{self.actor(user)} ran a cleanup scan on the website")
         return {"ok": True, "message": (f"Scan done: {n} title{'s' if n != 1 else ''} in the warning window, "
-                                        f"{d} {'would have been' if would else 'were'} removed.")}
+                                        f"{d} {'would have been' if would else 'were'} removed."
+                                        + (f" {kept} couldn't be removed and will be tried again at the next check."
+                                           if kept else ""))}
 
     async def link_candidates(self, user: dict) -> dict:
         """Server members not yet linked to a Plex account, for the "Link Discord" picker."""

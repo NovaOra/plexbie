@@ -40,6 +40,16 @@ def _ids_of(item) -> Dict[str, str]:
             if k in ("tmdb", "tvdb", "imdb") and v:
                 out.setdefault(k, v)
     return out
+
+
+class ArrUnavailable(Exception):
+    """Sonarr/Radarr is set up but couldn't be read, or didn't delete the title."""
+
+
+class ArrAmbiguous(Exception):
+    """Sonarr/Radarr has entries by that name that can't be told apart from the title."""
+
+
 CHECK_EVERY = timedelta(hours=24)
 
 REQUEST_EXPIRY_DAYS = 90
@@ -587,12 +597,15 @@ class MediaCleanupCog(commands.Cog):
                 await self.send_cleanup_notification(items_to_notify, "warning")
 
             # Delete items
+            deleted = []
             if items_to_delete:
                 deleted = await self.delete_media_items(items_to_delete)
                 if deleted:
                     await self.send_cleanup_notification(deleted, "deleted")
 
-            logger.info(f"Cleanup check complete. Notified: {len(items_to_notify)}, Deleted: {len(items_to_delete)}")
+            logger.info(f"Cleanup check complete. Notified: {len(items_to_notify)}, Deleted: {len(deleted)}")
+            if len(items_to_delete) > len(deleted):
+                logger.warning(f"Cleanup kept {len(items_to_delete) - len(deleted)} title(s) it couldn't remove; trying again on the next check")
 
         except Exception as e:
             logger.error(f"Error in daily cleanup check: {e}", exc_info=True)
@@ -785,13 +798,16 @@ class MediaCleanupCog(commands.Cog):
             notify_threshold = inactivity_threshold - self.config["notify_days_before"]
 
             if days_inactive >= inactivity_threshold:
-                # Mark for deletion
+                # Mark for deletion. Ids and year are read here, in the worker thread:
+                # on a partial plexapi object an unset attribute is an HTTP request.
                 return {
                     "action": "delete",
                     "item": item,
                     "rating_key": rating_key,
                     "title": item.title,
                     "type": item.type,
+                    "ids": _ids_of(item),
+                    "year": getattr(item, "year", None),
                     "last_viewed": last_viewed.isoformat(),
                     "days_inactive": days_inactive,
                 }
@@ -816,50 +832,75 @@ class MediaCleanupCog(commands.Cog):
             return None
 
     async def delete_media_items(self, items: List[Dict]) -> List[Dict]:
-        """Delete media items from Sonarr/Radarr and Plex"""
+        """Delete media items from Sonarr/Radarr and Plex.
+
+        Returns only what was really removed: by Sonarr/Radarr, or (when they don't
+        have it) by Plex. If Sonarr/Radarr is set up but errors, the title is left
+        alone and tried again on the next check.
+        """
         deleted = []
 
         for item_data in items:
             try:
                 item = item_data["item"]
                 media_type = item_data["type"]
+                title = item_data["title"]
 
                 if self.config["dry_run"]:
-                    logger.info(f"[DRY RUN] Would delete: {item.title} ({media_type})")
+                    logger.info(f"[DRY RUN] Would delete: {title} ({media_type})")
                     deleted.append(item_data)
                 else:
-                    logger.info(f"Deleting: {item.title} ({media_type})")
+                    logger.info(f"Deleting: {title} ({media_type})")
+
+                    ids, year = item_data.get("ids"), item_data.get("year")
+                    if ids is None:
+                        ids, year = await run_blocking(lambda: (_ids_of(item), getattr(item, "year", None)))
 
                     # Delete from Sonarr/Radarr first (this deletes the actual files)
-                    ids = _ids_of(item)
                     removed = None
-                    if media_type == "movie":
-                        removed = await self._delete_from_radarr(item, ids)
-                        if not removed:
-                            logger.warning(f"Could not delete {item.title} from Radarr, trying Plex...")
-                    elif media_type == "show":
-                        removed = await self._delete_from_sonarr(item, ids)
-                        if not removed:
-                            logger.warning(f"Could not delete {item.title} from Sonarr, trying Plex...")
+                    arr_name = "Radarr" if media_type == "movie" else "Sonarr"
+                    try:
+                        if media_type == "movie":
+                            removed = await self._delete_from_radarr(title, year, ids)
+                        elif media_type == "show":
+                            removed = await self._delete_from_sonarr(title, year, ids)
+                    except ArrUnavailable:
+                        # Deleting only Plex's copy would remove the files while Sonarr/Radarr
+                        # still monitors the title.
+                        logger.warning(f"Kept {title} for now: {arr_name} couldn't remove it; trying again on the next check")
+                        continue
+                    except ArrAmbiguous:
+                        logger.warning(f"Kept {title}: {arr_name} has entries by that name that can't be told apart from it")
+                        continue
+                    if not removed and media_type in ("movie", "show"):
+                        logger.warning(f"Could not delete {title} from {arr_name}, trying Plex...")
+
+                    # Also remove from Plex library (Sonarr/Radarr deletion should trigger this, but be safe)
+                    plex_removed = False
+                    try:
+                        await run_blocking(item.delete)
+                        plex_removed = True
+                    except Exception as e:
+                        if removed:
+                            logger.debug(f"Could not delete from Plex (may already be gone): {e}")
+                        else:
+                            logger.warning(f"Could not delete {title} from Plex: {e}")
+                    if not (removed or plex_removed):
+                        continue
+
                     # ...and from Seerr, or it keeps the old request and refuses the next one
                     # ("no seasons available to request": The Boys, after three removals).
                     tmdb = ids.get("tmdb") or (removed or {}).get("tmdbId")
                     if tmdb:
-                        await self._clear_from_seerr("movie" if media_type == "movie" else "tv", int(tmdb), item.title)
-
-                    # Also remove from Plex library (Sonarr/Radarr deletion should trigger this, but be safe)
-                    try:
-                        await run_blocking(item.delete)
-                    except Exception as e:
-                        logger.debug(f"Could not delete from Plex (may already be gone): {e}")
+                        await self._clear_from_seerr("movie" if media_type == "movie" else "tv", int(tmdb), title)
 
                     deleted.append(item_data)
 
                     # Update tracking
                     self.tracking_data[item_data["rating_key"]] = {
                         "deleted_at": datetime.now(timezone.utc).isoformat(),
-                        "title": item.title,
-                        "type": item.type,
+                        "title": title,
+                        "type": media_type,
                         "tmdb": tmdb,
                     }
 
@@ -869,43 +910,59 @@ class MediaCleanupCog(commands.Cog):
         await self.save_tracking_data()
         return deleted
 
-    async def _delete_from_radarr(self, movie, ids: Optional[Dict[str, str]] = None) -> Optional[dict]:
+    async def _delete_from_radarr(self, title: str, year: Optional[int], ids: Dict[str, str]) -> Optional[dict]:
         """Delete a movie from Radarr and from disk. Returns Radarr's record of it."""
-        return await self._delete_from_arr(self.services.radarr, "movie", movie,
-                                           {"deleteFiles": "true", "addImportExclusion": "false"}, ids)
+        return await self._delete_from_arr(self.services.radarr, "movie", title, year, ids,
+                                           {"deleteFiles": "true", "addImportExclusion": "false"})
 
-    async def _delete_from_sonarr(self, show, ids: Optional[Dict[str, str]] = None) -> Optional[dict]:
+    async def _delete_from_sonarr(self, title: str, year: Optional[int], ids: Dict[str, str]) -> Optional[dict]:
         """Delete a TV show from Sonarr and from disk. Returns Sonarr's record of it."""
-        return await self._delete_from_arr(self.services.sonarr, "series", show,
-                                           {"deleteFiles": "true", "addImportListExclusion": "false"}, ids)
+        return await self._delete_from_arr(self.services.sonarr, "series", title, year, ids,
+                                           {"deleteFiles": "true", "addImportListExclusion": "false"})
 
-    async def _delete_from_arr(self, arr, path: str, item, params: Dict[str, str],
-                               ids: Optional[Dict[str, str]] = None) -> Optional[dict]:
+    async def _delete_from_arr(self, arr, path: str, title: str, year: Optional[int],
+                               ids: Dict[str, str], params: Dict[str, str]) -> Optional[dict]:
         """Find a Plex item in Sonarr/Radarr, by its TMDB/TheTVDB/IMDb id (Plex's guids),
-        else by title and year, and delete it with its files. Returns what was deleted."""
+        else by title and year, and delete it with its files. Returns what was deleted,
+        None when it isn't there (or isn't set up); raises ArrUnavailable on an error.
+
+        The title fallback takes only a single entry with the same title and the same
+        year, and none whose ids contradict Plex's: a remake or a namesake isn't deleted.
+        Raises ArrAmbiguous when entries by that name could be the title but can't be
+        told apart from it (several with its year, or a year missing on either side)."""
         if not arr.configured:
             logger.warning(f"{arr.name} not configured")
             return None
-        ids = ids if ids is not None else _ids_of(item)
+        fields = (("tmdb", "tmdbId"), ("tvdb", "tvdbId"), ("imdb", "imdbId"))
         try:
             rows = await arr.get(path) or []
 
             def same(m: dict) -> bool:
-                return any(str(m.get(field) or "") == ids[k] for k, field in
-                           (("tmdb", "tmdbId"), ("tvdb", "tvdbId"), ("imdb", "imdbId")) if ids.get(k))
-            year = getattr(item, "year", None)
-            match = next((m for m in rows if ids and same(m)), None) or next(
-                (m for m in rows if (m.get("title") or "").lower() == item.title.lower()
-                 and (not year or not m.get("year") or m["year"] == year)), None)
+                return any(str(m.get(field) or "") == ids[k] for k, field in fields if ids.get(k))
+
+            def conflicts(m: dict) -> bool:
+                return any(m.get(field) and str(m[field]) != ids[k] for k, field in fields if ids.get(k))
+            match = next((m for m in rows if ids and same(m)), None)
             if not match:
-                logger.warning(f"Could not find {item.title} in {arr.name}")
+                named = [m for m in rows if (m.get("title") or "").lower() == title.lower() and not conflicts(m)]
+                exact = [m for m in named if year and m.get("year") and str(m["year"]) == str(year)]
+                unsure = [m for m in named if not year or not m.get("year")]
+                if len(exact) == 1 and not unsure:
+                    match = exact[0]
+                elif exact or unsure:
+                    logger.warning(f"{len(exact) + len(unsure)} entries in {arr.name} could be {title} ({year or 'no year'}); deleting none of them")
+                    raise ArrAmbiguous(title)
+            if not match:
+                logger.warning(f"Could not find {title} in {arr.name}")
                 return None
             await arr.delete(f"{path}/{match['id']}", **params)
-            logger.info(f"Deleted {item.title} from {arr.name} and disk")
+            logger.info(f"Deleted {title} from {arr.name} and disk")
             return match
+        except ArrAmbiguous:
+            raise
         except Exception as e:
-            logger.error(f"Error deleting {item.title} from {arr.name}: {e}")
-            return None
+            logger.error(f"Error deleting {title} from {arr.name}: {e}")
+            raise ArrUnavailable(str(e)) from e
 
     async def _clear_from_seerr(self, kind: str, tmdb_id: int, title: str) -> bool:
         """Seerr's "Clear data" for it: its media record and requests go, so it can be
@@ -1134,6 +1191,7 @@ class MediaCleanupCog(commands.Cog):
 
         logger.info(f"Cleanup scan complete. Notified: {len(items_to_notify)}, Deleted: {len(deleted_items)}")
         return {"notify": items_to_notify, "to_delete": items_to_delete, "deleted": deleted_items,
+                "kept": len(items_to_delete) - len(deleted_items),
                 "monitor": monitor_summary, "dry_run": bool(self.config["dry_run"])}
 
     async def run_cleanup_scan(self, interaction: discord.Interaction):
@@ -1176,6 +1234,13 @@ class MediaCleanupCog(commands.Cog):
             ),
             inline=False
         )
+
+        if result["kept"]:
+            summary_embed.add_field(
+                name="⏸️ Items Kept",
+                value=f"{result['kept']} item(s) couldn't be removed; tried again at the next check",
+                inline=False
+            )
 
         if items_to_delete and self.config["dry_run"]:
             summary_embed.set_footer(text="Dry run mode - no files were actually deleted.")
