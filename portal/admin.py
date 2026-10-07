@@ -15,7 +15,7 @@ from core.logging import get_logger
 from database.kv_store import kv_get_all, kv_set
 from database.session import get_session
 from portal.data import Data, _iso, predates_outcomes, tmdb_art
-from core.discord_lookup import home_guild
+from core.discord_lookup import PUBLIC_BOT_FIX, home_guild, home_health_items
 
 logger = get_logger(__name__)
 
@@ -548,29 +548,57 @@ class Admin:
                     if r.status != 200:
                         raise ServiceError(f"Plex answered HTTP {r.status}", r.status)
 
+            app_info: Dict[str, Any] = {}
+
+            async def fetch_app() -> dict:
+                # The bot's application, asked for once for both Discord checks below.
+                if "error" in app_info:
+                    raise app_info["error"]
+                if "json" not in app_info:
+                    try:
+                        async with self.services.http_session.get(
+                                "https://discord.com/api/v10/applications/@me", timeout=6,
+                                headers={"Authorization": f"Bot {cfg.discord_bot_token}", "User-Agent": "Plexbie"}) as r:
+                            if r.status != 200:
+                                raise ServiceError(f"Discord answered HTTP {r.status}", r.status)
+                            app_info["json"] = await r.json()
+                    except Exception as e:
+                        app_info["error"] = e
+                        raise
+                return app_info["json"]
+
             async def discord_sign_in() -> None:
                 # Discord refuses a sign-in whose return address isn't listed, exactly, under
                 # OAuth2 > Redirects, before anything reaches Plexbie: say so here instead.
-                async with self.services.http_session.get(
-                        "https://discord.com/api/v10/applications/@me", timeout=6,
-                        headers={"Authorization": f"Bot {cfg.discord_bot_token}", "User-Agent": "Plexbie"}) as r:
-                    if r.status != 200:
-                        raise ServiceError(f"Discord answered HTTP {r.status}", r.status)
-                    listed = (await r.json()).get("redirect_uris") or []
+                listed = (await fetch_app()).get("redirect_uris") or []
                 if cfg.discord_callback_url not in listed:
                     raise ServiceError(f"Discord doesn't list {cfg.discord_callback_url}. Add it in the Discord Developer "
                                        "Portal: your app > OAuth2 > Redirects.")
 
             if cfg.plex_url and cfg.plex_token:
                 await probe("Plex", plex)
+            async def public_bot() -> None:
+                # On (Discord's default), anyone with the bot's ID can add it to a server of theirs.
+                if (await fetch_app()).get("bot_public") is True:
+                    raise ServiceError(f"Public Bot is on, so anyone with Plexbie's ID can add it to their own "
+                                       f"server. {PUBLIC_BOT_FIX}")
+
             if cfg.discord_client_id and cfg.discord_client_secret and cfg.discord_callback_url and cfg.discord_bot_token:
                 await probe("Discord sign-in", discord_sign_in)
+            if cfg.discord_bot_token:
+                try:
+                    known = "bot_public" in await fetch_app()
+                except Exception:
+                    known = False       # Discord didn't answer: the sign-in check, when set up, says so
+                if known:
+                    await probe("Discord Public Bot", public_bot)
             if self.bot is not None:
                 from portal.inbox import threads_ok
                 missing = threads_ok(self.bot)
                 checks.append({"name": "Discord DM threads", "ok": not missing, "ms": 0,
                                "detail": f"Give Plexbie's role {missing} in the admin channel, so each DM gets its own thread."
                                if missing else None})
+                checks.extend(home_health_items(self.bot, cfg))
             for client in (self.services.seerr, self.services.sonarr, self.services.radarr,
                            self.services.tautulli, self.services.sab):
                 if client.configured:

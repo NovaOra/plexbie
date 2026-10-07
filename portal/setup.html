@@ -131,12 +131,14 @@ body.locked .step, body.locked .nav, body.locked .steps { display: none !importa
         <li>Open the <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">Discord Developer Portal</a> and press <b>New Application</b>. Call it <b>Plexbie</b>.</li>
         <li>Go to <b>Bot</b> on the left. Press <b>Reset Token</b>, then <b>Copy</b>.</li>
         <li>On that same page, under <b>Privileged Gateway Intents</b>, turn on <b>Server Members Intent</b>. Press <b>Save Changes</b>.</li>
+        <li>Still on the Developer Portal: under <b>Installation</b> set <b>Install Link</b> to <b>None</b> and save, then on <b>Bot</b> turn off <b>Public Bot</b> and save. Only you can add Plexbie to servers then.</li>
         <li>Paste the token here and press <b>Check</b>.</li>
       </ol>
       <label for="DISCORD_BOT_TOKEN">Bot token</label>
       <input id="DISCORD_BOT_TOKEN" type="password" autocomplete="off" spellcheck="false" data-key>
       <div class="row"><button type="button" id="discord-check">Check</button></div>
       <p class="result" id="discord-result" aria-live="polite"></p>
+      <p class="result" id="discord-note" aria-live="polite"></p>
     </div>
 
     <div class="card hidden" id="discord-invite">
@@ -433,7 +435,7 @@ function summary() {
   const f = (k) => state.fields[k]?.set || !!values()[k];
   const rows = [
     ["Discord bot", f("DISCORD_BOT_TOKEN") ? "✓" : "needed", f("DISCORD_BOT_TOKEN") ? "ok" : "need"],
-    ["Discord server", f("GUILD_ID") ? "✓" : "not picked", f("GUILD_ID") ? "ok" : ""],
+    ["Discord server", f("GUILD_ID") ? "✓" : "needed", f("GUILD_ID") ? "ok" : "need"],
     ["Plex", f("PLEX_TOKEN") && f("PLEX_URL") ? "✓" : "needed", f("PLEX_TOKEN") && f("PLEX_URL") ? "ok" : "need"],
     ...APPS.map((a) => [a.name, f(a.key) ? "✓" : "skipped", f(a.key) ? "ok" : ""]),
     ["Other settings", (() => { const n = moreKeys.filter(changed).length; return n ? `${n} changed` : "defaults"; })(), moreKeys.some(changed) ? "ok" : ""],
@@ -465,6 +467,10 @@ async function checkDiscord(btn) {
     say("#discord-result", d.missingIntents.length
       ? `Found ${d.name}, but ${d.missingIntents.join(" and ")} Intent ${d.missingIntents.length > 1 ? "are" : "is"} off. Turn ${d.missingIntents.length > 1 ? "them" : "it"} on (step 3), save, and press Check again.`
       : `Found your bot, ${d.name}. 🎉`, d.missingIntents.length ? "warn" : "ok");
+    const notes = [];
+    if (d.publicBot) notes.push("Public Bot is on: anyone with Plexbie's ID could add it to their own server. In the Developer Portal: Installation → Install Link → None, Save; then Bot → turn off Public Bot, Save. You can still add it to your own server with the button below.");
+    if (!d.guilds.length) notes.push("Plexbie isn't in a server yet. Press Add Plexbie to my server, then Refresh.");
+    say("#discord-note", notes.join(" "), notes.length ? "warn" : "");
     $("#invite-link").href = d.invite;
     $("#discord-invite").classList.remove("hidden");
     guilds = d.guilds;
@@ -558,7 +564,8 @@ async function finish(btn) {
     if (v.DISCORD_CLIENT_SECRET) v.DISCORD_CALLBACK_URL = $("#callback-url").textContent || "";
     const d = await api("finish", { values: v });
     if (!d.ok) {
-      const names = { DISCORD_BOT_TOKEN: "the Discord bot token", PLEX_URL: "the Plex address", PLEX_TOKEN: "the Plex sign-in" };
+      const names = { DISCORD_BOT_TOKEN: "the Discord bot token", GUILD_ID: "your Discord server (add Plexbie to it, press Refresh, and pick it)",
+                      PLEX_URL: "the Plex address", PLEX_TOKEN: "the Plex sign-in" };
       say("#finish-result", "Still needed: " + d.missing.map((m) => names[m] || m).join(", ") + ".", "bad");
       return (btn.disabled = false);
     }

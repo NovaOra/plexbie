@@ -6,6 +6,12 @@ couple of attributes off each, and real fakes make the access pattern explicit.
 """
 import conftest  # noqa: F401  (sys.path + env setup)
 
+import discord
+
+#: The household's own Discord server, and somebody else's.
+HOME = 4242
+OTHER = 9090
+
 
 class FakePerms:
     def __init__(self, administrator: bool = False):
@@ -66,12 +72,17 @@ class FakeResponse:
     def __init__(self, done: bool = False):
         self._done = done
         self.sent = []
+        self.choices = []
 
     def is_done(self):
         return self._done
 
     async def send_message(self, content, ephemeral=False):
         self.sent.append(content)
+
+    async def autocomplete(self, choices):
+        self.choices.append(choices)
+        self._done = True
 
 
 class FakeFollowup:
@@ -82,13 +93,23 @@ class FakeFollowup:
         self.sent.append(content)
 
 
+_SAME_AS_CONFIG = object()
+
+
 class FakeInteraction:
-    def __init__(self, user, config, response_done: bool = False):
+    """By default the interaction comes from the server the config calls home."""
+
+    def __init__(self, user, config, response_done: bool = False, guild_id=_SAME_AS_CONFIG,
+                 type=discord.InteractionType.application_command, data=None):
         self.user = user
         self.client = FakeClient(config)
         self.response = FakeResponse(response_done)
         self.followup = FakeFollowup()
         self.command = None
+        self.guild_id = getattr(config, "guild_id", None) if guild_id is _SAME_AS_CONFIG else guild_id
+        self.type = type
+        self.data = {"name": "test"} if data is None else data
+        self.command_failed = False
 
     @property
     def refusals(self):
@@ -98,11 +119,13 @@ class FakeInteraction:
 
 class PermConfig:
     """Config shape that permissions.py cares about."""
+    guild_id = HOME
     bot_owner_id = 111
     admin_role_id = 999
 
 
 class NoIdsConfig:
+    guild_id = None
     bot_owner_id = None
     admin_role_id = None
 

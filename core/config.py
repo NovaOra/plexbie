@@ -270,17 +270,21 @@ class Config(BaseModel):
     smtp_password: Optional[str] = Field(default_factory=lambda: os.getenv("SMTP_PASSWORD"))
     smtp_from: Optional[str] = Field(default_factory=lambda: os.getenv("SMTP_FROM"))
 
-    def model_post_init(self, __context) -> None:
-        """Settings that would quietly do something drastic are corrected (and
-        logged) instead: each falls back to the safe reading."""
-        # The @everyone role's id is the server's id, and every member has it:
-        # as the admin or member role it would make everyone an admin or member.
+    def forget_everyone_roles(self) -> None:
+        """The @everyone role's id is the server's id, and every member has it:
+        as the admin or member role it would make everyone an admin or member.
+        Run again when start-up fills in a blank GUILD_ID."""
         for field, name in (("admin_role_id", "ADMIN_ROLE_ID"), ("plex_member_role_id", "PLEX_MEMBER_ROLE_ID"),
                             ("arrivals_role_id", "ARRIVALS_ROLE_ID")):
             if self.guild_id and getattr(self, field) == self.guild_id:
                 logger.error(f"{name} is the server's own id (that's @everyone, which every member has). "
                              f"Ignoring it - pick a real role.")
                 setattr(self, field, None)
+
+    def model_post_init(self, __context) -> None:
+        """Settings that would quietly do something drastic are corrected (and
+        logged) instead: each falls back to the safe reading."""
+        self.forget_everyone_roles()
         # Removal must come after a warning, and some days after it.
         if self.inactivity_warning_days < 1:
             logger.error(f"INACTIVITY_WARNING_DAYS={self.inactivity_warning_days} is too low; using 25.")

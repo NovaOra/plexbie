@@ -162,6 +162,8 @@ docker build -t plexbie:latest .
 docker compose up -d
 ```
 
+Turn off **Public Bot**: Discord Developer Portal → your app → **Installation** → Install Link: **None** → Save Changes, then **Bot** → turn off Public Bot → Save Changes. Discord refuses the second step while an install link is set. Only you can add Plexbie to a server afterwards, and the setup page's **Add Plexbie to my server** link still works for you.
+
 Then open **http://&lt;your host&gt;:7979** and sign in with the Plex account that owns the server: you’re the admin.
 The details are below.
 
@@ -260,7 +262,8 @@ cp config/.env.example config/.env
 ```
 
 Fill in `config/.env` — at minimum `DISCORD_BOT_TOKEN`, `GUILD_ID`, `PLEX_URL`
-and `PLEX_TOKEN`. Then:
+and `PLEX_TOKEN` — and turn off **Public Bot** for the bot
+([Keep Plexbie to your server](#keep-plexbie-to-your-server)). Then:
 
 ```bash
 docker build -t plexbie:latest .
@@ -336,11 +339,23 @@ Plugins: Loaded 11/11 available plugins
 Webhook server listening on 127.0.0.1:7980
 Commands: 12 synced to guild ...
 PLEXBIE DISCORD BOT - READY
+🏠 Home server: <your server> (<GUILD_ID>)
+✅ Commands: 12 in <your server>
 ```
 
-Slash commands are synced to the guild named by `GUILD_ID`, which takes effect
-immediately. If `GUILD_ID` is unset they are registered globally instead, which
-can take up to an hour to appear.
+If that last line reads `❌ Commands: OFF`, the error above it and
+**Manage → Health → Discord server** say why and what to change.
+
+Slash commands go only to the server named by `GUILD_ID` and appear immediately.
+Plexbie never registers commands globally, and removes any an older version left
+there (log: `removing N stale global command(s)`). It answers commands,
+autocomplete and admin buttons only in that server; the `BOT_OWNER_ID` user's own
+clicks work anywhere. If `GUILD_ID` is blank, Plexbie picks the server itself only
+when that's provable: the one your channel and role settings belong to, or the only
+server it's in when that server's owner is the bot's owner (the Developer Portal
+account that owns the app, or `BOT_OWNER_ID`). It saves the choice to
+`config/.env` and logs it. Otherwise commands and admin buttons stay off, and the log and
+**Manage → Health** say why.
 
 ---
 
@@ -356,7 +371,7 @@ full list lives in `config/.env.example`; this section covers what matters.
 | `DISCORD_BOT_TOKEN` | Bot token |
 | `PLEX_URL` | e.g. `http://192.168.1.50:32400`. Default `http://localhost:32400` |
 | `PLEX_TOKEN` | Plex auth token |
-| `GUILD_ID` | Without it, commands register globally |
+| `GUILD_ID` | Your household's Discord server ID (Developer Mode on → right-click the server → Copy Server ID). The setup page fills it in. Commands and admin buttons work only in this server |
 
 ### Strongly recommended
 
@@ -368,7 +383,8 @@ full list lives in `config/.env.example`; this section covers what matters.
 | `PLEX_USERNAME`, `PLEX_PASSWORD` | Required to *remove* Plex users; invites and reads work without them |
 
 Authorization accepts **any** of: the Discord `administrator` permission, the
-`ADMIN_ROLE_ID` role, or `BOT_OWNER_ID`.
+`ADMIN_ROLE_ID` role, or `BOT_OWNER_ID`. The first two count only in the
+`GUILD_ID` server.
 
 ### Behaviour
 
@@ -565,6 +581,30 @@ doesn't need Administrator:
 In Discord's developer portal, the bot also needs the **Server Members** and **Message
 Content** intents turned on; the setup page checks both. For handing out roles, Plexbie's own
 role must sit above them in Server Settings → Roles. Roles Plexbie creates start out below it.
+
+### Keep Plexbie to your server
+
+Turn off **Public Bot**, so nobody else can add Plexbie to a server of theirs:
+
+1. Discord Developer Portal → your app → **Installation** → Install Link: **None** → Save Changes.
+2. **Bot** → turn off **Public Bot** → Save Changes. (Discord refuses this while an install link is set.)
+
+The setup page's **Add Plexbie to my server** link still works for you. If someone adds
+Plexbie elsewhere anyway, it stays there but refuses every command and admin button, logs it,
+posts it in #plexbie-admin and alerts the admins (for the first few servers in an hour; after
+that only the log), and lists it on **Manage → Health** under
+"Other Discord servers". It never leaves a server by itself; remove it from that server yourself.
+
+### Moving to a new Discord server
+
+Same bot, same token:
+
+1. Add Plexbie to the new server with the setup page's **Add Plexbie to my server** link. It
+   refuses everything there for now and tells the admins.
+2. Set `GUILD_ID` to the new server's ID (setup page or `config/.env`) and restart.
+3. The commands move, and the old server's copies stop answering.
+
+Doing step 2 first works too: the commands appear as soon as Plexbie joins.
 
 ### Set up this server for me
 
@@ -792,6 +832,15 @@ docker exec plexbie sh -c 'grep "\"level\": \"ERROR\"" /app/logs/plexbie.log | t
 
 **Health**: `curl http://127.0.0.1:7980/health`
 
+**Manage → Health** also checks Discord:
+
+- **Discord server**: the server Plexbie answers in (`GUILD_ID`), and why commands are off if
+  it isn't in it, `GUILD_ID` is blank, or Discord wouldn't take its commands there.
+- **Other Discord servers**: red while Plexbie is in any other server. It ignores commands
+  there; move your household there or remove Plexbie from it.
+- **Discord Public Bot**: red while anyone with Plexbie's ID can add it to their server. See
+  [Keep Plexbie to your server](#keep-plexbie-to-your-server).
+
 **Deploying a change**: rebuild the image and recreate the container. Tag the
 previous image first so there is a way back.
 
@@ -803,7 +852,7 @@ docker compose up -d --no-deps --force-recreate plexbie
 
 **Stale global commands**: if commands ever appear twice in the picker, they are
 registered in both the global and guild scopes and Discord merges the two. The
-bot clears the global scope on startup when `GUILD_ID` is set, logging
+bot clears the global scope on every start, logging
 `removing N stale global command(s)`.
 
 ---
@@ -818,6 +867,9 @@ bot clears the global scope on startup when `GUILD_ID` is set, logging
 - **Authorization is checked in the handler**, not inferred from an ephemeral
   reply or from a button being hidden. Persistent views outlive their message and
   re-check on every interaction.
+- **Bound to one server.** Commands, autocomplete and admin buttons are refused
+  outside the `GUILD_ID` server (the `BOT_OWNER_ID` user excepted). With `GUILD_ID` blank and no
+  provable server, commands are off, never global. Keep Public Bot off.
 - **Never commit `config/.env`.** It is gitignored, along with `config/*.db` and
   `logs/`.
 - `/say` lets an administrator send a message as the bot. Every use is logged
@@ -831,7 +883,9 @@ bot clears the global scope on startup when `GUILD_ID` is set, logging
 Worth knowing before you rely on this:
 
 - **Single guild.** Commands sync to one `GUILD_ID`, and channel and role
-  settings are single-valued. It is not built to be a multi-server bot.
+  settings are single-valued. It is not built to be a multi-server bot: every
+  command and admin check is refused in any other server, and Health shows a red
+  "Other Discord servers" item while it's in one.
 - **SQLite only.** `DB_URL` is passed to SQLAlchemy, but the schema migration and
   the upsert path are written against SQLite. Keep the database off any
   file-syncing tool — syncing a live SQLite file can corrupt it.

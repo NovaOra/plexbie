@@ -105,9 +105,10 @@ def test_finish_lists_what_is_missing_then_lets_start_up_continue():
 
     async def steps(c, s):
         first = await (await c.post("/setup/api/finish", json={"values": {"DISCORD_BOT_TOKEN": "t"}})).json()
-        assert first == {"ok": False, "missing": ["PLEX_URL", "PLEX_TOKEN"]}
+        assert first == {"ok": False, "missing": ["GUILD_ID", "PLEX_URL", "PLEX_TOKEN"]}
         assert not s.done.is_set()
-        ok = await (await c.post("/setup/api/finish", json={"values": {"PLEX_URL": "http://p:32400", "PLEX_TOKEN": "x"}})).json()
+        ok = await (await c.post("/setup/api/finish", json={"values": {
+            "GUILD_ID": "42", "PLEX_URL": "http://p:32400", "PLEX_TOKEN": "x"}})).json()
         await asyncio.wait_for(s.done.wait(), 3)
         return ok
 
@@ -378,7 +379,7 @@ def test_a_restart_partway_through_returns_to_the_setup_page():
 
     async def steps(c, s):
         await c.post("/setup/api/save", json={"values": {
-            "DISCORD_BOT_TOKEN": "t", "PLEX_URL": "http://p:32400", "PLEX_TOKEN": "x"}})
+            "DISCORD_BOT_TOKEN": "t", "GUILD_ID": "42", "PLEX_URL": "http://p:32400", "PLEX_TOKEN": "x"}})
         midway = setup.needs_setup(p.parent)
         await c.post("/setup/api/finish", json={"values": {}})
         return midway, setup.needs_setup(p.parent)

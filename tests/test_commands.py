@@ -213,33 +213,14 @@ def _bot_source():
 
 def test_startup_removes_stale_global_commands():
     """Discord merges global and guild commands, so leftovers show up twice."""
-    source = _bot_source()
-    assert "fetch_commands()" in source, (
+    lookup = (ROOT / "core" / "discord_lookup.py").read_text()
+    assert "fetch_commands()" in lookup, (
         "nothing checks the global scope, so stale global commands stay forever"
     )
-    assert "clear_commands(guild=None)" in source, (
+    assert "bulk_upsert_global_commands(bot.application_id, payload=[])" in lookup, (
         "stale global commands are detected but never removed"
     )
-
-
-def test_startup_does_not_create_global_commands_when_a_guild_is_configured():
-    """A global sync alongside a guild sync is what created the duplicates."""
-    tree = ast.parse(_bot_source())
-    setup_hook = next(
-        node for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == "setup_hook"
-    )
-    # Inside the `if self.config.guild_id:` branch, every sync must be guild-scoped
-    # except the one that follows clear_commands(guild=None).
-    src = ast.get_source_segment(_bot_source(), setup_hook) or ""
-    guild_branch = src.split("if self.config.guild_id:", 1)[-1].split("else:", 1)[0]
-    bare_syncs = guild_branch.count("self.tree.sync()")
-    assert bare_syncs == 1, (
-        f"expected exactly one bare tree.sync() in the guild branch (the one that "
-        f"pushes the cleared global list); found {bare_syncs}"
-    )
-    assert "clear_commands(guild=None)" in guild_branch
+    assert "stale global command" in _bot_source(), "the clean-up isn't logged"
 
 
 def test_refusals_are_not_reported_as_crashes():

@@ -6,17 +6,34 @@ The codebase historically used two different admin conventions:
   * a configured ``ADMIN_ROLE_ID`` (invite_tracker)
 
 ``is_bot_admin`` accepts either, plus the configured bot owner, so adopting it
-does not revoke access from anyone who had it before.
+does not revoke access from anyone who had it before. Administrator and
+``ADMIN_ROLE_ID`` count only in the household's own server (``GUILD_ID``): anyone
+can make themselves Administrator of a server of their own and add Plexbie to it.
+The bot owner counts everywhere.
+
+``HomeGuildTree`` puts the same server check in front of every slash command.
 """
 import functools
+import logging
+import time
+from typing import Optional
 
 import discord
+from discord import app_commands
 
 from core.logging import get_logger
 
 logger = get_logger(__name__)
 
 DENIED_MESSAGE = "⛔ You don't have permission to use this."
+FOREIGN_MESSAGE = "Plexbie only works in its household's Discord server."
+STARTING_MESSAGE = "Plexbie is just starting up. Try again in a moment."
+UNBOUND_MESSAGE = ("Plexbie's commands and admin buttons are off until its admin sets which Discord server "
+                   "is home (GUILD_ID).")
+
+#: Seconds between WARNING lines about refusals from the same server; the rest go to DEBUG.
+REFUSAL_LOG_EVERY = 3600
+_refusals_logged: dict = {}
 
 
 def _config_from_interaction(interaction: discord.Interaction):
@@ -30,18 +47,39 @@ def _config_from_interaction(interaction: discord.Interaction):
     return getattr(services, "config", None)
 
 
+def is_owner(interaction: discord.Interaction) -> bool:
+    """True for the configured bot owner, wherever the interaction comes from."""
+    config = _config_from_interaction(interaction)
+    return bool(config is not None and config.bot_owner_id and interaction.user.id == config.bot_owner_id)
+
+
+def in_home_guild(interaction: discord.Interaction) -> bool:
+    """True when the interaction comes from the household's server (GUILD_ID).
+
+    False in a DM, in any other server, and while GUILD_ID is unknown.
+    """
+    config = _config_from_interaction(interaction)
+    home = getattr(config, "guild_id", None)
+    return bool(home) and getattr(interaction, "guild_id", None) == home
+
+
 def is_bot_admin(interaction: discord.Interaction) -> bool:
     """Return True if the interacting user may perform administrative actions.
 
     Fails closed: anything unexpected (DM context, missing config, member not
-    resolvable) denies access rather than allowing it. The bot owner is always
-    permitted so a misconfigured guild cannot lock everyone out.
+    resolvable, another server, no GUILD_ID) denies access rather than allowing
+    it. The bot owner is always permitted so a misconfigured guild cannot lock
+    everyone out.
     """
     user = interaction.user
     config = _config_from_interaction(interaction)
 
-    if config is not None and config.bot_owner_id and user.id == config.bot_owner_id:
+    if is_owner(interaction):
         return True
+
+    # Administrator of a server someone added Plexbie to means nothing here.
+    if not in_home_guild(interaction):
+        return False
 
     # Guild administrator permission. Absent on discord.User (i.e. in DMs).
     perms = getattr(user, "guild_permissions", None)
@@ -57,13 +95,33 @@ def is_bot_admin(interaction: discord.Interaction) -> bool:
     return False
 
 
-async def deny(interaction: discord.Interaction) -> None:
+def _unbound_message(interaction: discord.Interaction) -> str:
+    """GUILD_ID is blank: still being worked out at start-up, or no server could be proved."""
+    if not getattr(getattr(interaction, "client", None), "_home_settled", True):
+        return STARTING_MESSAGE
+    return UNBOUND_MESSAGE
+
+
+def refusal_message(interaction: discord.Interaction) -> str:
+    """What to tell someone ``is_bot_admin`` turned away.
+
+    With GUILD_ID blank even the household's own admins are refused, so they're
+    told that rather than that they lack permission.
+    """
+    config = _config_from_interaction(interaction) if hasattr(interaction, "client") else None
+    if config is None or getattr(config, "guild_id", None):
+        return DENIED_MESSAGE
+    return _unbound_message(interaction)
+
+
+async def deny(interaction: discord.Interaction, message: Optional[str] = None) -> None:
     """Send the standard ephemeral refusal, whether or not we already responded."""
+    message = message or refusal_message(interaction)
     try:
         if interaction.response.is_done():
-            await interaction.followup.send(DENIED_MESSAGE, ephemeral=True)
+            await interaction.followup.send(message, ephemeral=True)
         else:
-            await interaction.response.send_message(DENIED_MESSAGE, ephemeral=True)
+            await interaction.response.send_message(message, ephemeral=True)
     except discord.HTTPException as e:
         logger.debug(f"Could not deliver permission refusal: {e}")
 
@@ -79,11 +137,68 @@ async def require_admin(interaction: discord.Interaction) -> bool:
         return True
 
     logger.warning(
-        f"Denied admin action to {interaction.user} ({interaction.user.id}): "
+        f"Denied admin action to {interaction.user} ({interaction.user.id}) "
+        f"in server {getattr(interaction, 'guild_id', None)}: "
         f"{getattr(interaction.command, 'name', None) or 'component interaction'}"
     )
     await deny(interaction)
     return False
+
+
+def _log_refusal(interaction: discord.Interaction, config) -> None:
+    """One WARNING an hour per server: a stranger's server can't flood the log."""
+    guild_id = getattr(interaction, "guild_id", None)
+    now = time.monotonic()
+    last = _refusals_logged.get(guild_id)
+    level = logging.DEBUG
+    if last is None or now - last > REFUSAL_LOG_EVERY:
+        level = logging.WARNING
+        _refusals_logged[guild_id] = now
+    name = (getattr(interaction, "data", None) or {}).get("name")
+    home = getattr(config, "guild_id", None)
+    logger.log(level, f"Refused /{name} from {interaction.user} ({interaction.user.id}) in server "
+                      f"{guild_id or 'a DM'}: Plexbie only answers in its household's server "
+                      f"({home or 'none: GUILD_ID is blank'}).")
+
+
+async def home_guild_check(interaction: discord.Interaction) -> bool:
+    """Commands and autocomplete answer only in the household's server, or for the bot owner.
+
+    Refused interactions are answered (an empty list for autocomplete, which
+    can't show a message) and logged.
+    """
+    if is_owner(interaction) or in_home_guild(interaction):
+        return True
+
+    config = _config_from_interaction(interaction)
+    message = FOREIGN_MESSAGE if getattr(config, "guild_id", None) else _unbound_message(interaction)
+    try:
+        if interaction.type is discord.InteractionType.autocomplete:
+            await interaction.response.autocomplete([])
+        else:
+            await deny(interaction, message)
+    except discord.HTTPException as e:
+        logger.debug(f"Could not deliver the refusal: {e}")
+    _log_refusal(interaction, config)
+    return False
+
+
+class HomeGuildTree(app_commands.CommandTree):
+    """The command tree, bound to the household's server.
+
+    discord.py runs ``interaction_check`` first, before it looks the command up,
+    so it covers every slash command, autocomplete and context menu, ahead of
+    each command's own checks: the ``has_permissions(administrator=True)``
+    commands in user_mgmt, media_requests and watch_party, /say's own
+    Administrator check, and /reply. Those checks are left as they are.
+
+    Every command is guild_only and synced to the home server only, so every DM
+    is refused except the bot owner's; a command meant for DMs has to be let
+    through here on purpose.
+    """
+
+    async def interaction_check(self, interaction: discord.Interaction, /) -> bool:
+        return await home_guild_check(interaction)
 
 
 class AdminOnlyView(discord.ui.View):
@@ -101,7 +216,7 @@ class AdminOnlyView(discord.ui.View):
 
         logger.warning(
             f"Denied {self.__class__.__name__} interaction to "
-            f"{interaction.user} ({interaction.user.id})"
+            f"{interaction.user} ({interaction.user.id}) in server {getattr(interaction, 'guild_id', None)}"
         )
         await deny(interaction)
         return False

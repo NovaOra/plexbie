@@ -4,6 +4,7 @@ import asyncio
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import discord
@@ -17,14 +18,22 @@ discord.VoiceClient.warn_nacl = False
 discord.VoiceClient.warn_dave = False
 
 from core.config import Config
-from core.discord_lookup import home_guild
+from core.discord_lookup import (
+    PUBLIC_BOT_FIX, admin_channel, clear_global_commands, home_guild, not_in_text, pick_home_guild, problem_text,
+)
 from core.logging import setup_logging, get_logger
+from core.permissions import HomeGuildTree
 from core.plugin_manager import PluginManager
 from core.services import BotServices
 from core.webhooks import WebhookServer
 from database.session import init_database
 
 logger = get_logger(__name__)
+
+#: Posts and phone alerts about other servers Plexbie was added to, per hour. Anyone
+#: who owns many servers could otherwise fill the admin channel; the rest go to the
+#: log, and Manage → Health lists every server.
+FOREIGN_NOTICES_PER_HOUR = 3
 
 
 class Plexbie(commands.Bot):
@@ -47,12 +56,20 @@ class Plexbie(commands.Bot):
             # (a ticket answer in the admin channel) or from Plex, Seerr and TMDB can't
             # @everyone or ping a role. /say, Manage's "say" and the arrivals role ping opt in.
             allowed_mentions=discord.AllowedMentions.none(),
+            # Commands, autocomplete and context menus answer only in the household's server.
+            tree_cls=HomeGuildTree,
         )
         
         self.config = config
         self.services = services
         self.plugin_manager = PluginManager(self, services)
         self.webhook_server = WebhookServer(services)
+        # Which server is home is settled once, on the first on_ready (_settle_home_guild).
+        self._home_settled = False
+        self._home_problem = None        # why commands are off, when GUILD_ID is blank
+        self._told_foreign = set()       # servers the admins were already told about
+        self._foreign_notices = []       # when they were last told (FOREIGN_NOTICES_PER_HOUR)
+        self._synced = None              # commands in the household's server, once synced
     
     async def setup_hook(self):
         """Initialize bot components on startup"""
@@ -148,37 +165,167 @@ class Plexbie(commands.Bot):
         for cmd in self.tree.get_commands():
             logger.debug(f"  - {cmd.name}: {cmd.description}")
 
-        # Sync slash commands. Guild-scoped only: a guild sync is immediate,
-        # whereas global commands take up to an hour to propagate.
+        await self._sync_commands()
+
+    async def _sync_commands(self) -> None:
+        """Slash commands go to the household's server (GUILD_ID) only, never the
+        global scope: a guild sync is immediate, and global commands would appear
+        in every server Plexbie is ever added to. With GUILD_ID blank nothing is
+        registered until on_ready has worked out which server is home."""
         if self.config.guild_id:
-            guild = discord.Object(id=self.config.guild_id)
+            await self._sync_to_home(self.config.guild_id)
+        else:
+            logger.info("Commands: GUILD_ID is blank. Waiting to see which Discord server Plexbie is in; "
+                        "nothing is registered globally.")
+
+    async def _sync_to_home(self, guild_id: int) -> bool:
+        """Put every command in the household's server. Never fatal: Plexbie may not
+        be in that server yet (moving to a new one), and joining it syncs again."""
+        guild = discord.Object(id=guild_id)
+        ok = False
+        try:
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
-            logger.info(
-                f"Commands: {len(synced)} synced to guild {self.config.guild_id}"
-            )
+            self._synced = len(synced)
+            logger.info(f"Commands: {len(synced)} synced to guild {guild_id}")
+            ok = True
+        except discord.Forbidden:
+            logger.error(f"❌ Commands: Discord won't let Plexbie add its commands to server {guild_id} (GUILD_ID). "
+                         "Plexbie isn't in it, or was added without the applications.commands scope. Add it with "
+                         "the setup page's link; the commands appear as soon as it joins.")
+        except discord.HTTPException as e:
+            logger.error(f"❌ Commands: couldn't add Plexbie's commands to server {guild_id}: {e}")
+        await self._clear_stale_globals()
+        return ok
 
-            # Then make sure the global scope is empty. Discord merges global and
-            # guild commands in the picker, so anything left there from an earlier
-            # global sync appears a second time - this deployment had accumulated
-            # 15 such duplicates, which nothing in the code ever removed. Cheap and
-            # idempotent: after the first cleanup fetch_commands() returns nothing.
+    async def _clear_stale_globals(self) -> int:
+        """Make sure the global scope is empty. Discord merges global and guild
+        commands in the picker, so anything left there from an older version's
+        global sync appears a second time (one deployment had 15 such duplicates),
+        and in every other server Plexbie is in. Cheap and idempotent: after the
+        first cleanup fetch_commands() returns nothing."""
+        try:
+            removed = await clear_global_commands(self)
+        except discord.HTTPException as e:
+            # Not worth failing startup over.
+            logger.warning(f"Could not check for stale global commands: {e}")
+            return 0
+        if removed:
+            logger.warning(f"Commands: removing {removed} stale global command(s); "
+                           "Plexbie's commands live only in its household's server")
+        return removed
+
+    async def _settle_home_guild(self) -> None:
+        """Once per start, when connected: say which server is home, or with GUILD_ID
+        blank pick it when that can be proved (core.discord_lookup.pick_home_guild)."""
+        if self._home_settled:
+            return
+        try:
+            gid = self.config.guild_id
+            if gid:
+                guild = self.get_guild(gid)
+                if guild is None:
+                    logger.error(f"❌ {not_in_text(gid, self.guilds)}")
+                else:
+                    logger.info(f"🏠 Home server: {guild.name} ({gid})")
+            else:
+                guild, reason = await pick_home_guild(self, self.config)
+                if guild is not None:
+                    await self._adopt(guild, reason)
+                else:
+                    self._home_problem = problem_text(reason, self.guilds)
+                    await self._clear_stale_globals()
+                    logger.error(f"❌ Commands are OFF: {self._home_problem}")
+            app = self.application      # fetched at login
+            if app is not None and app.bot_public:
+                logger.warning(f"⚠️  Public Bot is on: anyone who has Plexbie's ID can add it to their own server. "
+                               f"{PUBLIC_BOT_FIX}")
+        finally:
+            self._home_settled = True
+
+    async def _adopt(self, guild, reason: str) -> None:
+        """Make `guild` home for good: this run (the shared config every check reads)
+        and the next (config/.env)."""
+        from portal.setup import write_env
+        self.config.guild_id = guild.id
+        os.environ["GUILD_ID"] = str(guild.id)
+        self.config.forget_everyone_roles()
+        self._home_problem = None
+        try:
+            await asyncio.to_thread(write_env, ENV_FILE, {"GUILD_ID": str(guild.id)})
+            saved = f"saved GUILD_ID={guild.id} in config/.env"
+        except OSError as e:
+            saved = "is using it for this run"
+            logger.warning(f"Couldn't save GUILD_ID to config/.env ({e}). Add GUILD_ID={guild.id} yourself, "
+                           "or Plexbie decides again at the next start.")
+        await self._sync_to_home(guild.id)
+        why = ("your channel and role settings are there" if reason == "settings"
+               else "it is the only server Plexbie is in and the bot's owner owns it")
+        logger.warning(f"🏠 GUILD_ID was blank, so Plexbie made '{guild.name}' ({guild.id}) its household's server "
+                       f"({why}) and {saved}. Commands and admin buttons now work only there. Wrong server? "
+                       "Change GUILD_ID and restart. If your container sets GUILD_ID itself, set it there too.")
+
+    async def on_guild_join(self, guild: discord.Guild):
+        """Plexbie was added to a server: home, a candidate for home, or someone else's.
+
+        It never leaves a server by itself: the household may be moving there.
+        """
+        gid = self.config.guild_id
+        if gid and guild.id == gid:
+            logger.info(f"Plexbie joined its household's server '{guild.name}' ({guild.id})")
+            await self._sync_to_home(guild.id)
+            self._check_role_order()
+            return
+        if not gid:
+            if not self._home_settled:
+                return      # on_ready is about to decide, with this server included
+            picked, reason = await pick_home_guild(self, self.config)
+            if picked is not None:
+                await self._adopt(picked, reason)
+            else:
+                self._home_problem = problem_text(reason, self.guilds)
+                logger.warning(f"Plexbie was added to '{guild.name}' ({guild.id}). {self._home_problem}")
+            return
+        if guild.id in self._told_foreign:
+            return
+        self._told_foreign.add(guild.id)
+        home = self.get_guild(gid)
+        home_name = f"'{home.name}' ({gid})" if home else str(gid)
+
+        def told(name: str) -> str:
+            return (f"Plexbie was added to another Discord server: {name} ({guild.id}, owner {guild.owner_id}). "
+                    f"It ignores commands and admin buttons there; your household's server is "
+                    f"{home_name}. Moving your household there? Set GUILD_ID={guild.id} "
+                    "on the setup page or in config/.env and restart. Didn't add it? Remove Plexbie from that "
+                    "server and turn off Public Bot in the Discord Developer Portal.")
+        logger.warning(f"⚠️  {told(repr(guild.name))}")
+        now = time.monotonic()
+        self._foreign_notices = [t for t in self._foreign_notices if now - t < 3600]
+        if len(self._foreign_notices) >= FOREIGN_NOTICES_PER_HOUR:
+            logger.info(f"Not posting about server {guild.id}: the admins were already told about "
+                        f"{FOREIGN_NOTICES_PER_HOUR} other servers this hour (Manage → Health lists them all)")
+            return
+        self._foreign_notices.append(now)
+        # The server's name is whatever its owner typed: shown as code, so no links,
+        # markdown or mentions from it, and left out of the phone alert altogether.
+        name = discord.utils.escape_mentions((guild.name or "").replace("`", "'")[:80])
+        channel = admin_channel(self, self.config)
+        if channel is not None:
             try:
-                stale = await self.tree.fetch_commands()
-                if stale:
-                    logger.warning(
-                        f"Commands: removing {len(stale)} stale global command(s) "
-                        f"that duplicate the guild-scoped ones"
-                    )
-                    self.tree.clear_commands(guild=None)
-                    await self.tree.sync()
+                await channel.send(f"⚠️ {told(f'`{name}`')}")
             except discord.HTTPException as e:
-                # Not worth failing startup over; the duplicates are cosmetic.
-                logger.warning(f"Could not check for stale global commands: {e}")
-        else:
-            synced = await self.tree.sync()
-            logger.info(f"Commands: {len(synced)} synced globally")
-    
+                logger.debug(f"Couldn't tell the admin channel about server {guild.id}: {e}")
+        from core.notify import alert_admins_soon
+        alert_admins_soon(self, self.config, title="Plexbie was added to another server",
+                          body=f"Server {guild.id}: it ignores commands there.",
+                          url="/manage?tab=health", tag=f"guild-join-{guild.id}")
+
+    async def on_guild_remove(self, guild: discord.Guild):
+        if self.config.guild_id and guild.id == self.config.guild_id:
+            logger.error(f"❌ Plexbie was removed from its household's server '{guild.name}' ({guild.id}). Commands "
+                         "and admin buttons won't work until it's added back, or GUILD_ID names the new server and "
+                         "Plexbie is restarted.")
+
     def _check_role_order(self) -> None:
         """Warn when Plexbie can't hand out its own roles (its role isn't above them)."""
         from core.role_order import HANDED_OUT, fix_text
@@ -202,6 +349,10 @@ class Plexbie(commands.Bot):
         logger.info(f"✅ Bot User: {self.user} (ID: {self.user.id})")
         logger.info(f"✅ Connected Guilds: {len(self.guilds)}")
         logger.info(f"✅ Loaded Plugins: {len(self.plugin_manager.loaded_cogs)}")
+        try:
+            await self._settle_home_guild()
+        except Exception as e:
+            logger.error(f"Couldn't work out the household's Discord server: {e}", exc_info=True)
         self._check_role_order()
 
         # List loaded plugins
@@ -213,7 +364,11 @@ class Plexbie(commands.Bot):
                 logger.info(f"      • {plugin_name} v{version}")
 
         logger.info(f"✅ Webhook Server: Port {self.config.webhook_port}")
-        logger.info("✅ Commands: Synced and ready to use")
+        home = home_guild(self, self.config)
+        if home is not None and self._synced is not None:
+            logger.info(f"✅ Commands: {self._synced} in {home.name}")
+        else:
+            logger.info("❌ Commands: OFF (see the error above, or Manage → Health)")
         logger.info("=" * 60)
         logger.info("🚀 All systems operational!")
         logger.info("=" * 60)
@@ -283,7 +438,8 @@ async def wait_for_settings(problem: str = None) -> None:
     if problem:
         print(f"   {problem}", flush=True)
     print("   Open config/.env (in the container's config folder), fill in at least", flush=True)
-    print("   DISCORD_BOT_TOKEN, PLEX_URL and PLEX_TOKEN, and save it.", flush=True)
+    print("   DISCORD_BOT_TOKEN, PLEX_URL and PLEX_TOKEN, and GUILD_ID (your server's ID; Plexbie", flush=True)
+    print("   picks it itself only when that's unambiguous and you own that server), and save it.", flush=True)
     print("   Plexbie checks every 15 seconds and starts by itself.", flush=True)
     print("=" * 60, flush=True)
     before = os.getenv("DISCORD_BOT_TOKEN")

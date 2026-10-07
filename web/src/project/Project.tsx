@@ -313,6 +313,7 @@ const QUICKSTART = [
   "# fill in DISCORD_BOT_TOKEN, GUILD_ID, PLEX_URL and PLEX_TOKEN",
   "docker build -t plexbie:latest .",
   "docker compose up -d",
+  "# then turn off Public Bot: Developer Portal → Installation: Install Link None, then Bot → Public Bot off",
 ];
 
 function Terminal() {

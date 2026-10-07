@@ -255,7 +255,13 @@ SECRET_ADDRESS = {
     "NZBHYDRA_API_KEY": "NZBHYDRA_URL", "SMTP_PASSWORD": "SMTP_HOST", "SMTP_USERNAME": "SMTP_HOST",
 }
 
+#: Without these Plexbie can't start, so start-up opens the setup page. GUILD_ID isn't
+#: here on purpose: a running install with it blank would stop at the setup page on
+#: upgrade, bot down. Start-up picks its server instead, when that can be proved.
 REQUIRED = ("DISCORD_BOT_TOKEN", "PLEX_URL", "PLEX_TOKEN")
+#: What Finish asks for: the household's server too, since commands and admin
+#: buttons only work there.
+FINISH_REQUIRED = ("DISCORD_BOT_TOKEN", "GUILD_ID", "PLEX_URL", "PLEX_TOKEN")
 
 #: Exactly what Plexbie uses in Discord (the invite link asks for these, so the
 #: bot doesn't need Administrator). README "Discord permissions" says why for each.
@@ -287,6 +293,14 @@ IN_PROGRESS = ".setup-in-progress"        # next to config/.env
 
 def needs_setup(config_dir: Path = Path("config")) -> bool:
     return (config_dir / IN_PROGRESS).exists() or not all(os.getenv(k) for k in REQUIRED)
+
+
+def missing_to_finish() -> List[str]:
+    """What Finish still needs. A server ID counts only as a number."""
+    def given(key: str) -> bool:
+        value = (os.getenv(key) or "").strip()
+        return value.isdigit() if key == "GUILD_ID" else bool(value)
+    return [k for k in FINISH_REQUIRED if not given(k)]
 
 
 def write_env(path: Path, values: Dict[str, str]) -> None:
@@ -441,7 +455,7 @@ class Setup:
         fields = {k: {"set": bool(os.getenv(k)), "value": None if secret else os.getenv(k, "")}
                   for k, secret in self.allowed.items()}
         return web.json_response({"fields": fields, "problem": self.problem,
-                                  "missing": [k for k in REQUIRED if not os.getenv(k)]})
+                                  "missing": missing_to_finish()})
 
     async def save(self, request: web.Request) -> web.Response:
         body = await request.json()
@@ -593,6 +607,8 @@ class Setup:
         return web.json_response({
             "ok": True, "name": app.get("name"), "invite": invite, "missingIntents": missing,
             "guilds": [{"id": g["id"], "name": g["name"]} for g in guilds],
+            # On (Discord's default), anyone with the bot's ID can add it to their own server.
+            "publicBot": bool(app.get("bot_public")),
         })
 
     async def discord_guild(self, request: web.Request) -> web.Response:
@@ -931,7 +947,7 @@ class Setup:
     async def finish(self, request: web.Request) -> web.Response:
         body = await request.json()
         await self._save(body.get("values") or {})
-        missing = [k for k in REQUIRED if not os.getenv(k)]
+        missing = missing_to_finish()
         if missing:
             return web.json_response({"ok": False, "missing": missing})
         load_dotenv(self.env_file, override=True)
