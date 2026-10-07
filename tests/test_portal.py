@@ -2187,6 +2187,198 @@ def test_a_discord_sign_in_cannot_be_replayed_to_hammer_discord():
     assert Http.calls == 10, "one address gets ten tries per ten minutes"
 
 
+def _discord_auth():
+    from portal.auth import Auth
+    from portal.cache import TTLCache
+    cfg = Config()
+    cfg.web_session_secret = "s" * 40
+    cfg.discord_client_id, cfg.discord_client_secret = "123", "secret"
+    cfg.discord_callback_url = "http://127.0.0.1/auth/discord/callback"
+    auth = Auth(None, FakeServices(cfg), TTLCache())
+    auth._tell_of_sign_in = lambda *a: None
+    return auth
+
+
+def _from(address, path):
+    from aiohttp.test_utils import make_mocked_request
+    return make_mocked_request("GET", path).clone(remote=address)
+
+
+def _members(auth, *ids):
+    """Only these account ids are in the household."""
+    async def describe(person):
+        return {"member": person["id"] in ids, "admin": False}
+    auth.describe = describe
+
+
+async def _settle():
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+
+def test_discord_sign_ins_started_from_one_address_are_limited():
+    from aiohttp import web
+    auth = _discord_auth()
+
+    async def start(address):
+        try:
+            await auth.discord_login(_from(address, "/auth/discord/login?next=/app"))
+        except web.HTTPFound as e:
+            return e.location
+    started = [asyncio.run(start("203.0.113.5")) for _ in range(25)]
+    assert all(u.startswith("https://discord.com/") for u in started[:20])
+    assert started[-1] == "/?login=busy"
+    assert asyncio.run(start("203.0.113.6")).startswith("https://discord.com/"), "another address isn't held up"
+
+
+def _discord_codes():
+    """Discord sign-ins where code "good" is account 7, in the household, "other" is
+    account 8, who isn't, and anything else is refused."""
+    from aiohttp import web
+    auth = _discord_auth()
+    _members(auth, "7")
+
+    class Refused(Exception):
+        status = 400
+    calls = []
+
+    async def fetch(method, url, **kw):
+        calls.append(url)
+        if method == "post":
+            if kw["data"]["code"] not in ("good", "other"):
+                raise Refused()
+            return {"access_token": kw["data"]["code"]}
+        return {"id": "7" if kw["headers"]["Authorization"] == "Bearer good" else "8", "username": "pat"}
+    auth._fetch_json = fetch
+
+    async def callback(address, state, code):
+        auth._cookie = lambda request, name: {"via": "discord", "state": state, "next": "/app"}
+        try:
+            await auth.discord_callback(_from(address, f"/auth/discord/callback?state={state}&code={code}"))
+        except web.HTTPFound as e:
+            return e.location
+    return auth, calls, callback
+
+
+def test_strangers_cant_keep_discord_sign_in_busy_for_the_household():
+    """Made-up codes from a dozen addresses used to fill the whole site's Discord
+    budget, so nobody could sign in with Discord."""
+    auth, calls, callback = _discord_codes()
+
+    async def scenario():
+        before = await callback("203.0.113.1", "home1", "good")
+        await _settle()
+        for n in range(15):
+            for i in range(10):
+                await callback(f"198.51.100.{n}", f"x{n}-{i}", "made-up")
+        strangers = len(calls)
+        after = await callback("203.0.113.1", "home2", "good")
+        newcomer = await callback("192.0.2.9", "new1", "good")
+        return before, strangers, after, newcomer
+
+    before, strangers, after, newcomer = asyncio.run(scenario())
+    assert before == "/app"
+    assert strangers <= 2 + 80, "strangers get only part of the site's budget"
+    assert after == "/app", "an address that signed in before still can"
+    assert newcomer == "/?login=busy"
+
+
+def test_one_outside_account_cant_open_the_households_share_from_many_addresses():
+    """Anyone can make a Discord account and sign in with it from a dozen addresses;
+    that mustn't let those addresses fill the site's share."""
+    auth, calls, callback = _discord_codes()
+
+    async def scenario():
+        before = await callback("203.0.113.1", "home1", "good")
+        for n in range(12):
+            await callback(f"198.51.100.{n}", f"o{n}", "other")
+        await _settle()
+        for n in range(12):
+            for i in range(9):
+                await callback(f"198.51.100.{n}", f"x{n}-{i}", "made-up")
+        after = await callback("203.0.113.1", "home2", "good")
+        return before, after
+    before, after = asyncio.run(scenario())
+    assert before == "/app"
+    assert after == "/app", "the household's share is still there"
+
+
+def test_a_plex_sign_in_from_the_household_opens_its_share_of_discord_sign_in():
+    auth = _discord_auth()
+    _members(auth, "9")
+    auth._forget_device = lambda token, client: asyncio.sleep(0)
+
+    def plex_as(account):
+        async def fetch(method, url, **kw):
+            if "/pins/" in url:
+                return {"code": "C", "authToken": "t"}
+            return {"id": account, "username": "pat"}
+        return fetch
+
+    async def scenario():
+        for pin, (address, account) in enumerate([("203.0.113.1", "9"), ("203.0.113.2", "8")], 1):
+            auth._cookie = lambda request, name, pin=pin: {"via": "plex", "pin": pin, "code": "C", "client": "c", "next": "/app"}
+            auth._fetch_json = plex_as(account)
+            response = await auth.plex_check(_from(address, "/auth/plex/check"))
+            assert json.loads(response.text) == {"done": True, "next": "/app"}
+        await _settle()
+        for n in range(8):
+            for _ in range(10):
+                auth._discord_busy(_from(f"198.51.100.{n}", "/auth/discord/callback"))
+        return [auth._discord_busy(_from(a, "/auth/discord/callback")) for a in ("203.0.113.1", "203.0.113.2")]
+    household, outsider = asyncio.run(scenario())
+    assert not household, "the household's address still gets through"
+    assert outsider, "an account that isn't a member doesn't count"
+
+
+def test_plex_callbacks_from_one_address_are_limited():
+    from aiohttp import web
+    auth = _discord_auth()
+    auth._cookie = lambda request, name: {"via": "plex", "pin": 7, "code": "C", "client": "c", "next": "/app"}
+    lookups = []
+
+    async def fetch(method, url, **kw):
+        lookups.append(url)
+        return {"code": "C", "authToken": None}
+    auth._fetch_json = fetch
+
+    async def back(address, popup=False):
+        try:
+            response = await auth.plex_callback(_from(address, "/auth/plex/callback" + ("?popup=1" if popup else "")))
+            return response.status
+        except web.HTTPFound as e:
+            return e.location
+
+    out = [asyncio.run(back("203.0.113.5")) for _ in range(45)]
+    assert out[0] == "/?login=cancelled" and out[-1] == "/?login=busy"
+    assert len(lookups) == 40, "each look-up asks plex.tv from the server's address"
+    assert asyncio.run(back("203.0.113.5", popup=True)) == 200, "a sign-in window just closes"
+    assert len(lookups) == 40
+    assert asyncio.run(back("203.0.113.6")) == "/?login=cancelled", "another address isn't held up"
+
+
+def test_one_plex_sign_in_cant_drive_endless_lookups_from_many_addresses():
+    auth = _discord_auth()
+    auth._cookie = lambda request, name: {"via": "plex", "pin": 8, "code": "C", "client": "c", "next": "/app"}
+    lookups = []
+
+    async def fetch(method, url, **kw):
+        lookups.append(url)
+        return {"code": "C", "authToken": None}
+    auth._fetch_json = fetch
+
+    async def scenario():
+        answers = []
+        for i in range(300):
+            response = await auth.plex_check(_from(f"198.51.100.{i % 3}", "/auth/plex/check"))
+            answers.append(json.loads(response.text))
+        return answers
+    answers = asyncio.run(scenario())
+    assert answers[0] == {"waiting": True}
+    assert answers[-1] == {"done": True, "next": "/?login=expired"}
+    assert len(lookups) == 260, "a sign-in's own polls and its window fit; more ends it"
+
+
 def test_plain_http_through_cloudflare_goes_to_https_and_https_says_so():
     import os
     saved = os.environ.get("WEB_PUBLIC_URL")

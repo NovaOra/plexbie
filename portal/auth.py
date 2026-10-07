@@ -35,7 +35,7 @@ from portal.cache import TTLCache
 from portal.mobile import allow_return as mobile_allow_return, forward_to_app
 from portal.mobile import (BAD_CODE, PRIVATE, UNAVAILABLE, MobileSessions, Unavailable, back_to_app, bearer,
                            start_params, valid as app_flow)
-from portal.ratelimit import Limiter
+from portal.ratelimit import Limiter, visitor
 from core.discord_lookup import home_guild
 
 logger = get_logger(__name__)
@@ -59,11 +59,24 @@ INVITE_SECONDS = 3600
 INVITE_TRIES = (20, 3600)        # invite links opened per address per hour
 PIN_TRIES = (20, 600)            # Plex sign-ins started per address per 10 minutes
 CHECK_TRIES = (240, 600)         # sign-in polls per address per 10 minutes (one every 1.5 s)
+#: Returns from plex.tv per address per 10 minutes: a sign-in window's one, or the
+#: app sheet's few looks again. Each asks plex.tv about the PIN from this server.
+CALLBACK_TRIES = (40, 600)
+#: plex.tv look-ups for one PIN, from any address: its window's polls (CHECK_TRIES)
+#: and callbacks fit; past that the sign-in is over.
+PIN_LOOKUPS = 260
 #: Discord sign-ins finished, per address and for the whole site, per 10 minutes.
 #: Each makes a call to Discord from the bot's own address, and Discord bans an
 #: address that sends it too many refused calls, which would take the bot down too.
 DISCORD_TRIES = (10, 600)
 DISCORD_ALL_TRIES = (120, 600)
+#: How much of the site's share addresses no one in the household has signed in from
+#: may use, so the rest stays free for the household; and Discord sign-ins started per address.
+DISCORD_NEW_TRIES = (80, 600)
+DISCORD_START_TRIES = (20, 600)
+#: How long an address that signed in is remembered as one (in memory, at most this many).
+KNOWN_SECONDS = SESSION_DAYS * 86400
+KNOWN_MAX = 2000
 #: Sessions signed out on this server, kept until they'd have expired anyway.
 REVOKED = ("web_sessions", "revoked")
 #: The Plex owner's account id, kept from plex.tv's last answer.
@@ -214,6 +227,10 @@ class Auth:
         self._check_limit = Limiter(*CHECK_TRIES)
         self._discord_limit = Limiter(*DISCORD_TRIES)
         self._discord_all = Limiter(*DISCORD_ALL_TRIES)
+        self._discord_new = Limiter(*DISCORD_NEW_TRIES)
+        self._discord_start = Limiter(*DISCORD_START_TRIES)
+        self._callback_limit = Limiter(*CALLBACK_TRIES)
+        self._known: Dict[str, float] = {}            # addresses the household signed in from, until when
         self._discord_states: Dict[str, float] = {}   # sign-in states already used, until they'd expire
         self._discord_pause = 0.0                     # Discord said slow down: no calls until then
         self._revoked: Optional[Dict[str, int]] = None
@@ -223,6 +240,7 @@ class Auth:
         self._pin_locks: Dict[int, asyncio.Lock] = {}
         self._pin_users: Dict[int, int] = {}     # finishers holding or waiting on each PIN's lock
         self._pins_done: Dict[int, str] = {}
+        self._pin_lookups: Dict[int, int] = {}   # plex.tv look-ups made for each PIN
         self.mobile = MobileSessions()           # sign-ins from the Plexbie app (portal/mobile.py)
         from core import notify
         notify.session_alive = self.mobile.is_alive  # app alerts stop when their sign-in ends
@@ -308,6 +326,8 @@ class Auth:
     async def discord_login(self, request: web.Request) -> web.Response:
         if not self.discord_ready():
             raise web.HTTPFound("/?login=unavailable")
+        if self._discord_start.over(request):
+            raise web.HTTPFound("/?login=busy")
         raise self._to_discord(request, {"next": safe_next(request.query.get("next"))})
 
     def _to_discord(self, request: web.Request, flow: dict) -> web.HTTPFound:
@@ -343,6 +363,42 @@ class Auth:
         self._discord_states[state] = now + FLOW_SECONDS
         return True
 
+    def _signed_in_from(self, request: web.Request, person: dict) -> None:
+        """Remember the address someone in the household signed in from (see
+        _discord_busy). Only the household's: anyone can make a Discord or Plex account
+        and sign in with it from any number of addresses. In the background, as their
+        roles are looked up: it never holds up the sign-in."""
+        key = visitor(request)
+
+        async def go():
+            try:
+                who = await self.describe(person)
+            except Exception as e:
+                logger.info(f"Couldn't look up who signed in: {type(e).__name__}")
+                return
+            if not (who.get("member") or who.get("admin")):
+                return
+            now, known = time.monotonic(), self._known
+            known.pop(key, None)                        # back in at the end, as the newest
+            if len(known) >= KNOWN_MAX:
+                for old in [k for k, until in known.items() if until <= now]:
+                    del known[old]
+                while len(known) >= KNOWN_MAX:          # all recent: forget the oldest
+                    known.pop(next(iter(known)))
+            known[key] = now + KNOWN_SECONDS
+        self._background(go())
+
+    def _discord_busy(self, request: web.Request) -> bool:
+        """Discord sign-in is held back: Discord said slow down, or this address or the
+        whole site is over its share. Made-up codes from many addresses could fill the
+        site's share, so addresses no one in the household has signed in from get only
+        part of it."""
+        if time.monotonic() < self._discord_pause or self._discord_limit.over(request):
+            return True
+        if self._known.get(visitor(request), 0) <= time.monotonic() and self._discord_new.hit("site"):
+            return True
+        return self._discord_all.hit("site")
+
     async def discord_callback(self, request: web.Request) -> web.Response:
         flow = self._cookie(request, FLOW_COOKIE) or {}
         state = str(flow.get("state", ""))
@@ -353,8 +409,7 @@ class Auth:
             raise self._discord_end("cancelled", flow)
         if not self._spend_state(state):
             raise self._discord_end("expired", flow)
-        if (time.monotonic() < self._discord_pause or self._discord_limit.over(request)
-                or self._discord_all.hit("site")):
+        if self._discord_busy(request):
             raise self._discord_end("busy", flow)
         try:
             token = (await self._fetch_json("post", "https://discord.com/api/oauth2/token", data={
@@ -382,6 +437,7 @@ class Auth:
             "name": me.get("global_name") or me.get("username") or "Discord user",
             "avatar": me.get("avatar"),
         }
+        self._signed_in_from(request, person)
         if app_flow(flow.get("mobile")):
             # From the app: asked to confirm, then a one-time code back to it. No session cookie.
             response = web.HTTPFound(CONFIRM_PATH, headers=PRIVATE)
@@ -535,6 +591,12 @@ class Auth:
                 return self._close_window()
             raise web.HTTPFound("/?login=expired")
         mobile = flow.get("mobile") if app_flow(flow.get("mobile")) else None
+        if self._callback_limit.over(request):
+            if mobile:
+                raise self._plex_app_end("busy", mobile)
+            if popup:
+                return self._close_window()     # the first tab's polling finishes it
+            raise web.HTTPFound("/?login=busy")
         if mobile:
             return await self._plex_back_to_app(flow, mobile, request)
         response = self._close_window() if popup else web.HTTPFound("/")
@@ -595,6 +657,12 @@ class Auth:
                 if pin in self._pins_done:
                     self._clear(response, FLOW_COOKIE)
                     return self._pins_done[pin]
+                looked = self._pin_lookups.get(pin, 0)
+                if looked >= PIN_LOOKUPS:
+                    raise web.HTTPFound("/?login=expired")
+                self._pin_lookups[pin] = looked + 1
+                while len(self._pin_lookups) > 2000:
+                    self._pin_lookups.pop(next(iter(self._pin_lookups)))
                 target = await self._finish_plex_once(flow, request, response)
                 if target is not None:
                     self._pins_done[pin] = target
@@ -629,6 +697,7 @@ class Auth:
             "email": me.get("email"),
             "avatar": None,
         }
+        self._signed_in_from(request, person)
         mobile = flow.get("mobile")
         if app_flow(mobile):
             # From the app: no session cookie; an invite it was opened with is accepted

@@ -152,6 +152,11 @@ def client_ip(request: web.Request) -> str:
     return remote
 
 
+def visitor(request: web.Request) -> str:
+    """The key the limits below count this request's visitor under."""
+    return _visitor(client_ip(request))
+
+
 class Limiter:
     """At most `cap` hits per key in `window` seconds. Keys that go quiet are
     dropped, so a flood of made-up addresses can't grow it without bound."""
@@ -182,4 +187,4 @@ class Limiter:
             self._hits.pop(next(iter(self._hits)))
 
     def over(self, request: web.Request) -> bool:
-        return self.hit(_visitor(client_ip(request)))
+        return self.hit(visitor(request))

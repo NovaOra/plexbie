@@ -1151,6 +1151,17 @@ docker exec plexbie mv /app/config/watch_streaks.json /app/config/watch_streaks.
   requests, alerts and help. An admin's title searches in Manage → Cleanup ask Plex once
   per film and TV library, so they have their own limit of 300 an hour. Past a limit the
   website and app say to try again later.
+- **Sign-in has limits per visitor address**, because each sign-in asks Discord or plex.tv
+  from your server's address, and Discord blocks an address that sends it too many refused
+  sign-ins. Every 10 minutes an address can start 20 Discord sign-ins and finish 10, and the
+  whole site 120. Addresses no one in the household has signed in from (since Plexbie last
+  started) share only 80 of those, so strangers sending made-up sign-ins can't keep "Log in
+  with Discord" busy for the household. Signing in with an account that isn't a member
+  doesn't count. An address can start 20 Plex sign-ins and come back from plex.tv 40 times,
+  and a Plex sign-in still waiting after 260 checks with plex.tv ends as expired. Past a limit
+  the website says sign-in is busy and to try again in a few minutes. Behind a reverse proxy
+  that `TRUSTED_PROXIES` doesn't list, every visitor shares one address and so one set of
+  limits.
 - **Never commit `config/.env`.** It is gitignored, along with `config/*.db` and
   `logs/`.
 - **`config/.env` is never readable by other users, even for a moment.** Plexbie

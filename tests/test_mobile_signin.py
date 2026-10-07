@@ -650,6 +650,29 @@ def test_a_strange_retry_count_is_not_a_crash():
     assert asyncio.run(scenario()) == [["denied"], 200, ["denied"]]
 
 
+def test_a_plex_sign_in_past_its_lookups_tells_the_app_it_failed():
+    from portal.auth import PIN_LOOKUPS
+
+    async def scenario():
+        auth = _auth()
+        _, challenge, state = _pkce()
+        auth._cookie = lambda request, name: {"via": "plex", "pin": 7, "code": "C", "client": "c",
+                                              "mobile": {"challenge": challenge, "state": state, "redirect": REDIRECT}}
+        lookups = []
+
+        async def fetch(method, url, **kw):
+            lookups.append(url)
+            return {"code": "C", "authToken": None}
+        auth._fetch_json = fetch
+        auth._pin_lookups[7] = PIN_LOOKUPS
+        try:
+            await auth.plex_callback(make_mocked_request("GET", "/auth/plex/callback"))
+        except web.HTTPFound as e:
+            return parse_qs(urlsplit(e.location).query).get("error"), lookups
+    error, lookups = asyncio.run(scenario())
+    assert error == ["failed"] and not lookups, "plex.tv isn't asked again"
+
+
 # ------------------------------------------------------- invites and App Links
 class _Invites:
     """One live invite, code INVITE-CODE, key k1."""
