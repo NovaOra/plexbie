@@ -657,7 +657,12 @@ so the household can do everything above without Discord:
   downloads they won't import by themselves. Such a download is imported from
   its ticket or Health once you've looked inside it; Plexbie refuses when the
   files changed since you looked (look again) or when two files are set as the
-  same episode or film (skip one, such as a sample).
+  same episode or film (skip one, such as a sample). After an import that
+  didn't go in, the site looks inside again rather than offering the same one.
+  Plexbie waits up to two minutes for Sonarr or Radarr to finish, longer than
+  many proxies wait (Nginx Proxy Manager gives up after 60 s), so when no answer
+  comes back the site says it may still be importing: look in Sonarr or Radarr
+  before trying again.
 - **Invite links** let someone without Discord join: single use, expiring
   after 1 to 30 days (a whole number; anything else is refused), optionally
   locked to an email (at most 254 characters), stored only as a SHA-256. A locked link works

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, SAMPLE, api, artUrl, loginUrl, plexSignIn, signInReturn } from "./client";
+import { ApiError, SAMPLE, api, artUrl, loginUrl, mayHaveWorked, plexSignIn, signInReturn } from "./client";
 
 /** A stand-in for the bot's /api: answers every call with `reply` and records what was asked. */
 function serve(reply: () => Response) {
@@ -13,6 +13,7 @@ const json = (body: unknown, status = 200) =>
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("the client", () => {
@@ -87,6 +88,39 @@ describe("the client", () => {
     it("fall back to the status text when the answer isn't JSON", async () => {
       serve(() => new Response("<html>Bad Gateway</html>", { status: 502, statusText: "Bad Gateway" }));
       await expect(api.status()).rejects.toMatchObject({ status: 502, message: "Bad Gateway" });
+    });
+  });
+
+  describe("an outcome", () => {
+    it("is unknown when no answer came back or a server in the way failed", async () => {
+      serve(() => { throw new TypeError("Failed to fetch"); });
+      expect(mayHaveWorked(await api.cleanupScan().catch((e: unknown) => e))).toBe(true);
+      serve(() => new Response("<html>Gateway Timeout</html>", { status: 504, statusText: "Gateway Timeout" }));
+      expect(mayHaveWorked(await api.cleanupScan().catch((e: unknown) => e))).toBe(true);
+      expect(mayHaveWorked(new DOMException("signal timed out", "TimeoutError"))).toBe(true);
+    });
+
+    it("is a no when the bot refused", async () => {
+      serve(() => json({ ok: false, message: "Those episodes aren't in that show." }, 409));
+      expect(mayHaveWorked(await api.blockedImport("sonarr", "abc").catch((e: unknown) => e))).toBe(false);
+    });
+  });
+
+  describe("a blocked import", () => {
+    it("comes back as a plain no when Sonarr refused it", async () => {
+      serve(() => json({ ok: false, message: "Sonarr refused it: no matching episode." }));
+      await expect(api.blockedImport("sonarr", "abc")).resolves.toEqual({ ok: false, message: "Sonarr refused it: no matching episode." });
+    });
+
+    it("stops waiting once the bot's own wait for Sonarr is long over", async () => {
+      const fetch = serve(() => json({ ok: true, message: "Imported 1 file." }));
+      const timeout = vi.spyOn(AbortSignal, "timeout");
+      await api.blockedImport("sonarr", "abc");
+      // The bot waits up to two minutes; giving up first would call a slow import a failure.
+      expect(timeout).toHaveBeenCalledOnce();
+      expect(timeout.mock.calls[0][0]).toBeGreaterThan(120_000);
+      expect(timeout.mock.calls[0][0]).toBeLessThanOrEqual(180_000);
+      expect(fetch.mock.calls[0][1]?.signal).toBe(timeout.mock.results[0].value);
     });
   });
 

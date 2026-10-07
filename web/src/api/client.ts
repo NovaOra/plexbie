@@ -39,12 +39,17 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return res.status === 204 ? (undefined as T) : res.json();
 }
 
+/** Whether a write that failed may still have gone through: no answer came back
+ *  (offline, or it timed out) or the server or a proxy in front of it failed (5xx).
+ *  A refusal from the bot (4xx) is a definite no. */
+export const mayHaveWorked = (e: unknown) => !(e instanceof ApiError) || e.status >= 500;
+
 /** What the admin actions answer: whether it worked, and a line to show. `told`, on a
  *  reply to a ticket's member, "Solved" or a ticket opened to tell them: whether it
  *  reached them (false: it reached nobody, and `message` says so). Absent when nobody
  *  was to be told. */
 export type Ack = { ok: boolean; message: string; told?: boolean };
-const post = <T = Ack,>(path: string, body: unknown = {}) => call<T>(path, { method: "POST", body: JSON.stringify(body) });
+const post = <T = Ack,>(path: string, body: unknown = {}, init?: RequestInit) => call<T>(path, { method: "POST", body: JSON.stringify(body), ...init });
 const enc = encodeURIComponent;
 
 export const api = {
@@ -178,8 +183,10 @@ export const api = {
     SAMPLE ? sample.adminBlocked() : call("/admin/blocked"),
   blockedPreview: (app: string, downloadId: string): Promise<BlockedPreview> =>
     SAMPLE ? sample.blockedPreview() : call(`/admin/blocked/${enc(app)}/${enc(downloadId)}`),
+  /** The bot waits up to two minutes for Sonarr or Radarr to finish; this gives up a little after. */
   blockedImport: (app: string, downloadId: string, files?: BlockedChoice[]): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: "Imported 3 files." }, 900) : post(`/admin/blocked/${enc(app)}/${enc(downloadId)}/import`, files ? { files } : {}),
+    SAMPLE ? sample.wait({ ok: true, message: "Imported 3 files." }, 900)
+      : post(`/admin/blocked/${enc(app)}/${enc(downloadId)}/import`, files ? { files } : {}, { signal: AbortSignal.timeout(150_000) }),
   /** Shows (Sonarr) or films (Radarr) in the library, for "Wrong show?". */
   arrLibrary: (app: string, q: string): Promise<{ rows: ArrItem[] }> =>
     SAMPLE ? sample.wait({ rows: [{ id: 41, title: "Radar Men from the Moon", year: 1952 }, { id: 42, title: "King of the Rocket Men", year: 1949 }] })

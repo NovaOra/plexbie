@@ -11,7 +11,7 @@ import {
 import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
-import { api, type Ack } from "../api/client";
+import { api, mayHaveWorked, type Ack } from "../api/client";
 import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, CleanupMatch, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
@@ -66,12 +66,13 @@ function buzz(ms = 8) {
   try { navigator.vibrate?.(ms); } catch { /* not supported */ }
 }
 
-/** Runs an admin action and turns any failure into a Ack, so callers only branch once. */
-async function attempt(act: () => Promise<Ack>): Promise<Ack> {
+/** Runs an admin action and turns any failure into a Ack, so callers only branch once.
+ *  `unsure`: no answer came back, so it may still have gone through. */
+async function attempt(act: () => Promise<Ack>): Promise<Ack & { unsure?: boolean }> {
   try {
     return await act();
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "That didn’t work." };
+    return { ok: false, message: e instanceof Error ? e.message : "That didn’t work.", unsure: mayHaveWorked(e) };
   }
 }
 
@@ -79,19 +80,26 @@ async function attempt(act: () => Promise<Ack>): Promise<Ack> {
  * Admin actions, the same way everywhere: mark a row busy while it runs, and on
  * failure show the error (with `failText` as the headline when given, and to
  * `onFail` for a caller that also says it in place) and return null, so a caller
- * only handles success. `later` refreshes a section after the bot has had a
- * moment to act.
+ * only handles success. With `unsure`, a failure that may still have gone through
+ * (no answer came back) says that instead, under "No answer yet". `later`
+ * refreshes a section after the bot has had a moment to act.
  */
 function useAct() {
   const { toast, refresh } = useManage();
   const [busy, setBusy] = useState<string | null>(null);
-  const act = async (key: string | null, call: () => Promise<Ack>, opts: { failText?: string; buzzOnFail?: boolean; onFail?: (message: string) => void } = {}) => {
+  const act = async (key: string | null, call: () => Promise<Ack>,
+    opts: { failText?: string; unsure?: string; buzzOnFail?: boolean; onFail?: (message: string, unsure: boolean) => void } = {}) => {
     if (key !== null) setBusy(key);
     const out = await attempt(call);
     if (key !== null) setBusy(null);
     if (out.ok) return out;
     if (opts.buzzOnFail) buzz(30);
-    opts.onFail?.(out.message);
+    if (out.unsure && opts.unsure) {
+      opts.onFail?.(opts.unsure, true);
+      toast({ tone: "error", text: "No answer yet", detail: opts.unsure });
+      return null;
+    }
+    opts.onFail?.(out.message, false);
     toast(opts.failText ? { tone: "error", text: opts.failText, detail: out.message } : { tone: "error", text: out.message });
     return null;
   };
@@ -1271,21 +1279,31 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
   const [failed, setFailed] = useState("");
   const [done, setDone] = useState("");
   const [notDone, setNotDone] = useState("");
+  /** The last import got no answer, so it may still be going in. */
+  const [unsure, setUnsure] = useState(false);
+  /** Bumped to look inside again, after an import that didn't go in (or may not have). */
+  const [looks, setLooks] = useState(0);
   /** The admin's changes, by file name. */
   const [picks, setPicks] = useState<Record<string, BlockedChoice>>({});
   /** "Wrong show?": another series for every file, and its episodes. */
   const [series, setSeries] = useState<ArrItem | null>(null);
   const [eps, setEps] = useState<ArrEpisode[] | null>(null);
+  const [epsFailed, setEpsFailed] = useState(false);
+  /** Which "Wrong show?" pick the episodes being asked for belong to: a slower answer for an earlier one is dropped. */
+  const epsAsked = useRef(0);
   const [finding, setFinding] = useState<string | null>(null);   // "series", or a file name for "Wrong film?"
   useEffect(() => {
     let live = true;
     api.blockedPreview(target.app, target.downloadId).then((x) => { if (live) setP(x); })
       .catch((e: unknown) => { if (live) setFailed(e instanceof Error ? e.message : "Couldn’t look inside it."); });
     return () => { live = false; };
-  }, [target.app, target.downloadId]);
+  }, [target.app, target.downloadId, looks]);
   const app = target.app === "sonarr" ? "Sonarr" : "Radarr";
   const tv = target.app === "sonarr";
-  const episodes = eps ?? p?.options.episodes ?? [];
+  /** Another show was picked and its episodes aren't here yet (or couldn't be had). */
+  const epsWaiting = !!series && !eps;
+  const episodes = series ? eps ?? [] : p?.options.episodes ?? [];
+  const known = new Set(episodes.map((e) => e.id));
   const pick = (name: string, change: Partial<BlockedChoice>) => setPicks((x) => ({ ...x, [name]: { ...x[name], name, ...change } }));
 
   /** Each file as it stands with the admin's changes. */
@@ -1293,7 +1311,9 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
     const c = picks[f.name] ?? { name: f.name };
     const episodeIds = c.episodeIds ?? (series ? [] : f.episodes.map((e) => e.id));
     const movie = c.movieId ? { id: c.movieId, title: (c as BlockedChoice & { movieLabel?: string }).movieLabel } : f.movie;
-    return { f, c, skip: !!c.skip, episodeIds, movie, placed: tv ? episodeIds.length > 0 : !!movie?.id };
+    // With another show picked, only its own episodes count (Sonarr refuses any other).
+    return { f, c, skip: !!c.skip, episodeIds, movie,
+      placed: tv ? episodeIds.length > 0 && (!series || episodeIds.every((id) => known.has(id))) : !!movie?.id };
   });
   // Two files as one episode, or as one film (Radarr keeps one file per film: CD1 and CD2, or a sample).
   const used = new Map<number, number>();
@@ -1303,7 +1323,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
     : files.find((x) => x.movie?.id === id)?.movie?.title ?? "the same film");
   const going = files.filter((x) => !x.skip);
   const unplaced = going.filter((x) => !x.placed);
-  const blocker = !going.length ? "Every file is skipped." : unplaced.length ? `Pick which ${tv ? "episode" : "film"} ${unplaced[0].f.name} is, or skip it.`
+  const blocker = !going.length ? "Every file is skipped." : epsWaiting ? `Pick the episodes once ${series.title}’s have loaded.` : unplaced.length ? `Pick which ${tv ? "episode" : "film"} ${unplaced[0].f.name} is, or skip it.`
     : doubled.length ? `Two files are set as ${doubled[0]}.` : "";
 
   const go = async () => {
@@ -1312,26 +1332,44 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
       ...(tv ? { episodeIds, ...(series ? { seriesId: series.id } : {}) } : {}),
     }));
     setNotDone("");
+    setUnsure(false);
     // Shown here too, not only in a toast: it stays beside the button while the admin decides
-    // what next. The toast is the one that's announced.
-    const out = await act("import", () => api.blockedImport(target.app, target.downloadId, choices), { failText: "Not imported", onFail: setNotDone });
+    // what next. The toast is the one that's announced. Either way, look inside again: what
+    // was seen before may be gone or half imported, so the same import isn't offered twice.
+    const out = await act("import", () => api.blockedImport(target.app, target.downloadId, choices), {
+      failText: "Not imported",
+      unsure: `${app} may still be importing it. Look in ${app} before trying again.`,
+      onFail: (message, maybe) => { setNotDone(message); setUnsure(maybe); setP(null); setFailed(""); setLooks((n) => n + 1); },
+    });
     if (!out) return;
     setDone(out.message);
     toast({ text: "Imported", detail: out.message });
     onDone?.();
   };
-  const useSeries = async (s: ArrItem) => {
+  const pickSeries = async (s: ArrItem) => {
+    const asked = ++epsAsked.current;
     setFinding(null);
     setSeries(s);
     setPicks({});
-    const out = await attempt(() => api.arrEpisodes(s.id).then((x) => ({ ok: true, message: "", rows: x.rows })));
-    setEps(out.ok ? (out as unknown as { rows: ArrEpisode[] }).rows : []);
+    setEps(null);
+    setEpsFailed(false);
+    try {
+      const { rows } = await api.arrEpisodes(s.id);
+      if (asked === epsAsked.current) setEps(rows);
+    } catch {
+      if (asked === epsAsked.current) setEpsFailed(true);
+    }
   };
+
+  const notDoneLine = <p className="m-blocked__nope">{unsure ? "No answer yet" : "Not imported"}: {notDone}</p>;
 
   return (
     <section className="m-blocked" aria-label={`${app} won’t import this by itself`}>
       <p className="m-blocked__head"><CircleAlert size={16} aria-hidden /> {app} won’t import this by itself</p>
-      {failed ? <p className="muted">{failed}</p> : !p ? <p className="muted">Looking inside…</p> : (
+      {/* Until the look inside after a failed import is back (or if it fails), say what became of the import here. */}
+      {notDone && !p ? notDoneLine : null}
+      {failed ? <LoadFailed text={failed} onRetry={() => { setFailed(""); setLooks((n) => n + 1); }} />
+        : !p ? <p className="muted">Looking inside…</p> : (
         <>
           {p.messages.map((m) => <p key={m} className="m-blocked__why">{app} says: “{m}”</p>)}
           <p className="m-blocked__advice">Look before you import. Usually it’s fine (a name {app} couldn’t match), but a blocked import can be the wrong episode, the wrong film, or something that shouldn’t be there. Check each file below is what {app} thinks it is.</p>
@@ -1343,7 +1381,10 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
             <div className="m-blocked__owner">
               <span>Show: <b>{(series ?? p.series)?.title ?? "none"}</b>{(series ?? p.series)?.year ? ` (${(series ?? p.series)!.year})` : ""}</span>
               <button type="button" className="btn btn--quiet m-btn" onClick={() => setFinding(finding === "series" ? null : "series")}>Wrong show?</button>
-              {finding === "series" ? <ArrFinder app="sonarr" onPick={(s) => void useSeries(s)} /> : null}
+              {finding === "series" ? <ArrFinder app="sonarr" onPick={(s) => void pickSeries(s)} /> : null}
+              {epsWaiting ? (epsFailed
+                ? <LoadFailed text={`Couldn’t get ${series.title}’s episodes from Sonarr.`} onRetry={() => void pickSeries(series)} />
+                : <p className="muted">Loading episodes…</p>) : null}
             </div>
           ) : null}
 
@@ -1362,7 +1403,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
                         {(episodeIds.length ? episodeIds : [0]).map((id, i) => (
                           <label key={i} className="m-blocked__field">
                             <span>{i ? "and" : "Episode"}</span>
-                            <select className="m-select" value={id || ""} onChange={(e) => {
+                            <select className="m-select" value={id || ""} disabled={epsWaiting} onChange={(e) => {
                               const next = [...episodeIds]; const v = Number(e.target.value);
                               if (v) next[i] = v; else next.splice(i, 1);
                               pick(f.name, { episodeIds: next.filter(Boolean) });
@@ -1373,7 +1414,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
                           </label>
                         ))}
                         {episodeIds.length ? (
-                          <button type="button" className="btn btn--quiet m-btn m-blocked__more" onClick={() => pick(f.name, { episodeIds: [...episodeIds, 0] })}>
+                          <button type="button" className="btn btn--quiet m-btn m-blocked__more" disabled={epsWaiting} onClick={() => pick(f.name, { episodeIds: [...episodeIds, 0] })}>
                             + Another episode (a double)
                           </button>
                         ) : null}
@@ -1420,11 +1461,11 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
           </ul>
           <p className="muted m-blocked__folder">In {p.folder}</p>
           {done ? <p className="m-blocked__done"><Check size={16} aria-hidden /> {done}</p> : !p.ok ? (
-            <p className="m-blocked__nope">Not importable from here: sort it out in {app}, or delete the download.</p>
+            <p className="m-blocked__nope">Not importable from here: sort it out in {app}{unsure ? "" : ", or delete the download"}.</p>
           ) : (
             <>
               {blocker ? <p className="m-blocked__nope">{blocker}</p> : null}
-              {notDone ? <p className="m-blocked__nope">Not imported: {notDone}</p> : null}
+              {notDone ? notDoneLine : null}
               <HoldButton label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
                 disabled={readOnly || !!busy || !!blocker} onConfirm={() => void go()} />
             </>
