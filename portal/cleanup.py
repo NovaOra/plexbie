@@ -1,10 +1,11 @@
 # path: portal/cleanup.py
 """How long each title has before media_cleanup removes it.
 
-This mirrors MediaCleanupCog.check_item_for_cleanup step for step, so the
-countdown on the site is the bot's own schedule, not an estimate. One exception: a
-title in Plex more than once is counted down per copy here, while the bot keeps
-every copy as long as any one of them isn't due (see _judge_copies_together):
+It judges each title by the same rule as MediaCleanupCog.check_item_for_cleanup
+(judge, with days_left), off the same ids (utils/guids), so the countdown on the
+site is the bot's own schedule, not an estimate. One exception: a title in Plex
+more than once is counted down per copy here, while the bot keeps every copy as
+long as any one of them isn't due (see _judge_copies_together):
 
   last activity = latest of
       when anyone last watched it: every account's plays, from the server's own
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from utils.formatting import parse_utc
-from utils.guids import guid_number
+from utils.guids import element_guids, first_number, plex_ids
 
 TRACKING_FILE = Path("config/media_tracking.json")
 
@@ -63,27 +64,6 @@ def request_times() -> List[dict]:
         ts = parse_utc(rec.get("request_timestamp"))
         if ts:
             out.append({"tmdb": rec.get("tmdb_id"), "type": rec.get("media_type"), "title": rec.get("title"), "at": ts})
-    return out
-
-
-def _tmdb(el) -> Optional[int]:
-    for g in el.findall("Guid"):
-        tmdb = guid_number(g.get("id"), "tmdb")
-        if tmdb is not None:
-            return tmdb
-    return None
-
-
-def guid_ids(el) -> Dict[str, str]:
-    """A listed film's or show's TMDB / TheTVDB / IMDb ids, from its Guid tags
-    ("tmdb://1396"), read as the cleanup task reads them off plexapi's guids."""
-    out: Dict[str, str] = {}
-    for g in el.findall("Guid"):
-        gid = g.get("id") or ""
-        if "://" in gid:
-            k, v = gid.split("://", 1)
-            if k in ("tmdb", "tvdb", "imdb") and v:
-                out.setdefault(k, v)
     return out
 
 
@@ -166,6 +146,33 @@ def days_left(inactive: int, config: dict, warned: Optional[str], now: datetime)
                int(config.get("notify_days_before", 7)) - since)
 
 
+def judge(watched: Optional[datetime], added: Optional[datetime], requested: Optional[datetime],
+          config: dict, now: datetime) -> Optional[dict]:
+    """The cleanup rule for one film or show, the cleanup task's and the countdown's.
+
+    Its last activity is the latest of when anyone last watched it (`watched`: for a
+    show, any episode), when it was added (`added`: for a show, its newest episode)
+    and its newest request (`requested`); "reason" says which. "action" is "delete"
+    once that's inactivity_days ago, "notify" from notify_days_before ahead of that,
+    else None; days_left then holds a removal back until its whole warning has passed.
+    None when nothing dates the title."""
+    last, reason = watched, "watched"
+    for when, why in ((added, "added"), (requested, "requested")):
+        if when and (not last or when > last):
+            last, reason = when, why
+    if not last:
+        return None
+    inactive = (now - last).days
+    days = int(config.get("inactivity_days", 90))
+    if inactive >= days:
+        action = "delete"
+    elif inactive >= days - int(config.get("notify_days_before", 7)):
+        action = "notify"
+    else:
+        action = None
+    return {"last": last, "reason": reason, "inactive": inactive, "action": action}
+
+
 def current_warnings(warned, checked, now: datetime) -> Dict[str, str]:
     """The "warned" record as it stands: {} when it isn't one, or when the check that
     last dated it (`checked`, an ISO time) is missing or more than WARNINGS_LAPSE ago."""
@@ -199,7 +206,6 @@ def compute(server, config: dict, requests: List[dict],
     now = datetime.now(timezone.utc)
     days = int(config.get("inactivity_days", 90))
     views = everyones_views(server, days)
-    notify = days - int(config.get("notify_days_before", 7))
     exempt = config.get("exempt_items", {}) or {}
     warned = warned or {}
     out: Dict[str, dict] = {}
@@ -213,9 +219,10 @@ def compute(server, config: dict, requests: List[dict],
         for el in root.findall("Video" if stype == "movie" else "Directory"):
             judged += 1
             rk = el.get("ratingKey")
-            tmdb = _tmdb(el)
+            guids = element_guids(el)
+            tmdb = first_number(guids, "tmdb")
             year = el.get("year") or ""
-            entry = {"ratingKey": rk, "tmdb": tmdb, "ids": guid_ids(el), "title": el.get("title"), "type": stype,
+            entry = {"ratingKey": rk, "tmdb": tmdb, "ids": plex_ids(guids), "title": el.get("title"), "type": stype,
                      "year": int(year) if year.isdigit() else None}
             if kept_forever(exempt, rk, stype, entry["ids"]):
                 out[rk] = {**entry, "exempt": True}
@@ -233,26 +240,20 @@ def compute(server, config: dict, requests: List[dict],
                     came = _ts(ep.get("addedAt"))
                     if came and (newest is None or came > newest):
                         newest = came
-            reason = "watched"
-            added = newest or _ts(el.get("addedAt"))
-            if added and (not last or added > last):
-                last, reason = added, "added"
             kind = "tv" if stype == "show" else "movie"
             asked = [r["at"] for r in requests
                      if (tmdb is not None and r["tmdb"] == tmdb)
                      or (tmdb is None and r["title"] == el.get("title") and r["type"] == kind)]
-            if asked and (not last or max(asked) > last):
-                last, reason = max(asked), "requested"
-            if not last:
+            verdict = judge(last, newest or _ts(el.get("addedAt")), max(asked) if asked else None, config, now)
+            if not verdict:
                 continue
-            inactive = (now - last).days
             out[rk] = {
                 **entry,
                 "exempt": False,
-                "lastActivity": last.isoformat(),
-                "reason": reason,
-                "daysLeft": days_left(inactive, config, warned.get(rk), now),
-                "warning": inactive >= notify,
+                "lastActivity": verdict["last"].isoformat(),
+                "reason": verdict["reason"],
+                "daysLeft": days_left(verdict["inactive"], config, warned.get(rk), now),
+                "warning": verdict["action"] is not None,
             }
     if not views and judged > EMPTY_HISTORY_TITLES:
         return {}   # the bot takes this history as unreadable and judges nothing

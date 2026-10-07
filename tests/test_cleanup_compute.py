@@ -43,6 +43,13 @@ class _Guid:
         self.id = gid
 
 
+class _Tag:
+    """A guid plexapi gives by its tag rather than an id."""
+
+    def __init__(self, gid):
+        self.tag = gid
+
+
 class _Episode:
     def __init__(self, added, seen=None):
         self.addedAt = _local(added)
@@ -127,7 +134,9 @@ class _Plex:
         out = "".join(f' {name}="{int(when.timestamp())}"' for name, when in attrs.items() if when)
         if hasattr(obj, "ratingKey"):
             out += f' ratingKey="{obj.ratingKey}" title={quoteattr(obj.title)} year="{obj.year or ""}"'
-        guids = "".join(f'<Guid id="{g.id}"/>' for g in getattr(obj, "guids", []))
+        if getattr(obj, "guid", None):
+            out += f" guid={quoteattr(obj.guid)}"
+        guids = "".join(f'<Guid id="{getattr(g, "id", None) or g.tag}"/>' for g in getattr(obj, "guids", []))
         return f"<{tag}{out}>{guids}</{tag}>"
 
 
@@ -269,3 +278,48 @@ def test_a_skipped_library_is_never_read_or_listed():
     site = _site(plex, requests, warned, config)
     assert site["30"]["warning"] is True and site["30"]["daysLeft"] == 7, "once not skipped, warned in full"
     assert "40" not in site
+
+
+def test_both_read_a_titles_ids_the_same_way():
+    """A title's TMDB number on its own guid, or a guid plexapi gives by its tag: the
+    bot and the countdown match its request and its "keep forever" by the same ids."""
+    plex, requests, warned, config = _household()
+    films = plex.sections[0][3]
+    matrix = _film(50, "Matrix", 400)
+    matrix.guid = "tmdb://603"                                      # requested as "The Matrix"
+    ronin = _film(51, "Ronin", 400)
+    ronin.guids = [_Tag("tmdb://8195")]                             # kept, under the key it had before
+    films += [matrix, ronin]
+    requests = _Requests(_requested(17431, "movie", "Moon", 2), _requested(99, "tv", "Home Movies", 1),
+                         _requested(438631, "movie", "Dune", 200), _requested(603, "movie", "The Matrix", 2))
+    config["exempt_items"]["999"] = {"title": "Ronin", "type": "movie", "ids": {"tmdb": "8195"}}
+
+    site = _site(plex, requests, warned, config)
+    bot, _ = _bot(plex, requests, warned, config)
+    assert site["50"]["reason"] == "requested" and not site["50"]["warning"], site["50"]
+    assert site["51"]["exempt"] is True, site["51"]
+    assert "50" not in bot and "51" not in bot, f"the bot would act on {bot}"
+    due = {rk: c["daysLeft"] for rk, c in site.items() if c.get("warning")}
+    assert bot == due, f"the bot would act on {bot}, the countdown says {due}"
+
+
+def test_one_rule_dates_and_judges_every_title():
+    """The rule both share: the latest activity, and what that means at 90 days with 7
+    of warning (or whatever an admin set)."""
+    config = {"inactivity_days": 90, "notify_days_before": 7}
+
+    def judged(watched=None, added=None, requested=None, settings=config):
+        days = [None if d is None else NOW - timedelta(days=d) for d in (watched, added, requested)]
+        return countdown.judge(*days, settings, NOW)
+
+    assert judged() is None, "nothing dates it"
+    assert judged(watched=10, added=400) == {"last": NOW - timedelta(days=10), "reason": "watched",
+                                             "inactive": 10, "action": None}
+    assert judged(watched=400, added=5)["reason"] == "added"
+    assert judged(watched=40, added=400, requested=3)["reason"] == "requested"
+    assert judged(watched=None, added=None, requested=95)["reason"] == "requested"
+    assert judged(watched=20, added=20)["reason"] == "watched", "a tie stays watched"
+
+    assert [judged(added=d)["action"] for d in (82, 83, 89, 90, 500)] == [None, "notify", "notify", "delete", "delete"]
+    shorter = {"inactivity_days": "30", "notify_days_before": "10"}
+    assert [judged(added=d, settings=shorter)["action"] for d in (19, 20, 30)] == [None, "notify", "delete"]

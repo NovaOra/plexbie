@@ -18,7 +18,7 @@ from core.services import BotServices
 from utils.embeds import create_info_embed, truncate_field
 from utils.formatting import parse_utc
 from utils.views import reply_failure
-from utils.guids import guid_number
+from utils.guids import element_guids, first_number, guid_number, item_guids, plex_ids
 from database.kv_store import kv_get, kv_set
 from database.request_store import all_requests
 
@@ -30,20 +30,14 @@ CLEANUP_NAMESPACE = "media_cleanup"
 SEERR_DELETED = 7
 
 from portal.cleanup import aware as _aware  # noqa: E402  (plexapi's zone-less local times)
-from portal.cleanup import EMPTY_HISTORY_TITLES, current_warnings, days_left  # noqa: E402
-from portal.cleanup import guid_ids, kept_forever, missing_skipped, skipped_library  # noqa: E402
+from portal.cleanup import EMPTY_HISTORY_TITLES, current_warnings, days_left, judge  # noqa: E402
+from portal.cleanup import kept_forever, missing_skipped, skipped_library  # noqa: E402
 
 
 def _ids_of(item) -> Dict[str, str]:
-    """A Plex item's TMDB / TheTVDB / IMDb ids, from its guids ("tmdb://1396")."""
-    out: Dict[str, str] = {}
-    for g in getattr(item, "guids", None) or []:
-        gid = str(getattr(g, "id", "") or "")
-        if "://" in gid:
-            k, v = gid.split("://", 1)
-            if k in ("tmdb", "tvdb", "imdb") and v:
-                out.setdefault(k, v)
-    return out
+    """A Plex item's TMDB / TheTVDB / IMDb ids, from its own guid and its guids
+    ("tmdb://1396"); see utils.guids.item_guids."""
+    return plex_ids(item_guids(item))
 
 
 def _listed_ids(item) -> Dict[str, str]:
@@ -549,7 +543,7 @@ class MediaCleanupCog(commands.Cog):
             for el in root.findall("Video" if stype == "movie" else "Directory"):
                 rk = el.get("ratingKey")
                 played = views.get(rk)
-                if not whole_library and not kept_forever(exempt, rk, stype, guid_ids(el)) \
+                if not whole_library and not kept_forever(exempt, rk, stype, plex_ids(element_guids(el))) \
                         and not (played and played >= cutoff):
                     continue
                 for g in el.findall("Guid"):
@@ -789,25 +783,7 @@ class MediaCleanupCog(commands.Cog):
 
     def _get_item_tmdb_id(self, item) -> Optional[int]:
         """Best-effort TMDB extraction from Plex item guid metadata."""
-        guid_candidates = []
-
-        primary_guid = getattr(item, "guid", None)
-        if primary_guid:
-            guid_candidates.append(str(primary_guid))
-
-        for guid_obj in getattr(item, "guids", []) or []:
-            guid_value = getattr(guid_obj, "id", None) or getattr(guid_obj, "tag", None)
-            if guid_value:
-                guid_candidates.append(str(guid_value))
-            else:
-                guid_candidates.append(str(guid_obj))
-
-        for guid in guid_candidates:
-            tmdb_id = guid_number(guid, "tmdb")
-            if tmdb_id:
-                return tmdb_id
-
-        return None
+        return first_number(item_guids(item), "tmdb")
 
     def _parse_request_timestamp(self, value: Optional[str]) -> Optional[datetime]:
         parsed = parse_utc(value)
@@ -1139,28 +1115,21 @@ class MediaCleanupCog(commands.Cog):
                 if not last_viewed or seen > last_viewed:
                     last_viewed = seen
 
-            # Never watched, or new episodes since: the newest addition counts
+            # Never watched, or new episodes since: the newest addition counts, and so
+            # does a recent request (portal/cleanup.judge, the countdown's rule too)
             added = newest or (_aware(item.addedAt) if getattr(item, "addedAt", None) else None)
-            if added and (not last_viewed or added > last_viewed):
-                last_viewed = added
-
             recent_request_timestamp = self._get_recent_request_timestamp(item)
-            if recent_request_timestamp and (not last_viewed or recent_request_timestamp > last_viewed):
+            verdict = judge(last_viewed, added, recent_request_timestamp, self.config, datetime.now(timezone.utc))
+            if not verdict:
+                return None
+            if verdict["reason"] == "requested":
                 logger.info(
                     f"Using recent request timestamp for cleanup grace on {item.title}: "
                     f"{recent_request_timestamp.isoformat()}"
                 )
-                last_viewed = recent_request_timestamp
+            last_viewed, days_inactive = verdict["last"], verdict["inactive"]
 
-            # Calculate days since last activity
-            now = datetime.now(timezone.utc)
-            days_inactive = (now - last_viewed).days
-
-            # Determine action
-            inactivity_threshold = self.config["inactivity_days"]
-            notify_threshold = inactivity_threshold - self.config["notify_days_before"]
-
-            if days_inactive >= inactivity_threshold:
+            if verdict["action"] == "delete":
                 # Mark for deletion. Ids and year are read here, in the worker thread:
                 # on a partial plexapi object an unset attribute is an HTTP request.
                 return {
@@ -1174,9 +1143,9 @@ class MediaCleanupCog(commands.Cog):
                     "last_viewed": last_viewed.isoformat(),
                     "days_inactive": days_inactive,
                 }
-            elif days_inactive >= notify_threshold:
+            elif verdict["action"] == "notify":
                 # Notify that it will be deleted soon
-                days_until_deletion = inactivity_threshold - days_inactive
+                days_until_deletion = int(self.config["inactivity_days"]) - days_inactive
                 return {
                     "action": "notify",
                     "item": item,
