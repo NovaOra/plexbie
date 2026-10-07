@@ -67,6 +67,11 @@ def _whole_number(body: dict, key: str) -> int:
                                  content_type="application/json")
 
 
+def _email(text: str) -> bool:
+    """Shaped like an email address, and no longer than one can be (254 characters)."""
+    return len(text) <= 254 and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", text) is not None
+
+
 class _WebRequester:
     """Stands in for a discord.User when someone without Discord asks for something."""
 
@@ -257,10 +262,24 @@ class Actions:
 
     # ------------------------------------------------------------ invites
     async def create_invite(self, user: dict, body: dict, invites, base_url: str) -> dict:
+        from portal.invites import DEFAULT_DAYS, MAX_DAYS
         self.limit(user["user"]["id"], "admin")
+        # A whole number of days, sent as a number or as digits: JSON also carries 2.5,
+        # true and 1e400 (infinity, which int() can't take).
+        days = body.get("days")
+        if days is None or days == "":
+            days = DEFAULT_DAYS
+        elif isinstance(days, str) and re.fullmatch(r"[0-9]{1,4}", days.strip()):
+            days = int(days)
+        if isinstance(days, bool) or not isinstance(days, int) or not 1 <= days <= MAX_DAYS:
+            raise web.HTTPBadRequest(text=json.dumps({"error": f"An invite lasts 1 to {MAX_DAYS} days."}), content_type="application/json")
+        # Optional: no address, or one that's text and shaped like an address.
+        email = body.get("email")
+        if (email is not None and not isinstance(email, str)) or (email and email.strip() and not _email(email.strip())):
+            raise web.HTTPBadRequest(text='{"error":"That doesn\'t look like an email address."}', content_type="application/json")
         try:
-            token, invite = await invites.create(label=str(body.get("label") or ""), email=body.get("email"),
-                                                 days=int(body.get("days") or 7), actor=self.actor(user))
+            token, invite = await invites.create(label=str(body.get("label") or ""), email=email,
+                                                 days=days, actor=self.actor(user))
         except (TypeError, ValueError) as e:
             raise web.HTTPBadRequest(text=json.dumps({"error": str(e) or "Check the details and try again."}), content_type="application/json")
         # The only time the link exists in readable form: shown once, never stored.
@@ -328,7 +347,10 @@ class Actions:
         from plugins.user_invites.cog import correct_invite_email
         self.limit(user["user"]["id"], "admin")
         old, new = str(body.get("email") or "").strip(), str(body.get("new") or "").strip()
-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", new):
+        if not _email(old):
+            # Invites sent to a Plex username list with no email; plex.tv can't tell them apart here.
+            return {"ok": False, "message": "Plexbie can only move an invite that was sent to an email address."}
+        if not _email(new):
             return {"ok": False, "message": "That doesn't look like an email address."}
         if new.lower() == old.lower():
             return {"ok": False, "message": "That's the same address."}

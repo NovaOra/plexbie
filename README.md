@@ -635,11 +635,15 @@ so the household can do everything above without Discord:
   last updated…" and Try again; a list that couldn't load says so rather than
   looking empty, and Health says when Sonarr or Radarr couldn't be asked about
   downloads they won't import by themselves.
-- **Invite links** let someone without Discord join: single use, expiring,
-  optionally locked to an email, stored only as a SHA-256. A locked link works
+- **Invite links** let someone without Discord join: single use, expiring
+  after 1 to 30 days (a whole number; anything else is refused), optionally
+  locked to an email (at most 254 characters), stored only as a SHA-256. A locked link works
   only for the Plex account with that email, once the person has confirmed it
   with Plex; until then it waits, unspent. Without one, a Plex sign-in cannot
-  ask to join.
+  ask to join. A pending Plex invite can be sent again to a corrected address
+  only when it went to an email address (one sent to a Plex username lists no
+  email, so Plexbie can't tell it from the others); either address can be at
+  most 254 characters.
 - **Members without Discord** are told what Discord members are DMed (request
   decisions, arrivals, inactivity warnings, removal) by phone/browser alerts
   from the site, or by email when `SMTP_*` is set.

@@ -412,3 +412,68 @@ def test_the_auto_linker_never_moves_someone_elses_link():
     stolen, joined, rows = asyncio.run(go())
     assert stolen == ("conflict", "victim") and rows[700] == ("victim", 70) and 999 not in rows
     assert joined == ("linked", "newbie80") and rows[800] == ("newbie80", 80)
+
+
+def test_only_an_invite_sent_to_an_email_address_can_be_moved():
+    """Invites to a Plex username list with no email; moving one of those would
+    cancel whichever email-less invite plex.tv lists first."""
+    from portal.actions import Actions
+    from helpers import FakeServices
+    from core.config import Config
+
+    actions = Actions(bot=None, services=FakeServices(Config()), data=None, public_url="")
+    actions.services.plex_server = object()
+    admin = {"user": {"id": "1", "name": "Sam"}, "admin": True}
+    resent = []
+    original = plex_invites.resend
+    def resend(config, server, old, new):
+        resent.append((old, new))
+        raise RuntimeError("stopped here")
+
+    plex_invites.resend = resend
+    try:
+        answers = [asyncio.run(actions.plex_invite_change(admin, body)) for body in (
+            {"email": "", "new": "right@gmail.com"},
+            {"email": "   ", "new": "right@gmail.com"},
+            {"email": "not-an-address", "new": "right@gmail.com"},
+            {"email": "a" * 250 + "@x.me", "new": "right@gmail.com"},
+            {"email": "wrong@proton.me", "new": "a" * 250 + "@gmail.com"},
+        )]
+        assert [a["ok"] for a in answers] == [False] * 5, answers
+        assert resent == [], "nothing was cancelled or sent on plex.tv"
+        # The longest address there can be (254 characters) still goes through.
+        longest = "a" * 249 + "@x.me"
+        asyncio.run(actions.plex_invite_change(admin, {"email": longest, "new": "right@gmail.com"}))
+        asyncio.run(actions.plex_invite_change(admin, {"email": "wrong@proton.me", "new": longest}))
+    finally:
+        plex_invites.resend = original
+    assert resent == [(longest, "right@gmail.com"), ("wrong@proton.me", longest)]
+
+
+def test_fixing_an_empty_address_changes_no_records():
+    from sqlalchemy import select
+    from database.kv_store import kv_get_all, kv_set
+    from plugins.user_invites.cog import INVITES_NAMESPACE, WEB_JOINS_NAMESPACE, correct_invite_email
+    from plugins.user_mgmt.models import PlexUser
+    session_module, db = _db()
+
+    async def go():
+        await session_module.init_database(f"sqlite:///{db}")
+        try:
+            await kv_set(INVITES_NAMESPACE, "555", {"username": "alt", "status": "approved"})
+            await kv_set(WEB_JOINS_NAMESPACE, "w1", {"email": "", "plex_name": "kid"})
+            async with session_module.get_session() as s:
+                s.add(PlexUser(discord_id=555, plex_username="kid", plex_email=""))
+                await s.commit()
+            who = await correct_invite_email("", "right@gmail.com")
+            records = [await kv_get_all(INVITES_NAMESPACE), await kv_get_all(WEB_JOINS_NAMESPACE)]
+            async with session_module.get_session() as s:
+                row = (await s.execute(select(PlexUser))).scalars().first()
+            return who, records, row.plex_email
+        finally:
+            await session_module.engine.dispose()
+
+    who, records, tracked = asyncio.run(go())
+    assert who == {"discord_id": None, "name": None}
+    assert records == [{"555": {"username": "alt", "status": "approved"}}, {"w1": {"email": "", "plex_name": "kid"}}]
+    assert tracked == ""

@@ -60,8 +60,8 @@ def test_login_redirects_only_go_to_our_own_pages():
 class _Actions(Actions):
     """Real guards, recorded effects."""
 
-    def __init__(self, services):
-        super().__init__(bot=None, services=services, data=None, public_url="https://plexbie.com")
+    def __init__(self, services, public_url="https://plexbie.com"):
+        super().__init__(bot=None, services=services, data=None, public_url=public_url)
         self.calls = []
 
     async def create_request(self, user, body):
@@ -81,15 +81,15 @@ class _Actions(Actions):
         return []
 
 
-def _client(user, *, readonly=False):
+def _client(user, *, readonly=False, invites=None, public_url="https://plexbie.com"):
     services = FakeServices(Config())
-    actions = None if readonly else _Actions(services)
+    actions = None if readonly else _Actions(services, public_url)
 
     async def who(request):
         return user
 
     app = build_app(services, who=who, readonly=readonly, dist=None,
-                    image_cache=tempfile.mkdtemp(), actions=actions)
+                    image_cache=tempfile.mkdtemp(), actions=actions, invites=invites)
     return TestClient(TestServer(app)), actions
 
 
@@ -451,6 +451,145 @@ def test_plex_sign_ins_cannot_ask_to_join_without_an_invite():
         assert getattr(e, "status", None) == 403
     else:
         raise AssertionError("a Plex sign-in without an invite must not be able to ask to join")
+
+
+# ------------------------------------------------------- invite link routes
+INVITE_WRITES = ("/api/admin/invites", "/api/admin/invites/{key}/revoke", "/api/admin/invites/{key}/delete",
+                 "/api/admin/invites/{key}/renew", "/api/admin/plex-invites/cancel", "/api/admin/plex-invites/change")
+
+
+def _invite_routes(user, steps, *, readonly=False, public_url="https://plexbie.example"):
+    """`steps(client, actions, invites)` against the site with invite links switched on."""
+    from portal.invites import Invites
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        invites = Invites()
+        client, actions = _client(user, readonly=readonly, invites=invites, public_url=public_url)
+        await client.start_server()
+        try:
+            return await steps(client, actions, invites)
+        finally:
+            await client.close()
+    return asyncio.run(scenario())
+
+
+def _post(client, path, body, headers=None):
+    return client.post(path, headers={**OK_HEADERS, **(headers or {})}, data=body if isinstance(body, str) else json.dumps(body))
+
+
+def test_invite_routes_are_admins_only_and_refused_in_the_preview():
+    async def steps(client, actions, invites):
+        _, info = await invites.create(label="Mom", email=None, days=7, actor="Admin")
+        statuses = [(await _post(client, path.format(key=info["id"]), {"label": "Stranger", "email": "a@b.co", "new": "c@d.co"})).status
+                    for path in INVITE_WRITES]
+        left = [(i["id"], i["status"]) for i in await invites.all()]
+        return statuses, left == [(info["id"], "active")], actions
+
+    for user, readonly, refused in ((None, False, 401), (OUTSIDER, False, 403), (MEMBER, False, 403), (ADMIN, True, 403)):
+        statuses, untouched, actions = _invite_routes(user, steps, readonly=readonly)
+        assert statuses == [refused] * len(INVITE_WRITES), (user, readonly, statuses)
+        assert untouched, "a refused write still changed an invite"
+        assert actions is None or not actions._hits, "a refused write still reached the action"
+
+
+def test_invite_route_mistakes_are_400_and_404_not_a_server_error():
+    async def steps(client, actions, invites):
+        out = {}
+        for name, body in (("no name", {"label": "", "days": 7}), ("bad email", {"label": "Mom", "email": "nope"}),
+                           ("huge number", '{"label": "Mom", "days": 1e400}'), ("infinity", '{"label": "Mom", "days": Infinity}'),
+                           ("fraction", {"label": "Mom", "days": 2.5}), ("true", {"label": "Mom", "days": True}),
+                           ("zero", {"label": "Mom", "days": 0}), ("too long", {"label": "Mom", "days": 31}),
+                           ("words", {"label": "Mom", "days": "a week"}), ("email not text", {"label": "Mom", "email": 5}),
+                           ("email too long", {"label": "Mom", "email": "a" * 250 + "@x.me"})):
+            out[name] = (await _post(client, "/api/admin/invites", body)).status
+        made = await _post(client, "/api/admin/invites", {"label": "Mom", "days": "3"})
+        key = (await made.json())["invite"]["id"]
+        longest = await _post(client, "/api/admin/invites", {"label": "Dad", "days": 30, "email": "a" * 249 + "@x.me"})
+        out["30 days, 254-character address"] = longest.status
+        await _post(client, f"/api/admin/invites/{(await longest.json())['invite']['id']}/revoke", {})
+        await _post(client, f"/api/admin/invites/{(await longest.json())['invite']['id']}/delete", {})
+        out["revoke a made-up id"] = (await _post(client, "/api/admin/invites/junk/revoke", {})).status
+        out["delete a made-up id"] = (await _post(client, "/api/admin/invites/junk/delete", {})).status
+        out["renew an unknown invite"] = (await _post(client, f"/api/admin/invites/{'0' * 64}/renew", {})).status
+        out["delete an open invite"] = (await _post(client, f"/api/admin/invites/{key}/delete", {})).status
+        out["revoke"] = (await _post(client, f"/api/admin/invites/{key}/revoke", {})).status
+        out["revoke again"] = (await _post(client, f"/api/admin/invites/{key}/revoke", {})).status
+        out["delete"] = (await _post(client, f"/api/admin/invites/{key}/delete", {})).status
+        return made.status, (await made.json())["invite"], out, await invites.all()
+
+    made, invite, out, left = _invite_routes(ADMIN, steps)
+    from datetime import datetime
+    assert made == 201 and (datetime.fromisoformat(invite["expiresAt"]) - datetime.fromisoformat(invite["createdAt"])).days == 3
+    assert out == {"no name": 400, "bad email": 400, "huge number": 400, "infinity": 400, "fraction": 400, "true": 400,
+                   "zero": 400, "too long": 400, "words": 400, "email not text": 400, "email too long": 400,
+                   "30 days, 254-character address": 201,
+                   "revoke a made-up id": 404, "delete a made-up id": 404, "renew an unknown invite": 404,
+                   "delete an open invite": 409, "revoke": 200, "revoke again": 409, "delete": 200}, out
+    assert left == []
+
+
+def test_invite_links_share_the_admin_hourly_limit():
+    from portal.actions import LIMITS
+
+    async def steps(client, actions, invites):
+        for _ in range(LIMITS["admin"][0] - 1):
+            actions.limit(ADMIN["user"]["id"], "admin")
+        statuses = [(await _post(client, "/api/admin/invites", {"label": "Mom"})).status for _ in range(2)]
+        return statuses, len(await invites.all())
+
+    assert _invite_routes(ADMIN, steps) == ([201, 429], 1)
+
+
+def test_a_spoofed_host_cannot_change_the_invite_link():
+    """With WEB_PUBLIC_URL set the link is built from it, never from the Host the request names."""
+    import os
+    saved = os.environ.get("WEB_PUBLIC_URL")
+    os.environ["WEB_PUBLIC_URL"] = "https://plexbie.example"
+    try:
+        async def steps(client, actions, invites):
+            spoofed = {"Host": "evil.example"}
+            made = await (await _post(client, "/api/admin/invites", {"label": "Mom"}, spoofed)).json()
+            renewed = await (await _post(client, f"/api/admin/invites/{made['invite']['id']}/renew", {}, spoofed)).json()
+            return made["url"], renewed["url"]
+        links = _invite_routes(ADMIN, steps, public_url="https://plexbie.example")
+    finally:
+        os.environ.pop("WEB_PUBLIC_URL", None)
+        if saved is not None:
+            os.environ["WEB_PUBLIC_URL"] = saved
+    assert all(link.startswith("https://plexbie.example/invite/") for link in links), links
+
+
+def test_moving_a_plex_invite_resends_it_fixes_the_records_and_tells_the_person():
+    import plugins.user_invites.cog as invites_cog
+    from core import plex_invites
+    resent, fixed, told = [], [], []
+
+    async def correct(old, new):
+        fixed.append((old, new))
+        return {"discord_id": 555, "name": "Alt"}
+
+    async def steps(client, actions, invites):
+        actions.services.plex_server = object()
+
+        async def tell(who, old, new):
+            told.append((who["name"], old, new))
+        actions._tell_invite_moved = tell
+        moved = await _post(client, "/api/admin/plex-invites/change", {"email": "wrong@proton.me", "new": "right@gmail.com"})
+        nameless = await _post(client, "/api/admin/plex-invites/change", {"email": "", "new": "right@gmail.com"})
+        return moved.status, (await moved.json())["message"], nameless.status
+
+    saved = plex_invites.resend, invites_cog.correct_invite_email
+    plex_invites.resend = lambda config, server, old, new: resent.append((old, new))
+    invites_cog.correct_invite_email = correct
+    try:
+        status, message, nameless = _invite_routes(ADMIN, steps)
+    finally:
+        plex_invites.resend, invites_cog.correct_invite_email = saved
+    assert status == 200 and message == "Invite sent to right@gmail.com for Alt."
+    assert nameless == 409, "an invite with no email address can't be moved"
+    assert resent == fixed == [("wrong@proton.me", "right@gmail.com")]
+    assert told == [("Alt", "wrong@proton.me", "right@gmail.com")]
 
 
 # ------------------------------------------------------------ admin parity

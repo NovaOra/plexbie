@@ -694,6 +694,8 @@ async def correct_invite_email(old: str, new: str) -> Dict[str, Any]:
     from plugins.user_mgmt.models import PlexUser
 
     old_l, found = old.strip().lower(), {"discord_id": None, "name": None}
+    if not old_l:
+        return found                                # would match every record that has no email
     for namespace in (INVITES_NAMESPACE, WEB_JOINS_NAMESPACE):
         changed = {}
         for key, rec in (await kv_get_all(namespace)).items():
