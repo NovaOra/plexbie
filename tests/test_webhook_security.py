@@ -171,6 +171,40 @@ def test_arr_non_ascii_api_key_is_rejected_not_crashed():
     assert ok is False
 
 
+def _signed(body, secret="sonarr-key"):
+    import hashlib
+    import hmac
+    return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def test_arr_accepts_a_signature_with_or_without_the_sha256_prefix():
+    validator = WebhookValidator(SetSecretsConfig)
+    body = b'{"eventType": "Download"}'
+    for header in ("X-Webhook-Signature", "X-Signature-256"):
+        for value in (_signed(body), "sha256=" + _signed(body)):
+            ok, _, seen = validator._validate_arr_signature(
+                FakeRequest(headers={header: value}), body, "sonarr-key", "sonarr")
+            assert ok is True and seen == body, (header, value)
+
+
+def test_arr_refuses_a_signature_with_one_digit_changed():
+    validator = WebhookValidator(SetSecretsConfig)
+    body = b'{"eventType": "Download"}'
+    good = _signed(body)
+    flipped = good[:-1] + ("0" if good[-1] != "0" else "1")
+    ok, error, _ = validator._validate_arr_signature(
+        FakeRequest(headers={"X-Webhook-Signature": flipped}), body, "sonarr-key", "sonarr")
+    assert ok is False and error
+
+
+def test_arr_refuses_a_signature_made_for_another_body():
+    validator = WebhookValidator(SetSecretsConfig)
+    ok, _, _ = validator._validate_arr_signature(
+        FakeRequest(headers={"X-Webhook-Signature": _signed(b"{}")}), b'{"eventType": "Grab"}',
+        "sonarr-key", "sonarr")
+    assert ok is False
+
+
 # --- Tautulli / Seerr / shared-secret services ---
 
 def test_tautulli_accepts_bearer_token():
@@ -193,10 +227,98 @@ def test_tautulli_rejects_missing_auth():
     assert ok is False and error
 
 
+def test_tautulli_refuses_a_wrong_header_even_with_the_right_query_secret():
+    """The header is checked first, and a wrong one isn't rescued by the URL."""
+    validator = WebhookValidator(SetSecretsConfig)
+    for header in ("Authorization", "X-Webhook-Secret", "X-Tautulli-Signature"):
+        request = FakeRequest(headers={header: "Bearer wrong"}, query={"secret": "taut-secret"})
+        ok, error, _ = validator._validate_tautulli_signature(request, None, "taut-secret")
+        assert ok is False and error, header
+
+
+def test_tautulli_refuses_a_wrong_query_secret():
+    validator = WebhookValidator(SetSecretsConfig)
+    ok, _, _ = validator._validate_tautulli_signature(
+        FakeRequest(query={"secret": "wrong"}), None, "taut-secret")
+    assert ok is False
+
+
+def _warnings_from(run):
+    """The warnings core.webhook_security logs while `run()` runs."""
+    from core import webhook_security as module
+    seen = []
+    real = module.logger.warning
+
+    def capture(message, *args, **kwargs):
+        seen.append(str(message))
+        return real(message, *args, **kwargs)
+
+    module.logger.warning = capture
+    try:
+        run()
+    finally:
+        module.logger.warning = real
+    return seen
+
+
+def test_a_secret_on_the_tautulli_url_is_warned_about_once_per_run():
+    """The URL form still works, but URLs end up in proxy and access logs: say so,
+    once, rather than on every play and pause."""
+    from core import webhook_security as module
+    module._warned_query_secret = False
+    validator = WebhookValidator(SetSecretsConfig)
+
+    def three_events():
+        for _ in range(3):
+            ok, _, _ = validator._validate_tautulli_signature(
+                FakeRequest(query={"secret": "taut-secret"}), None, "taut-secret")
+            assert ok is True
+
+    first = [w for w in _warnings_from(three_events) if "in the URL" in w]
+    later = [w for w in _warnings_from(three_events) if "in the URL" in w]
+    assert len(first) == 1 and "header" in first[0], first
+    assert later == [], later
+
+
+def test_a_tautulli_header_secret_is_not_warned_about():
+    from core import webhook_security as module
+    module._warned_query_secret = False
+    validator = WebhookValidator(SetSecretsConfig)
+    seen = _warnings_from(lambda: validator._validate_tautulli_signature(
+        FakeRequest(headers={"Authorization": "Bearer taut-secret"}), None, "taut-secret"))
+    assert seen == [], seen
+    assert module._warned_query_secret is False
+
+
+def test_a_wrong_tautulli_query_secret_does_not_use_up_the_warning():
+    """A stranger guessing at the URL shouldn't silence the warning meant for the owner."""
+    from core import webhook_security as module
+    module._warned_query_secret = False
+    validator = WebhookValidator(SetSecretsConfig)
+    validator._validate_tautulli_signature(FakeRequest(query={"secret": "wrong"}), None, "taut-secret")
+    assert module._warned_query_secret is False
+
+
 def test_seerr_rejects_missing_authorization():
     validator = WebhookValidator(SetSecretsConfig)
     ok, error, _ = validator._validate_seerr_signature(FakeRequest(), None, "over-secret")
     assert ok is False and error
+
+
+def test_seerr_accepts_the_secret_alone_or_as_a_bearer_token():
+    validator = WebhookValidator(SetSecretsConfig)
+    for value in ("over-secret", "Bearer over-secret"):
+        ok, _, _ = validator._validate_seerr_signature(
+            FakeRequest(headers={"Authorization": value}), b"{}", "over-secret")
+        assert ok is True, value
+
+
+def test_seerr_refuses_a_wrong_authorization():
+    validator = WebhookValidator(SetSecretsConfig)
+    for value in ("wrong", "Bearer wrong", "Bearer ", "over-secret-2"):
+        ok, error, _ = validator._validate_seerr_signature(
+            FakeRequest(headers={"Authorization": value}), b"{}", "over-secret")
+        assert ok is False and error, value
 
 
 # --- every service the validator knows must be reachable from config ---

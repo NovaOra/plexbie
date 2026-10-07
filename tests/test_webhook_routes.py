@@ -131,3 +131,24 @@ def test_webhooks_module_funnels_registration_through_one_call_site():
         f"add_post should be called exactly once, from add_validated_post; "
         f"found calls in: {enclosing}"
     )
+
+
+class _Posted(dict):
+    """A request whose body the signature check already read, as handlers get it."""
+
+    def __init__(self, body: bytes):
+        super().__init__(_validated_body=body)
+
+    async def json(self):
+        import json
+        return json.loads(self["_validated_body"] or b"")
+
+
+def test_a_webhook_body_that_isnt_a_json_object_gets_a_400():
+    from aiohttp import web
+    from core.webhooks import read_json_object
+
+    for body in (b"not json", b"{", b"[1, 2]", b'"text"', b"42", b"\xff\xfe"):
+        answer = asyncio.run(read_json_object(_Posted(body)))
+        assert isinstance(answer, web.Response) and answer.status == 400, body
+    assert asyncio.run(read_json_object(_Posted(b'{"event": "x"}'))) == {"event": "x"}

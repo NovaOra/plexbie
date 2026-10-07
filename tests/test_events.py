@@ -176,6 +176,86 @@ def test_a_failed_download_opens_a_help_request():
     assert "Sonarr said no" in helps[0]["note"] and helps[0]["status"] == "open"
 
 
+def _posted(payload):
+    """A Seerr delivery as the handler gets it, with the body already read."""
+    class Posted(dict):
+        async def json(self):
+            return json.loads(self["_validated_body"])
+    return Posted(_validated_body=payload if isinstance(payload, bytes) else json.dumps(payload).encode())
+
+
+def test_a_seerr_event_that_fails_inside_plexbie_is_still_answered_200():
+    """Seerr retries and then disables a webhook that keeps failing: a fault on
+    Plexbie's side is logged, not handed back to Seerr."""
+    module, session_module, db, bot, tracked = _seerr_world()
+    events = module.SeerrEvents(bot)
+
+    async def broken(kind, data):
+        raise RuntimeError("database is locked")
+    events.dispatch = broken
+    answer = asyncio.run(events.handle(_posted(_event("MEDIA_PENDING", 60, 222))))
+    assert answer.status == 200
+
+
+def test_a_seerr_body_that_isnt_a_json_object_gets_a_400_and_is_not_dispatched():
+    module, session_module, db, bot, tracked = _seerr_world()
+    events = module.SeerrEvents(bot)
+    seen = []
+
+    async def record(kind, data):
+        seen.append(kind)
+    events.dispatch = record
+    for body in (b"garbage", b"[]"):
+        assert asyncio.run(events.handle(_posted(body))).status == 400, body
+    assert seen == []
+
+
+def test_an_echo_after_the_own_window_is_mirrored_as_a_new_request():
+    """Past OWN_WINDOW Plexbie no longer recognises its own submission, so Seerr's
+    word stands: the request is taken as one made in Seerr."""
+    module, session_module, db, bot, tracked = _seerr_world()
+    from database.request_store import all_requests, get_request, save_request
+
+    async def go():
+        await session_module.init_database(f"sqlite:///{db}")
+        try:
+            await save_request(1234567890124, user_id=5, media={"id": 790, "media_type": "movie", "title": "Film"})
+            module.remember_submission("movie", 790)
+            module._OWN[("movie", 790)] -= module.OWN_WINDOW + 1
+            await module.SeerrEvents(bot).dispatch("MEDIA_AUTO_APPROVED", _event("MEDIA_AUTO_APPROVED", 78, 790, "movie"))
+            return await all_requests(), await get_request(1234567890124)
+        finally:
+            module._OWN.pop(("movie", 790), None)
+            await session_module.engine.dispose()
+    everything, own = asyncio.run(go())
+    assert sorted(everything) == ["1234567890124", "78"]
+    assert everything["78"]["source"] == "seerr" and everything["78"]["status"] == "approved"
+    assert not own.get("overseerr_request_id"), "an old submission isn't matched to Seerr's request"
+
+
+def test_a_seerr_event_without_a_request_number_saves_nothing():
+    module, session_module, db, bot, tracked = _seerr_world()
+    from database.request_store import all_requests
+
+    async def go():
+        await session_module.init_database(f"sqlite:///{db}")
+        try:
+            events = module.SeerrEvents(bot)
+            for kind in ("MEDIA_PENDING", "MEDIA_AUTO_APPROVED", "MEDIA_FAILED"):
+                event = _event(kind, 0, 333)
+                event["request"]["request_id"] = ""
+                await events.dispatch(kind, event)
+                del event["request"]["request_id"]
+                await events.dispatch(kind, event)
+            no_request = _event("MEDIA_PENDING", 61, 333)
+            del no_request["request"]
+            await events.dispatch("MEDIA_PENDING", no_request)
+            return await all_requests()
+        finally:
+            await session_module.engine.dispose()
+    assert asyncio.run(go()) == {}
+
+
 # ---------------------------------------------------------------- connecting
 
 def test_new_secrets_only_fill_the_gaps():
@@ -365,6 +445,54 @@ def test_on_start_only_webhooks_plexbie_set_up_are_refreshed():
     S.seerr = Over("http://172.17.0.1:7980/webhook/overseerr")
     asyncio.run(refresh_connections(S(), "http://10.0.0.5:7980"))
     assert calls == [("seerr", "http://172.17.0.1:7980/webhook/seerr")], calls
+
+
+def test_on_start_a_tls_proxy_address_that_keeps_the_webhook_path_is_kept():
+    from core.webhook_connect import refresh_connections
+    seerr_hooks, tautulli_hooks = [], []
+
+    class Over:
+        configured = True
+
+        async def get(self, path):
+            return {"options": {"webhookUrl": "https://proxy.example/plexbie/webhook/seerr"}}
+
+        async def post(self, path, body, raw=False):
+            if not path.endswith("/test"):
+                seerr_hooks.append(body["options"]["webhookUrl"])
+
+    class Taut:
+        configured = True
+
+        def __init__(self, hook):
+            self.hook = hook
+
+        async def call(self, cmd, **params):
+            if cmd == "get_notifiers":
+                return [{"id": 9, "agent_id": 25, "friendly_name": "Plexbie"}]
+            if cmd == "get_notifier_config":
+                return {"config": {"hook": self.hook}}
+            if cmd == "set_notifier_config":
+                tautulli_hooks.append(params["webhook_hook"])
+
+    class Cfg:
+        seerr_webhook_secret = "o"
+        tautulli_webhook_secret = "t"
+
+    class S:
+        config = Cfg()
+        seerr = Over()
+
+    S.tautulli = Taut("https://proxy.example/plexbie/webhook/tautulli")
+    asyncio.run(refresh_connections(S(), "http://10.0.0.5:7980"))
+    assert seerr_hooks == ["https://proxy.example/plexbie/webhook/seerr"]
+    assert tautulli_hooks == ["https://proxy.example/plexbie/webhook/tautulli"]
+
+    # A Tautulli address that drops the path is pointed back at the LAN one.
+    tautulli_hooks.clear()
+    S.tautulli = Taut("https://proxy.example/plexbie-tautulli")
+    asyncio.run(refresh_connections(S(), "http://10.0.0.5:7980"))
+    assert tautulli_hooks == ["http://10.0.0.5:7980/webhook/tautulli"]
 
 
 def test_a_failed_test_on_start_leaves_seerrs_webhook_as_it_was():

@@ -835,13 +835,25 @@ How each secret is presented differs by what the service can send:
 
 - **Sonarr / Radarr** send `X-Api-Key`; the value must equal the secret.
 - **Tautulli** accepts either an `Authorization: Bearer <secret>` header or
-  `?secret=<secret>` on the URL.
+  `?secret=<secret>` on the URL. Prefer the header (Connect sends it): a URL ends up in proxy
+  and access logs, so Plexbie logs a warning, once a run, when Tautulli uses the URL form.
 - **Plex** sends no auth of its own, so append `?token=<secret>` to the webhook
   URL you configure in Plex.
 - **Seerr** must send `Authorization`.
 
 Validation **fails closed**: an unrecognised service with a secret configured is
 rejected rather than waved through.
+
+**Keep the webhook port on a network you trust.** The listener speaks plain HTTP, so the
+secrets travel unencrypted, and Seerr, Tautulli and Plex can't sign or timestamp what they
+send. Anyone who can watch traffic to `WEBHOOK_PORT` can read a secret and replay or forge
+events. Keep the port on your home LAN or a private network such as Tailscale, never
+forwarded from the internet. If the apps reach Plexbie across a network you don't trust, put a
+TLS reverse proxy in front of the port and change the webhook address in each app to the proxy's
+`https://` one, keeping the `/webhook/seerr` or `/webhook/tautulli` path at the end. Plexbie keeps
+that address when it refreshes the webhooks on start (a Tautulli address without that path is
+pointed back at the plain `http://` LAN address); pressing **Connect live updates** again points
+both back at the LAN address too.
 
 ---
 

@@ -15,6 +15,9 @@ logger = get_logger(__name__)
 #: Every service a webhook route may be registered for (core/webhooks.add_validated_post).
 KNOWN_SERVICES = ("sonarr", "radarr", "tautulli", "seerr", "plex")
 
+#: Whether this run has already said Tautulli's secret arrives on the URL.
+_warned_query_secret = False
+
 
 class WebhookValidator:
     """Validates webhook signatures from various services"""
@@ -134,7 +137,10 @@ class WebhookValidator:
         # Check query parameter as fallback
         query_secret = request.query.get("secret")
         if query_secret:
-            return _check(query_secret, secret, body, "Tautulli webhook: Invalid query secret", "Invalid secret")
+            result = _check(query_secret, secret, body, "Tautulli webhook: Invalid query secret", "Invalid secret")
+            if result[0]:
+                _warn_query_secret()
+            return result
 
         logger.warning("Tautulli webhook: No authentication found")
         return False, "Missing authentication", None
@@ -180,6 +186,20 @@ class WebhookValidator:
         # validate_request short-circuits before ever calling this.
         logger.warning("Plex webhook: No token provided but a secret is configured")
         return False, "Missing token", None
+
+
+def _warn_query_secret() -> None:
+    """Once a run: a secret in the URL ends up in proxy and access logs."""
+    global _warned_query_secret
+    if _warned_query_secret:
+        return
+    _warned_query_secret = True
+    logger.warning(
+        "Tautulli sends its webhook secret in the URL, where proxies and access logs "
+        "can keep it. Send it in a header instead: press Connect live updates on the setup page and "
+        "remove the hand-made webhook, or set that webhook's JSON headers to "
+        '{"Authorization": "Bearer <secret>"}.'
+    )
 
 
 def _strip_bearer(value: str) -> str:

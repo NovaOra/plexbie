@@ -190,3 +190,66 @@ def test_authenticated_requests_are_not_rejected():
 
     results = _serve(SetSecretsConfig, scenario)
     assert all(status == 200 for status in results.values()), results
+
+
+def test_a_wrong_tautulli_header_is_refused_even_with_the_right_query_secret():
+    async def scenario(session, harness):
+        url = f"{BASE}/webhook/tautulli?secret={SetSecretsConfig.tautulli_webhook_secret}"
+        async with session.post(url, json={"event_type": "play"},
+                                headers={"Authorization": "Bearer wrong"}) as r:
+            return r.status, harness.seen.get("tautulli")
+
+    status, seen = _serve(SetSecretsConfig, scenario)
+    assert status == 401
+    assert seen is None
+
+
+# --- the real Seerr route, as bot.setup_hook registers it ---
+
+def _serve_seerr(scenario):
+    """Run `scenario(session)` against WebhookServer with the real Seerr handler."""
+    from helpers import FakeServices
+    from core.webhooks import WebhookServer
+    from webhooks.seerr_handler import register_seerr_webhook
+
+    class Bot:
+        services = FakeServices(SetSecretsConfig)
+
+        def get_cog(self, _):
+            return None
+
+    async def runner():
+        server = WebhookServer(Bot.services)
+        register_seerr_webhook(server, Bot())
+        aiohttp_runner = web.AppRunner(server.app)
+        await aiohttp_runner.setup()
+        await web.TCPSite(aiohttp_runner, "127.0.0.1", PORT).start()
+        try:
+            async with aiohttp.ClientSession() as session:
+                return await scenario(session)
+        finally:
+            await aiohttp_runner.cleanup()
+
+    return asyncio.run(runner())
+
+
+def test_the_seerr_route_refuses_a_wrong_secret_and_takes_the_right_one():
+    test = {"notification_type": "TEST_NOTIFICATION", "subject": "Test"}
+
+    async def scenario(session):
+        results = {}
+        for path in ("/webhook/seerr", "/webhook/overseerr"):
+            for label, auth in (("none", None), ("wrong", "Bearer wrong"),
+                                ("bare", SetSecretsConfig.seerr_webhook_secret),
+                                ("bearer", f"Bearer {SetSecretsConfig.seerr_webhook_secret}")):
+                headers = {"Authorization": auth} if auth else {}
+                async with session.post(f"{BASE}{path}", json=test, headers=headers) as r:
+                    results[(path, label)] = r.status
+        return results
+
+    results = _serve_seerr(scenario)
+    for path in ("/webhook/seerr", "/webhook/overseerr"):
+        assert results[(path, "none")] == 401, results
+        assert results[(path, "wrong")] == 401, results
+        assert results[(path, "bare")] == 200, results
+        assert results[(path, "bearer")] == 200, results
