@@ -10,6 +10,9 @@ The season picker put every season plus "All Seasons" in one select, which
 Discord caps at 25 options, and took max() of the regular seasons without
 checking there were any. Either way the member was left on "Fetching season
 information..." with no error.
+
+The film/TV and book search boxes submit through one body, and a request's
+seasons are worded by one helper from the menu to the admin card.
 """
 import asyncio
 import pathlib
@@ -53,7 +56,7 @@ class _Screen:
 
     def __init__(self):
         self.contents, self.notes = [], []
-        self.view = None
+        self.view = self.embed = None
 
     async def show(self, changes):
         view = changes.get("view")
@@ -65,6 +68,8 @@ class _Screen:
             self.contents.append(changes["content"])
         if "view" in changes:
             self.view = view
+        if "embed" in changes:
+            self.embed = changes["embed"]
 
     @property
     def last(self):
@@ -84,8 +89,9 @@ class _Interaction:
 
 
 class _Card:
-    def __init__(self, mid):
+    def __init__(self, mid, embed=None):
         self.id = mid
+        self.embed = embed
         self.deleted = False
 
     async def delete(self):
@@ -97,10 +103,10 @@ class _Channel:
         self.cards = []
         self.fail_send = fail_send
 
-    async def send(self, **_):
+    async def send(self, embed=None, **_):
         if self.fail_send:
             raise discord.Forbidden(SimpleNamespace(status=403, reason="Forbidden"), "Missing Permissions")
-        card = _Card(5000 + len(self.cards))
+        card = _Card(5000 + len(self.cards), embed)
         self.cards.append(card)
         return card
 
@@ -285,3 +291,113 @@ def test_a_request_says_why_it_could_not_reach_the_admin_channel():
             raise AssertionError(f"no error for {config}")
     channel = _Channel()
     assert require_admin_channel(SimpleNamespace(get_channel=lambda cid: channel), SimpleNamespace(admin_channel_id=77)) is channel
+
+
+# ------------------------------------------------------------ the search box
+
+async def _search(modal_name, found):
+    """Submit the film/TV or book search box, with `found` as what the search returns (or raises)."""
+    from plugins.media_requests import cog
+    asked = []
+
+    async def search(query):
+        asked.append(query)
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    modal = getattr(cog, modal_name)(SimpleNamespace(services=_SERVICES, _search_tmdb=search, _search_open_library=search))
+    modal.search_query._value = "  Dune "
+    interaction = _Interaction()
+    await modal.on_submit(interaction)
+    return interaction.screen, asked
+
+
+def test_both_search_boxes_share_one_submit():
+    from plugins.media_requests import cog
+    for modal in (cog.TVMovieRequestModal, cog.BookRequestModal):
+        assert "on_submit" not in vars(modal), f"{modal.__name__} carries its own copy of the search submit"
+    assert cog.TVMovieRequestModal.on_submit is cog.BookRequestModal.on_submit
+
+
+def test_a_search_shows_what_it_found_or_says_why_not():
+    import logging
+    from plugins.media_requests import cog
+
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    log = logging.getLogger(cog.__name__)
+    log.addHandler(handler)
+    try:
+        for modal_name, found, menu, logged in (
+                ("TVMovieRequestModal", [{"id": 1, "media_type": "movie", "title": "Dune"}], "MediaSelectView", "Search error"),
+                ("BookRequestModal", [{"title": "Dune", "author": "Frank Herbert"}], "BookSelectView", "Book search error")):
+            screen, asked = asyncio.run(_search(modal_name, found))
+            assert asked == ["Dune"], asked
+            assert screen.notes == ["🔍 Searching..."], screen.notes
+            assert screen.last == "**I found these titles:**" and type(screen.view).__name__ == menu, (screen.last, screen.view)
+
+            screen, _ = asyncio.run(_search(modal_name, []))
+            assert screen.last == "No results found. Please try a different search term or use `/request` again."
+
+            records.clear()
+            screen, _ = asyncio.run(_search(modal_name, RuntimeError("tmdb down")))
+            assert screen.last == "An error occurred. Please try again later."
+            assert [r.getMessage() for r in records] == [f"{logged} after modal submit: tmdb down"], records
+    finally:
+        log.removeHandler(handler)
+
+
+# ------------------------------------------------------------ how seasons read
+
+def test_seasons_read_the_same_wherever_they_are_shown():
+    from plugins.media_requests import cog
+    assert cog.seasons_label("all") == "All Seasons"
+    assert cog.seasons_label([3, 1]) == "S1, S3"
+    assert cog.seasons_label([3, 1], long=True) == "Season 1, Season 3"
+
+
+def _seasons_field(card):
+    return next(f.value for f in card.embed.fields if f.name == "Seasons")
+
+
+def test_picked_seasons_read_the_same_from_menu_to_admin_card():
+    channel = _Channel()
+
+    async def scenario():
+        view = (await _pick_show(_show(range(1, 31)))).view
+        first, second = [c for c in view.children if isinstance(c, discord.ui.Select)]
+        first._values = ["2"]
+        await first.callback(_Interaction())
+        second._values = ["30"]
+        picked = _Interaction()
+        await second.callback(picked)
+        confirming = _Interaction()
+        await view.submit_button.callback(confirming)
+        await confirming.screen.view.confirm.callback(_Interaction(bot=SimpleNamespace(services=_SERVICES)))
+        return picked.screen.last, confirming.screen.embed.description
+
+    picked, requesting = _run(scenario, channel)
+    assert picked.startswith("**Selected:** S2, S30\n\n"), picked
+    assert requesting == "**Requesting:** Season 2, Season 30", requesting
+    assert _seasons_field(channel.cards[-1]) == "S2, S30"
+
+
+def test_all_seasons_and_latest_with_monitor_read_the_same_on_the_admin_card():
+    channel = _Channel()
+
+    async def scenario():
+        said = []
+        for button in ("All Seasons", "Latest (S5) + Monitor"):
+            view = (await _pick_show(_show(range(1, 6), status="Returning Series"))).view
+            pressed = next(c for c in view.children if getattr(c, "label", None) == button)
+            confirming = _Interaction()
+            await pressed.callback(confirming)
+            await confirming.screen.view.confirm.callback(_Interaction(bot=SimpleNamespace(services=_SERVICES)))
+            said.append(confirming.screen.embed.description)
+        return said
+
+    said = _run(scenario, channel)
+    assert said == ["**Requesting:** All Seasons", "**Selected:** Season 5 + Monitor for new episodes 🔔"], said
+    assert [_seasons_field(card) for card in channel.cards] == ["All Seasons", "S5 🔔 (Monitor enabled)"]

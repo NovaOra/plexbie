@@ -93,6 +93,14 @@ async def no_tvdb_entry(services, tmdb_id) -> bool:
         return False
     return isinstance(tv, dict) and bool(tv.get("name")) and not ((tv.get("externalIds") or {}).get("tvdbId"))
 
+def seasons_label(seasons, long: bool = False) -> str:
+    """A request's seasons as members and admins read them: "All Seasons", or
+    "S1, S2" ("Season 1, Season 2" with long)."""
+    if seasons == "all":
+        return "All Seasons"
+    return ", ".join(f"Season {s}" if long else f"S{s}" for s in sorted(seasons))
+
+
 async def post_media_request(bot, services, user, media: dict, seasons=None, monitor: bool = False, extra: Optional[Dict[str, Any]] = None) -> int:
     """Post the Approve/Decline card for a TV or film request and record it.
 
@@ -118,11 +126,7 @@ async def post_media_request(bot, services, user, media: dict, seasons=None, mon
 
     # For TV shows, add season information
     if media_type == 'tv' and seasons:
-        if seasons == "all":
-            season_text = "All Seasons"
-        else:
-            season_text = ", ".join([f"S{s}" for s in sorted(seasons)])
-
+        season_text = seasons_label(seasons)
         if monitor:
             season_text += " 🔔 (Monitor enabled)"
 
@@ -360,7 +364,7 @@ async def decide_request(bot, services, message_id: int, approve: bool, actor: s
             view = BookAdminApprovalView()
             if not await view._load_from_saved(message_id, bot):
                 return {"ok": False, "message": "Could not load that request."}
-            title = view.book.get('title', 'Unknown')
+            title = view._title()
             if approve:
                 result = await view._approve_core()
                 if not result["download_success"]:
@@ -409,7 +413,49 @@ class MediaTypeSelectView(RequesterOnlyView):
         await interaction.response.send_modal(modal)
 
 
-class TVMovieRequestModal(discord.ui.Modal, title="Request TV Show or Movie"):
+class _SearchModal(discord.ui.Modal):
+    """The /request search box: search for what was typed, then offer a menu of
+    what it found. Each kind gives its title, its search_query text input, what
+    to search (_search) and the menu (_results_view)."""
+    #: How a failed search starts in the log.
+    log_what = "Search"
+
+    def __init__(self, cog: 'MediaRequestsCog'):
+        super().__init__()
+        self.cog = cog
+
+    async def _search(self, query: str) -> List[dict]:
+        raise NotImplementedError
+
+    def _results_view(self, results: List[dict], user_id: int) -> discord.ui.View:
+        raise NotImplementedError
+
+    async def on_submit(self, interaction: discord.Interaction):
+        query = self.search_query.value.strip()
+        await interaction.response.send_message("🔍 Searching...", ephemeral=True)
+
+        try:
+            results = await self._search(query)
+
+            if not results:
+                await interaction.edit_original_response(
+                    content="No results found. Please try a different search term or use `/request` again."
+                )
+                return
+
+            view = self._results_view(results, interaction.user.id)
+            await interaction.edit_original_response(
+                content="**I found these titles:**",
+                view=view
+            )
+        except Exception as e:
+            logger.error(f"{self.log_what} error after modal submit: {e}")
+            await interaction.edit_original_response(
+                content="An error occurred. Please try again later."
+            )
+
+
+class TVMovieRequestModal(_SearchModal, title="Request TV Show or Movie"):
     """Modal for collecting TV/Movie search query"""
     search_query = discord.ui.TextInput(
         label="What would you like to request?",
@@ -418,33 +464,11 @@ class TVMovieRequestModal(discord.ui.Modal, title="Request TV Show or Movie"):
         required=True
     )
 
-    def __init__(self, cog: 'MediaRequestsCog'):
-        super().__init__()
-        self.cog = cog
+    async def _search(self, query: str) -> List[dict]:
+        return await self.cog._search_tmdb(query)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        query = self.search_query.value.strip()
-        await interaction.response.send_message("🔍 Searching...", ephemeral=True)
-
-        try:
-            results = await self.cog._search_tmdb(query)
-
-            if not results:
-                await interaction.edit_original_response(
-                    content="No results found. Please try a different search term or use `/request` again."
-                )
-                return
-
-            view = MediaSelectView(results, interaction.user.id, self.cog.services)
-            await interaction.edit_original_response(
-                content="**I found these titles:**",
-                view=view
-            )
-        except Exception as e:
-            logger.error(f"Search error after modal submit: {e}")
-            await interaction.edit_original_response(
-                content="An error occurred. Please try again later."
-            )
+    def _results_view(self, results: List[dict], user_id: int) -> discord.ui.View:
+        return MediaSelectView(results, user_id, self.cog.services)
 
 
 class MediaSelectView(RequesterOnlyView):
@@ -725,7 +749,7 @@ class SeasonSelectionView(RequesterOnlyView):
 
         picked = sorted({s for seasons in self._picked.values() for s in seasons})
         self.selected_seasons = picked or None
-        seasons_text = ", ".join([f"S{s}" for s in picked]) if picked else "No seasons yet"
+        seasons_text = seasons_label(picked) if picked else "No seasons yet"
 
         # Enable submit button once the member has picked something
         self.submit_button.disabled = not picked
@@ -747,11 +771,7 @@ class SeasonSelectionView(RequesterOnlyView):
             await interaction.response.send_message("Please select at least one season first!", ephemeral=True)
             return
 
-        # Build season text for confirmation
-        if self.selected_seasons == "all":
-            seasons_text = "All Seasons"
-        else:
-            seasons_text = ", ".join([f"Season {s}" for s in sorted(self.selected_seasons)])
+        seasons_text = seasons_label(self.selected_seasons, long=True)
 
         # Show confirmation
         embed = discord.Embed(
@@ -789,8 +809,9 @@ class SeasonSelectionView(RequesterOnlyView):
         )
 
 
-class BookRequestModal(discord.ui.Modal, title="Request Audiobook or Ebook"):
+class BookRequestModal(_SearchModal, title="Request Audiobook or Ebook"):
     """Modal for collecting book search query"""
+    log_what = "Book search"
     search_query = discord.ui.TextInput(
         label="What audiobook or ebook are you looking for?",
         placeholder="Book title or author",
@@ -798,33 +819,11 @@ class BookRequestModal(discord.ui.Modal, title="Request Audiobook or Ebook"):
         required=True
     )
 
-    def __init__(self, cog: 'MediaRequestsCog'):
-        super().__init__()
-        self.cog = cog
+    async def _search(self, query: str) -> List[dict]:
+        return await self.cog._search_open_library(query)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        query = self.search_query.value.strip()
-        await interaction.response.send_message("🔍 Searching...", ephemeral=True)
-
-        try:
-            results = await self.cog._search_open_library(query)
-
-            if not results:
-                await interaction.edit_original_response(
-                    content="No results found. Please try a different search term or use `/request` again."
-                )
-                return
-
-            view = BookSelectView(results, interaction.user.id, self.cog.services)
-            await interaction.edit_original_response(
-                content="**I found these titles:**",
-                view=view
-            )
-        except Exception as e:
-            logger.error(f"Book search error after modal submit: {e}")
-            await interaction.edit_original_response(
-                content="An error occurred. Please try again later."
-            )
+    def _results_view(self, results: List[dict], user_id: int) -> discord.ui.View:
+        return BookSelectView(results, user_id, self.cog.services)
 
 
 class BookSelectView(RequesterOnlyView):
@@ -1015,8 +1014,9 @@ class BookConfirmationView(_ConfirmRequestView):
 
 
 class _RequestApprovalBase(AdminActionView):
-    """What the film/TV and book approval cards share: the error reply, and
-    restoring the request from the database when a button is pressed."""
+    """What the film/TV and book approval cards share: the error reply,
+    restoring the request from the database when a button is pressed, and the
+    Decline."""
 
     async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item):
         logger.error(f"{type(self).__name__} error on {item.custom_id}: {error}", exc_info=True)
@@ -1047,6 +1047,32 @@ class _RequestApprovalBase(AdminActionView):
         """Set the subclass's own fields from the saved record."""
         raise NotImplementedError
 
+    def _title(self) -> str:
+        """The requested title, as the requester is told it."""
+        raise NotImplementedError
+
+    async def _decline(self, interaction: discord.Interaction, what: str) -> None:
+        """The Decline button, for either card ("book" or "media")."""
+        logger.info(f"{what.title()} decline button clicked by {interaction.user} for message {interaction.message.id}")
+        # Answered now: a website decision may hold the lock for longer than Discord waits.
+        await interaction.response.defer()
+        async with _decision_lock(interaction.message.id):
+            if not await _still_pending(interaction):
+                return
+            # Always load from saved
+            # A view of its own for this click: after a restart one persistent view
+            # answers every card, so state kept on it would leak between requests.
+            req = type(self)()
+            if not await req._load_from_saved(interaction.message.id, interaction.client):
+                await interaction.followup.send("❌ Could not find request data.", ephemeral=True)
+                return
+
+            embed = _stamp_decision(interaction.message.embeds[0], approved=False, by=interaction.user.mention)
+            await _edit_card(interaction.message, embed=embed, view=None)
+            # Recorded, not removed: for film/TV, the daily Sonarr/Radarr monitoring reconciliation still reads it.
+            await _after_decision(interaction.client, req.services, interaction.message.id, approved=False, actor=str(interaction.user),
+                                  user_id=req.user_id, title=req._title(), what=what)
+
 
 class BookAdminApprovalView(_RequestApprovalBase):
     """Admin approval buttons for book requests.
@@ -1066,6 +1092,9 @@ class BookAdminApprovalView(_RequestApprovalBase):
 
     def _restore(self, record: Dict[str, Any], message_id: int, bot) -> None:
         self.book = record.get('media', {})
+
+    def _title(self) -> str:
+        return self.book.get('title', 'Unknown')
 
     async def _approve_core(self) -> Dict[str, Any]:
         """Send an approved book to NZBHydra/SABnzbd, per format.
@@ -1104,7 +1133,7 @@ class BookAdminApprovalView(_RequestApprovalBase):
             # Only read when something was sent; nothing sent leaves the card open.
             note = "📥 Sent to SABnzbd for download"
 
-        title = self.book.get('title', 'Unknown')
+        title = self._title()
         if format_type == 'both':
             msg = f"✅ **Your request for **{title}** has been approved!**\n"
             msg += "📖 Ebook: Sent for download\n" if ebook_ok else "📖 Ebook: ⚠️ Not available on indexers\n"
@@ -1165,7 +1194,7 @@ class BookAdminApprovalView(_RequestApprovalBase):
             embed = _stamp_decision(interaction.message.embeds[0], approved=True, by=interaction.user.mention, note=result['note'])
             await _edit_card(interaction.message, embed=embed, view=None)
             await _after_decision(interaction.client, req.services, interaction.message.id, approved=True, actor=str(interaction.user),
-                                  user_id=req.user_id, title=req.book.get('title', 'Unknown'), what="book",
+                                  user_id=req.user_id, title=req._title(), what="book",
                                   user_message=result.get("user_message", ""))
 
         await interaction.followup.send(result["followup_message"], ephemeral=True)
@@ -1363,24 +1392,7 @@ class BookAdminApprovalView(_RequestApprovalBase):
     @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.danger, custom_id="decline_book_request")
     @single_flight
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
-        logger.info(f"Book decline button clicked by {interaction.user} for message {interaction.message.id}")
-        # Answered now: a website decision may hold the lock for longer than Discord waits.
-        await interaction.response.defer()
-        async with _decision_lock(interaction.message.id):
-            if not await _still_pending(interaction):
-                return
-            # Always load from saved
-            # A view of its own for this click: after a restart one persistent view
-            # answers every card, so state kept on it would leak between requests.
-            req = type(self)()
-            if not await req._load_from_saved(interaction.message.id, interaction.client):
-                await interaction.followup.send("❌ Could not find request data.", ephemeral=True)
-                return
-
-            embed = _stamp_decision(interaction.message.embeds[0], approved=False, by=interaction.user.mention)
-            await _edit_card(interaction.message, embed=embed, view=None)
-            await _after_decision(interaction.client, req.services, interaction.message.id, approved=False, actor=str(interaction.user),
-                                  user_id=req.user_id, title=req.book.get('title', 'Unknown'), what="book")
+        await self._decline(interaction, "book")
 
 
 class ConfirmationView(_ConfirmRequestView):
@@ -1465,14 +1477,20 @@ class AdminApprovalView(_RequestApprovalBase):
         # whole-season release exists; seasons nobody has open a "Can't be found"
         # help request for the admins.
         from core import season_search
+        season_search.start(self.services, series["id"], missing, title=self._title(), on_nothing=self._not_found_callback())
+        logger.info(f"Started Sonarr search for {self._title()} season(s) {missing}")
+        return missing
+
+    def _not_found_callback(self):
+        """A season search's on_nothing for this request: opens the "Can't be found"
+        help request for the seasons it found nothing for."""
+        from core import season_search
         bot, key = getattr(self, "_bot", None), getattr(self, "_message_id", None)
 
         async def nothing(seasons):
             if bot is not None:
                 await season_search.open_not_found_help(bot, key, seasons)
-        season_search.start(self.services, series["id"], missing, title=self._title(), on_nothing=nothing)
-        logger.info(f"Started Sonarr search for {self._title()} season(s) {missing}")
-        return missing
+        return nothing
 
     def _follow_up_movie(self, settle: Optional[float] = None) -> None:
         """core/verified_search.follow_up_new_movie for this request: nothing found by
@@ -1614,13 +1632,9 @@ class AdminApprovalView(_RequestApprovalBase):
             # Seerr adds the show to Sonarr; Sonarr's search-on-add skips episodes
             # it thinks haven't aired. Follow up with our own season search.
             from core import season_search
-            bot, key = getattr(self, "_bot", None), getattr(self, "_message_id", None)
-
-            async def nothing(seasons):
-                if bot is not None:
-                    await season_search.open_not_found_help(bot, key, seasons)
             season_search.follow_up_new_show(self.services, tmdb_id=int(self.media["id"]),
-                                             seasons=self._requested_seasons_list(), title=title, on_nothing=nothing,
+                                             seasons=self._requested_seasons_list(), title=title,
+                                             on_nothing=self._not_found_callback(),
                                              on_missing=self._never_reached("Sonarr"))
         if submitted:
             if self._seerr_noop_reason:
@@ -1688,25 +1702,7 @@ class AdminApprovalView(_RequestApprovalBase):
     @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.danger, custom_id="decline_request")
     @single_flight
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
-        logger.info(f"Media decline button clicked by {interaction.user} for message {interaction.message.id}")
-        # Answered now: a website decision may hold the lock for longer than Discord waits.
-        await interaction.response.defer()
-        async with _decision_lock(interaction.message.id):
-            if not await _still_pending(interaction):
-                return
-            # Always load from saved
-            # A view of its own for this click: after a restart one persistent view
-            # answers every card, so state kept on it would leak between requests.
-            req = type(self)()
-            if not await req._load_from_saved(interaction.message.id, interaction.client):
-                await interaction.followup.send("❌ Could not find request data.", ephemeral=True)
-                return
-
-            embed = _stamp_decision(interaction.message.embeds[0], approved=False, by=interaction.user.mention)
-            await _edit_card(interaction.message, embed=embed, view=None)
-            # Recorded, not removed: the daily Sonarr/Radarr monitoring reconciliation still reads it.
-            await _after_decision(interaction.client, req.services, interaction.message.id, approved=False, actor=str(interaction.user),
-                                  user_id=req.user_id, title=req._title(), what="media")
+        await self._decline(interaction, "media")
     
     async def _register_with_tracking(self):
         """Register approved request with media tracking system"""

@@ -10,6 +10,10 @@ Also: a book approval that sent nothing to SABnzbd was recorded as approved and
 closed, so it could never be retried; a failed edit of the admin card skipped
 recording the decision, so the next click submitted the request again; and the
 Seerr arrival check ran as a task nothing held on to.
+
+The film/TV and book cards decline through one shared body (each keeping the
+button ids already-posted cards carry), and both season follow-ups build the
+same "Can't be found" callback, so a fix made to one reaches the other.
 """
 import asyncio
 import logging
@@ -416,3 +420,136 @@ def test_the_arrival_check_after_media_available_is_held_and_its_failure_logged(
     assert len(held) == 1, "nothing holds the running arrival check"
     assert still == [], "a finished check is never let go"
     assert any("plex unreachable" in r.getMessage() for r in records), "the failure went unreported"
+
+
+# ------------------------------------------- one Decline for both cards
+
+def _decline(save, view_name, custom_id):
+    """Decline a pending request from its Discord card, noting each pass through the shared body."""
+    w = _World()
+    base, calls = w.cog._RequestApprovalBase, []
+    shared = getattr(base, "_decline", None)
+
+    async def spy(self, interaction, what):
+        calls.append(what)
+        await shared(self, interaction, what)
+    if shared is not None:
+        w._patches.append((base, "_decline", spy))
+
+    async def scenario():
+        await getattr(w, save)()
+        card = _Message()
+        clicked = await w.press(getattr(w.cog, view_name), custom_id, card)
+        return clicked, card, await w.status()
+
+    clicked, card, status = w.run(scenario)
+    return w, calls, clicked, card, status
+
+
+def test_a_discord_decline_closes_either_card_and_tells_the_requester_once():
+    for save, view_name, custom_id, said in (
+            ("save_film", "AdminApprovalView", "decline_request", "your request for **The Film** was declined"),
+            ("save_book", "BookAdminApprovalView", "decline_book_request", "your book request for **The Book** was declined")):
+        w, _, clicked, card, status = _decline(save, view_name, custom_id)
+        assert status == "declined", view_name
+        assert _buttons_gone(card), view_name
+        assert any(f.name == "❌ Declined by" for f in card.edits[-1]["embed"].fields), view_name
+        assert len(w.dms) == 1 and said in w.dms[0], w.dms
+        assert clicked.said == [], clicked.said
+
+
+def test_both_cards_decline_through_one_shared_body():
+    from plugins.media_requests import cog
+    assert hasattr(cog._RequestApprovalBase, "_decline"), \
+        "the film/TV and book cards each carry their own copy of the Decline body"
+    for save, view_name, custom_id, what in (("save_film", "AdminApprovalView", "decline_request", "media"),
+                                             ("save_book", "BookAdminApprovalView", "decline_book_request", "book")):
+        _, calls, _, _, status = _decline(save, view_name, custom_id)
+        assert calls == [what], (view_name, calls)
+        assert status == "declined"
+
+
+def test_the_website_and_discord_name_a_decided_book_the_same_way():
+    import inspect
+    from plugins.media_requests import cog
+
+    # One rule for a book's title, so the requester hears the same name
+    # whichever side made the decision.
+    assert "book.get('title', 'Unknown')" not in inspect.getsource(cog.decide_request)
+    assert inspect.getsource(cog.BookAdminApprovalView).count("book.get('title', 'Unknown')") == 1, \
+        "the book card spells out its title rule outside _title()"
+
+
+def test_the_card_buttons_keep_the_ids_already_posted_cards_carry():
+    from plugins.media_requests import cog
+
+    async def ids():
+        return ({c.custom_id for c in cog.AdminApprovalView().children},
+                {c.custom_id for c in cog.BookAdminApprovalView().children})
+
+    film, book = asyncio.run(ids())
+    assert film == {"approve_request", "decline_request"}, film
+    assert book == {"approve_book_request", "decline_book_request"}, book
+
+
+# ------------------------------------------- seasons a search found nothing for
+
+def test_a_season_search_that_finds_nothing_opens_a_help_request_from_either_follow_up():
+    import inspect
+    from core import season_search
+    from plugins.media_requests import cog
+
+    assert inspect.getsource(cog.AdminApprovalView).count("open_not_found_help(") == 1, \
+        "the not-found callback is built separately for each follow-up"
+
+    opened, handed = [], {}
+
+    async def open_help(bot, key, seasons):
+        opened.append((bot, key, seasons))
+
+    def start(services, series_id, missing, title, on_nothing):
+        handed["already in Sonarr"] = on_nothing
+
+    def follow_up_new_show(services, tmdb_id, seasons, title, on_nothing, on_missing):
+        handed["new to Sonarr"] = on_nothing
+
+    class Sonarr:
+        async def get(self, path):
+            return {"seasons": [{"seasonNumber": 2, "monitored": True}]}
+
+    async def submitted():
+        return True
+
+    async def nothing_to_restore():
+        return None
+
+    bot = SimpleNamespace()
+    patches = [(season_search, "open_not_found_help", open_help), (season_search, "start", start),
+               (season_search, "follow_up_new_show", follow_up_new_show)]
+    saved = [(owner, name, getattr(owner, name)) for owner, name, _ in patches]
+    for owner, name, value in patches:
+        setattr(owner, name, value)
+
+    async def scenario():
+        view = cog.AdminApprovalView({"id": 456, "media_type": "tv", "name": "The Show"}, 1,
+                                     SimpleNamespace(sonarr=Sonarr()), seasons=[2])
+        view._bot, view._message_id = bot, MID
+        view._submit_to_seerr = submitted
+        view._restore_existing_request_monitoring = nothing_to_restore
+        aired = [{"seasonNumber": 2, "hasFile": False, "airDateUtc": "2000-01-01T00:00:00Z"}]
+        await view._monitor_and_search_seasons({"id": 7, "seasons": []}, [2], aired)
+        await view._fulfill_request()
+        for on_nothing in handed.values():
+            await on_nothing([2])
+        unsaved = cog.AdminApprovalView({"id": 456, "media_type": "tv", "name": "The Show"}, 1,
+                                        SimpleNamespace(sonarr=Sonarr()), seasons=[2])
+        handed.clear()
+        await unsaved._monitor_and_search_seasons({"id": 7, "seasons": []}, [2], aired)
+        await handed["already in Sonarr"]([2])     # no bot to open it with: nothing happens
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        for owner, name, value in saved:
+            setattr(owner, name, value)
+    assert opened == [(bot, MID, [2]), (bot, MID, [2])], opened
