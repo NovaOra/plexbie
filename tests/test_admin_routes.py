@@ -69,6 +69,7 @@ ADMIN_ROUTES = {
     ("POST", "/api/admin/inbox"): "/api/admin/inbox",
     ("POST", "/api/admin/cleanup/settings"): "/api/admin/cleanup/settings",
     ("POST", "/api/admin/cleanup/scan"): "/api/admin/cleanup/scan",
+    ("POST", "/api/admin/sign-out-others"): "/api/admin/sign-out-others",
 }
 
 

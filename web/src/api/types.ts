@@ -234,6 +234,10 @@ export interface IosSource { url: string; sidestore: string; altstore: string }
 
 export interface HealthCheck { name: string; ok: boolean; ms: number; detail?: string | null }
 
+/** Manage → Health → "Sign out every other session": every website and app sign-in but
+ *  the one that pressed it ended; `ended` counts the app ones. */
+export interface SignedOutOthers { ok: boolean; message: string; ended: number }
+
 /* ----------------------------------------------------------- invite links */
 
 /** What someone holding an invite link sees before signing in. */

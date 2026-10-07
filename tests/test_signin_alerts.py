@@ -154,7 +154,8 @@ def test_an_admin_signing_in_with_discord_is_told_by_dm_and_the_admins_once():
     dm, alert = dms[0]["content"], alerts[0]["title"] + " " + alerts[0]["body"]
     for text in (dm, alert):
         assert "Discord" in text and "Firefox on Windows" in text
-        assert "If this wasn't you, sign out on the website and tell the other admins." in text
+        assert "If this wasn't you, press Sign out every other session under Manage → Health" in text
+        assert "tell the other admins." in text
         assert "UTC" in text, "when"
     _no_secrets(_everything(dms, alerts), done.cookies["plexbie_session"].value)
 

@@ -784,6 +784,15 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         r.add_post("/api/admin/cleanup/settings", safe(post_cleanup_settings))
         r.add_post("/api/admin/cleanup/scan", safe(post_cleanup_scan))
 
+        if auth is not None:
+            async def post_sign_out_others(request):
+                """Manage → Health: end every website and app sign-in but this one (portal/auth.py)."""
+                await body(request)
+                user = await admin_only(request)
+                actions.limit(user["user"]["id"], "admin")
+                return await auth.sign_out_others(request)
+            r.add_post("/api/admin/sign-out-others", safe(post_sign_out_others))
+
     if auth is None:
         r.add_get("/api/invite", lambda request: web.json_response({"valid": False}))
     if auth is not None:

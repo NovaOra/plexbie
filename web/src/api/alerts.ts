@@ -138,6 +138,18 @@ export async function forgetThisBrowser(): Promise<boolean> {
   return true;
 }
 
+/** "Sign out every other session" (Manage → Health) turns every browser's alerts off on
+ *  the server, since someone else signed in as this member may have turned some on: the
+ *  browser it was pressed in is still signed in, so it sends its own again at once. */
+export async function sendAgain(who: string): Promise<void> {
+  if (SAMPLE || !("serviceWorker" in navigator)) return;
+  const reg = await navigator.serviceWorker.getRegistration("/");
+  const sub = await reg?.pushManager?.getSubscription().catch(() => null);
+  if (!sub || !ownedBy(who)) return;
+  await post("/push/subscribe", { subscription: sub.toJSON() });
+  markSynced(sub);
+}
+
 export async function sendTest(): Promise<string> {
   if (SAMPLE) return "Sent. It should pop up in a moment.";
   const out = await post("/push/test", {});

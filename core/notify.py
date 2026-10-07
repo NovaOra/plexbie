@@ -325,6 +325,22 @@ async def forget_app_session(session: str) -> None:
         await kv_delete_many(APP_NAMESPACE, gone)
 
 
+async def forget_all_but(session: Optional[str]) -> None:
+    """"Sign out every other session" (portal/auth.py): alerts stop everywhere but on the
+    phones of the one app sign-in still held (`session`, the presser's own on the app).
+    A browser's alerts, and a phone's turned on from the website, belong to an account
+    rather than a sign-in, so those turned on by whoever else signed in as someone can't
+    be told apart from theirs: they all go, and a browser still signed in sends its own
+    again (src/api/alerts.ts). Raises if the store can't be changed."""
+    browsers = list(await kv_get_all(SUBS_NAMESPACE))
+    phones = [k for k, r in (await kv_get_all(APP_NAMESPACE)).items()
+              if not (session and isinstance(r, dict) and r.get("session") == session)]
+    if browsers:
+        await kv_delete_many(SUBS_NAMESPACE, browsers)
+    if phones:
+        await kv_delete_many(APP_NAMESPACE, phones)
+
+
 async def unregister_app(token: Any, *, plex_account_id: Optional[str], discord_id: Optional[str]) -> None:
     """Alerts off on one phone (or it signed out), only if that phone is this member's."""
     if not isinstance(token, str) or not EXPO_TOKEN.fullmatch(token):

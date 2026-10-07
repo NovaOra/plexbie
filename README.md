@@ -675,7 +675,8 @@ so the household can do everything above without Discord:
   Enter) and keep titles forever (one from the countdown, or any film or show
   found by title like `/cleanup exempt add`, leaving out the libraries cleanup
   skips), post as Plexbie, see who brought whom and
-  the live watch party, and check service health. Each command above has its
+  the live watch party, check service health, and sign out every other session
+  (website and app) with a press and hold on Health. Each command above has its
   counterpart there, and both sides run the same code. A new invite link stays
   on Invites ("1 ready" beside it in the section list) until you press Make
   another, even after switching sections; All requests shows 50 at a time, with
@@ -1201,9 +1202,20 @@ docker exec plexbie mv /app/config/watch_streaks.json /app/config/watch_streaks.
   turned alerts on in a browser or the app, with the time, how they signed in and
   roughly the browser or device, but never a token, cookie or address; a member's
   sign-in tells nobody. Owners without linked Discord hear only through those
-  alerts, so turn them on. To end every website sign-in, change
-  `WEB_SESSION_SECRET` (or delete `config/.web_session_secret`) and restart;
-  phone-app sign-ins aren't tied to it and end after 30 days unused.
+  alerts, so turn them on.
+- **A sign-in that wasn't yours: Manage → Health → Sign out every other
+  session.** Any admin can press and hold it. It ends every website and
+  phone-app sign-in except the one you pressed it from (your other browsers and
+  phones too), and app sign-ins still waiting for their last tap, and says how
+  many app sign-ins ended. Everyone else signs in again. Browser and phone
+  alerts stop too, since whoever signed in as you could have turned some on:
+  the browser you pressed it in keeps its own, a browser signed in again sends
+  its own back by itself the next day it shows Plexbie's alerts (or at once,
+  with alerts turned off and on), and the app's are turned on again in the
+  app, as after any sign-out. Then tell the other admins. If you can't reach
+  Manage, change `WEB_SESSION_SECRET` (or delete `config/.web_session_secret`)
+  and restart: that ends every website sign-in, but not phone-app ones, which
+  then end after 30 days unused.
 - `/say` lets any Plexbie admin (Discord administrator, `ADMIN_ROLE_ID` holder
   or `BOT_OWNER_ID`) send a message as the bot. It posts with Plexbie's own
   channel access and its `@everyone`/`@here` pings, so an admin-role holder can

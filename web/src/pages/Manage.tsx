@@ -6,13 +6,14 @@ import {
   AnimatePresence, LayoutGroup, animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useTransform,
 } from "motion/react";
 import {
-  ArrowLeft, Bell, Check, CircleDot, LifeBuoy, CircleAlert, CircleCheck, Copy, Hourglass, Inbox, Link2, ListOrdered, Lock, Mail, MessageCircle, MessageSquare, Radio, Plus, RefreshCw, Search, Share2, ShieldCheck, Ticket, Trash2, UserPlus, X,
+  ArrowLeft, Bell, Check, CircleDot, LifeBuoy, CircleAlert, CircleCheck, Copy, Hourglass, Inbox, Link2, ListOrdered, Lock, LogOut, Mail, MessageCircle, MessageSquare, Radio, Plus, RefreshCw, Search, Share2, ShieldCheck, Ticket, Trash2, UserPlus, X,
 } from "../components/icons";
 import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { api, mayHaveWorked, type Ack } from "../api/client";
 import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, CleanupMatch, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
+import { sendAgain } from "../api/alerts";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
@@ -1568,6 +1569,36 @@ function BlockedList({ checks }: { checks: number }) {
   );
 }
 
+/** Manage → Health: for a sign-in that wasn't an admin's own (the sign-in alerts point
+ *  here), every website and app sign-in but this one ends. Disruptive, so held. */
+function SignOutOthers() {
+  const { toast, readOnly } = useManage();
+  const { session } = useSession();
+  const { busy, act } = useAct();
+  const go = async () => {
+    let ended = 0;
+    const out = await act("sign-out", async () => {
+      const done = await api.signOutOthers();
+      ended = done.ended;
+      return done;
+    }, { failText: "Sign-out didn’t finish" });
+    if (!out) return;
+    // Alerts were turned off everywhere; this browser's own come back now.
+    if (session) void sendAgain(session.user.id).catch(() => undefined);
+    toast({ text: "Signed out everywhere else",
+      detail: `${ended === 1 ? "1 app sign-in" : `${ended} app sign-ins`} ended, and every other website sign-in, with the alerts they had on. You’re still signed in here.` });
+  };
+  return (
+    <section className="section">
+      <div className="m-head"><h2>Sign-ins</h2></div>
+      <div className="m-set-row">
+        <span><b>Sign out every other session</b><span className="muted">For a sign-in that wasn’t you: every website and app sign-in ends except this one, alerts turned on elsewhere stop, and the rest of the household signs in again.</span></span>
+        <HoldButton label="Sign out others" icon={<LogOut size={16} aria-hidden />} ms={1400} disabled={readOnly || busy.has("sign-out")} onConfirm={() => void go()} />
+      </div>
+    </section>
+  );
+}
+
 function HealthTab() {
   const { data, refresh } = useManage();
   const [spinning, setSpinning] = useState(false);
@@ -1606,6 +1637,7 @@ function HealthTab() {
         ))}
       </ul>
     </section>
+    <SignOutOthers />
     </>
   );
 }

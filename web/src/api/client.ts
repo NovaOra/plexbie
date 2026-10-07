@@ -1,4 +1,4 @@
-import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupMatch, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
+import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupMatch, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, SignedOutOthers, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
 import * as sample from "./sample";
 export { DEMO } from "./sample";
 
@@ -207,6 +207,9 @@ export const api = {
     SAMPLE ? sample.answerTicket(requestId, text) : post(`/requests/${enc(requestId)}/help/reply`, { text }),
   requestSearch: (key: string, how: "again" | "episodes" | "name"): Promise<Ack> =>
     SAMPLE ? sample.requestSearch(key, how) : post(`/admin/request/${enc(key)}/search/${how}`),
+  /** Ends every website and app sign-in but this one (for one made in an admin's name). */
+  signOutOthers: (): Promise<SignedOutOthers> =>
+    SAMPLE ? sample.signOutOthers() : post("/admin/sign-out-others"),
   admin: <T,>(section: "requests" | "all" | "tickets" | "joins" | "people" | "cleanup" | "health" | "invites" | "plexinvites" | "discord" | "messages" | "help"): Promise<T> =>
     SAMPLE ? (sample.admin(section) as Promise<T>) : call<T>(`/admin/${section}`),
   logout: (): Promise<void> => (SAMPLE ? sample.logout() : call("/logout", { method: "POST" })),

@@ -79,6 +79,9 @@ KNOWN_SECONDS = SESSION_DAYS * 86400
 KNOWN_MAX = 2000
 #: Sessions signed out on this server, kept until they'd have expired anyway.
 REVOKED = ("web_sessions", "revoked")
+#: Bumped by "Sign out every other session": a website cookie made in an older
+#: generation is refused. Cookies made before there was one count as 0, where it starts.
+GENERATION = ("web_sessions", "generation")
 #: The Plex owner's account id, kept from plex.tv's last answer.
 OWNER_ID = ("web_sessions", "plex_owner_id")
 #: Who the server is shared with, as plex.tv last said, and how long that answer
@@ -93,7 +96,8 @@ SYSTEMS = (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("CrO
 #: The same for the phone app, whose requests name only the phone's HTTP library.
 APP_SYSTEMS = (("okhttp", "an Android phone"), ("Android", "an Android phone"),
                ("CFNetwork", "an iPhone or iPad"), ("Darwin", "an iPhone or iPad"))
-NOT_YOU = "If this wasn't you, sign out on the website and tell the other admins."
+NOT_YOU = ("If this wasn't you, press Sign out every other session under Manage → Health on the website, "
+           "and tell the other admins.")
 #: A sign-in whose admin status couldn't be checked (plex.tv or Discord not answering) is
 #: checked once more after this long: past the five minutes the share list is kept.
 RECHECK_SECONDS = 330
@@ -234,6 +238,7 @@ class Auth:
         self._discord_states: Dict[str, float] = {}   # sign-in states already used, until they'd expire
         self._discord_pause = 0.0                     # Discord said slow down: no calls until then
         self._revoked: Optional[Dict[str, int]] = None
+        self._generation = 0                     # read with the signed-out list (GENERATION)
         self._revoke_lock = asyncio.Lock()       # one sign-out saved at a time, none lost
         self._owner_id: Optional[str] = None
         self._tasks: Set[asyncio.Task] = set()
@@ -276,6 +281,8 @@ class Auth:
         # "typ" names the cookie it was made for: one signing key signs sessions,
         # sign-in flows and invites, and none may be passed off as another.
         payload = {**payload, "typ": name, "exp": int(time.time()) + seconds}
+        if name in (SESSION_COOKIE, CONFIRM_COOKIE):
+            payload["gen"] = self._generation
         # Secure on https only: an https public name must not stop sign-in over the
         # plain LAN address, where a Secure cookie would be dropped.
         secure = self.base_url(request).startswith("https://") if request is not None else self.secure
@@ -306,17 +313,26 @@ class Auth:
         s = self._cookie(request, SESSION_COOKIE)
         if not s or not s.get("id") or (s.get("sid") and s["sid"] in (self._revoked or {})):
             return None
+        if not self._current(s):
+            return None
         return s
 
+    def _current(self, payload: dict) -> bool:
+        """False for a cookie made before the last "Sign out every other session"."""
+        return (payload.get("gen") if isinstance(payload.get("gen"), int) else 0) >= self._generation
+
     async def load_revoked(self) -> None:
-        """Signed-out sessions, so a copied cookie stops working on logout."""
+        """Signed-out sessions, so a copied cookie stops working on logout, and the
+        cookie generation, so one made before "Sign out every other session" does too."""
         if self._revoked is None:
             now = int(time.time())
             try:
                 saved = await kv_get(*REVOKED, {}) or {}
+                generation = await kv_get(*GENERATION, 0)
             except Exception as e:          # no database yet: nothing has been revoked
                 logger.info(f"Signed-out sessions unavailable ({type(e).__name__})")
                 return
+            self._generation = generation if isinstance(generation, int) else 0
             self._revoked = {sid: exp for sid, exp in saved.items() if isinstance(exp, int) and exp > now}
 
     # ---------------------------------------------------- discord sign-in
@@ -438,6 +454,7 @@ class Auth:
             "avatar": me.get("avatar"),
         }
         self._signed_in_from(request, person)
+        await self.load_revoked()           # the cookie carries the current generation
         if app_flow(flow.get("mobile")):
             # From the app: asked to confirm, then a one-time code back to it. No session cookie.
             response = web.HTTPFound(CONFIRM_PATH, headers=PRIVATE)
@@ -698,6 +715,7 @@ class Auth:
             "avatar": None,
         }
         self._signed_in_from(request, person)
+        await self.load_revoked()           # the cookie carries the current generation
         mobile = flow.get("mobile")
         if app_flow(mobile):
             # From the app: no session cookie; an invite it was opened with is accepted
@@ -834,10 +852,11 @@ class Auth:
         link was sent to someone else to approve; plex.tv's address check stops a
         forwarded link, but not another site's page that makes the PIN in their own
         browser (see plex_go)."""
+        await self.load_revoked()
         pending = self._cookie(request, CONFIRM_COOKIE) or {}
         person, mobile = pending.get("person") or {}, pending.get("mobile")
         headers = {**PRIVATE, "Content-Security-Policy": CONFIRM_CSP}
-        if not app_flow(mobile) or not person.get("id"):
+        if not app_flow(mobile) or not person.get("id") or not self._current(pending):
             return web.Response(status=410, content_type="text/html", headers=headers,
                                 text=_page("<p>This sign-in has expired. Start again from the Plexbie app.</p>"))
         name = html.escape(str(person.get("name") or "you"))
@@ -852,10 +871,14 @@ class Auth:
             f"<button name=answer value=no style='{button}background:none;color:#ffd1e4'>Cancel</button></form>"))
 
     async def mobile_confirm(self, request: web.Request) -> web.Response:
-        """The tap on the confirm page: a one-time code for the app, or "denied"."""
+        """The tap on the confirm page: a one-time code for the app, or "denied". A
+        sign-in waiting here when an admin pressed "Sign out every other session" has
+        expired: otherwise the waiting page could make code after code for a while yet."""
+        await self.load_revoked()
         pending = self._cookie(request, CONFIRM_COOKIE) or {}
         person, mobile = pending.get("person") or {}, pending.get("mobile")
-        if not self._same_origin(request) or not app_flow(mobile) or not person.get("id"):
+        if (not self._same_origin(request) or not app_flow(mobile) or not person.get("id")
+                or not self._current(pending)):
             return web.Response(status=410, content_type="text/html", headers={**PRIVATE, "Content-Security-Policy": CONFIRM_CSP},
                                 text=_page("<p>This sign-in has expired. Start again from the Plexbie app.</p>"))
         try:
@@ -984,6 +1007,51 @@ class Auth:
                 self._revoked = revoked
         response = web.json_response({"ok": True})
         self._clear(response, SESSION_COOKIE)
+        return response
+
+    async def sign_out_others(self, request: web.Request) -> web.Response:
+        """Manage → Health's "Sign out every other session" (the route checks it's an
+        admin), for a sign-in someone else made in a household admin's name: every app
+        sign-in but the caller's own ends, and every website cookie made before now is
+        refused. The caller's cookie is made again in the new generation, for the time
+        it had left, so they stay signed in. Alerts stop everywhere but the caller's own
+        app sign-in: whoever else signed in may have turned them on in an admin's name.
+        Says how many app sign-ins ended."""
+        s = self.session(request)
+        if not s:
+            return web.json_response({"error": "Log in first."}, status=401)
+        async with self._revoke_lock:
+            await self.load_revoked()
+            if self._revoked is None:
+                return web.json_response({"error": UNAVAILABLE}, status=503)
+            ended = await self.mobile.revoke_others(s.get("app"))
+            if ended is None:
+                return web.json_response({"error": UNAVAILABLE}, status=503)
+            generation = self._generation + 1
+            try:
+                await kv_set(*GENERATION, generation)
+            except Exception as e:
+                # The app sign-ins are already ended; pressing again ends the website ones.
+                logger.warning(f"Could not save the website sign-out: {type(e).__name__}")
+                return web.json_response({"error": UNAVAILABLE}, status=503)
+            self._generation = generation
+        from core import notify
+        try:
+            await notify.forget_all_but(s.get("app"))
+        except Exception as e:
+            # Everyone else is signed out (so the caller's cookie is renewed below), but
+            # alerts someone else turned on would keep coming: pressing again ends them.
+            logger.warning(f"Could not turn off alerts after signing out every other session: {type(e).__name__}")
+            response = web.json_response({"error": "Everyone else is signed out, but their alerts couldn't be "
+                                                   "turned off. Try again in a moment."}, status=503)
+        else:
+            logger.info(f"{s.get('name') or 'An admin'} signed out every other session; {len(ended)} app sign-ins ended")
+            apps = f"{len(ended)} app sign-in{'' if len(ended) == 1 else 's'}"
+            response = web.json_response({"ok": True, "ended": len(ended),
+                                          "message": f"Signed out every other website sign-in and {apps}."})
+        if not s.get("app"):
+            mine = {k: v for k, v in s.items() if k not in ("typ", "exp", "gen")}
+            self._set(response, SESSION_COOKIE, mine, max(1, int(s.get("exp") or 0) - int(time.time())), request)
         return response
 
     # ------------------------------------------------------------ who is it

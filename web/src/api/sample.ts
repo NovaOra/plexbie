@@ -3,7 +3,7 @@
 // client.ts only reaches this module in a dev build, the private review build,
 // and the public demo (build:demo), which always runs in demo mode below.
 import type {
-  Arrival, BookFormat, Community, LibraryItem, LibraryKind, MediaKind, MediaRequest, ServerStatus, Session, Title,
+  Arrival, BookFormat, Community, LibraryItem, LibraryKind, MediaKind, MediaRequest, ServerStatus, Session, SignedOutOthers, Title,
 } from "./types";
 import raw from "./sampleTitles.json";
 
@@ -171,6 +171,8 @@ export const logout = () => {
   try { localStorage.setItem(KEY, "guest"); } catch { /* private mode */ }
   return wait(undefined, 100);
 };
+export const signOutOthers = () =>
+  wait<SignedOutOthers>({ ok: true, ended: 2, message: "Signed out every other website sign-in and 2 app sign-ins." }, 700);
 
 const libraryOrder = ["Sintel", "King of the Rocket Men", "Coffee Run", "Charge", "The Wonderful Wizard of Oz", "Radar Men from the Moon", "Elephants Dream", "The Daily Dweebs", "Cosmos Laundromat", "Sprite Fright", "Dracula", "The Great Gatsby", "Big Buck Bunny", "Plan 9 from Outer Space", "House on Haunted Hill", "Night of the Living Dead", "Carnival of Souls"];
 

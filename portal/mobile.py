@@ -301,6 +301,28 @@ class MobileSessions:
         self._sessions.setdefault(key, record)
         return False
 
+    async def revoke_others(self, keep: Optional[str]) -> Optional[list]:
+        """End every app sign-in but `keep` (the caller's own, when they're on the app),
+        and every code not yet traded for one. The keys of the live ones it ended, or None
+        if that couldn't be stored, and then every sign-in is kept as it was (the codes
+        stay void: the app only has to start again). Nothing is awaited between the two,
+        so a code traded meanwhile either fails or makes a sign-in that ends here."""
+        await self.load()
+        if self._sessions is None:
+            return None
+        now = time.time()
+        for key in self._codes:
+            self._spent[key] = (now + CODE_SECONDS, None)
+        self._codes.clear()
+        ended = {key: self._sessions.pop(key) for key in [k for k in self._sessions if k != keep]}
+        if not ended:
+            return []
+        if not await self._save():
+            for key, record in ended.items():
+                self._sessions.setdefault(key, record)
+            return None
+        return [key for key, record in ended.items() if self._alive(record, now)]
+
     def _cap(self, now: float, newest: dict) -> dict:
         """Expired sign-ins go; one account keeps at most PER_PERSON (its own oldest
         go first), so nobody signing in over and over can push out anyone else's.
