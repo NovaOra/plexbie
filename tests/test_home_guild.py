@@ -925,6 +925,76 @@ def test_health_flags_public_bot():
     assert "Discord Public Bot" not in unknown
 
 
+# --- who the admins are, and where they talk ---
+
+def test_admin_alerts_reach_the_home_servers_admins_only():
+    """Alerts for the admins go to the bot owner, the household server's Administrators
+    and ADMIN_ROLE_ID holders: never to an Administrator of some other server."""
+    from core.discord_lookup import admin_discord_ids
+    home = SimpleNamespace(id=HOME, members=[FakeMember(1, administrator=True),
+                                             FakeMember(2, roles=[FakeRole(PermConfig.admin_role_id)]), FakeMember(3)])
+    other = SimpleNamespace(id=OTHER, members=[FakeMember(4, administrator=True)])
+    bot = SimpleNamespace(get_guild=lambda gid: {HOME: home, OTHER: other}.get(gid))
+    assert admin_discord_ids(bot, PermConfig) == {"111", "1", "2"}
+    assert admin_discord_ids(bot, NoIdsConfig) == set(), "no server, no owner: nobody"
+
+    class OnlyServer:            # a config with no owner or admin role at all
+        guild_id = HOME
+    assert admin_discord_ids(bot, OnlyServer) == {"1"}
+
+
+def test_admin_alert_recipients_are_worked_out_in_one_place():
+    """A help request, a DM and a background alert all reach the same admins."""
+    import core.discord_lookup as lookup
+    import database.kv_store as kv
+    import portal.actions as actions_module
+    from core import notify
+    pushed = []
+
+    async def push(*, discord_ids, **kw):
+        pushed.append(discord_ids)
+        return 0
+
+    async def no_owner(*a, **k):
+        return None
+
+    def admins(bot, config):
+        return {"7"}
+
+    saved = [(lookup, "admin_discord_ids"), (actions_module, "admin_discord_ids"), (actions_module, "admin_channel"),
+             (notify, "push_to_admins"), (kv, "kv_get")]
+    saved = [(m, name, getattr(m, name)) for m, name in saved]
+    lookup.admin_discord_ids = actions_module.admin_discord_ids = admins
+    actions_module.admin_channel = lambda bot, config: None
+    notify.push_to_admins, kv.kv_get = push, no_owner
+    try:
+        actions = actions_module.Actions(bot=SimpleNamespace(), services=SimpleNamespace(config=PermConfig),
+                                         data=None, public_url="")
+
+        async def go():
+            await actions._tell_admins_about_help({"id": 1, "title": "Sintel", "reason": "Won't play", "who": "Sam"})
+            await actions.alert_admins_about_dm("dm-1", "Sam", "hello")
+            notify.alert_admins_soon(SimpleNamespace(), PermConfig, title="t", body="b", url="/manage", tag="x")
+            while notify._admin_tasks:
+                await asyncio.sleep(0.01)
+        asyncio.run(go())
+    finally:
+        for m, name, value in saved:
+            setattr(m, name, value)
+    assert pushed == [{"7"}, {"7"}, {"7"}], pushed
+
+
+def test_the_admin_channel_is_found_from_the_bot_alone():
+    from core.discord_lookup import admin_channel_of
+    channel = _Channel()
+    config = SimpleNamespace(admin_channel_id=31)
+    bot = SimpleNamespace(services=SimpleNamespace(config=config), get_channel=lambda cid: channel if cid == 31 else None)
+    assert admin_channel_of(bot) is channel
+    assert admin_channel_of(None) is None and admin_channel_of(SimpleNamespace()) is None
+    config.admin_channel_id = None
+    assert admin_channel_of(bot) is None
+
+
 # --- the docs say how it works ---
 
 def test_guild_id_is_documented_as_required_and_never_global():

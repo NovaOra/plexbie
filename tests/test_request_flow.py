@@ -112,7 +112,7 @@ def _run(scenario, channel, *, fail_save=False):
     async def broken_save(*_, **__):
         raise RuntimeError("database is locked")
 
-    patches = [(cog, "_admin_channel", lambda bot, services: channel),
+    patches = [(cog, "require_admin_channel", lambda bot, config: channel),
                (cog, "notify", SimpleNamespace(alert_admins_soon=lambda *a, **k: None))]
     if fail_save:
         patches.append((cog, "save_request", broken_save))
@@ -268,3 +268,20 @@ def test_a_failure_while_showing_the_seasons_is_reported():
     finally:
         cog.SeasonSelectionView = original
     assert screen.last.startswith("❌"), screen.contents
+
+
+def test_a_request_says_why_it_could_not_reach_the_admin_channel():
+    from core.discord_lookup import AdminChannelUnavailable, require_admin_channel
+    from plugins.media_requests import cog
+    assert cog.AdminChannelUnavailable is AdminChannelUnavailable, "callers still catch it from media_requests"
+    nowhere = SimpleNamespace(get_channel=lambda cid: None)
+    for config, said in ((SimpleNamespace(admin_channel_id=None), "Admin channel not configured"),
+                         (SimpleNamespace(admin_channel_id=77), "Admin channel 77 not found")):
+        try:
+            require_admin_channel(nowhere, config)
+        except AdminChannelUnavailable as e:
+            assert str(e) == said, str(e)
+        else:
+            raise AssertionError(f"no error for {config}")
+    channel = _Channel()
+    assert require_admin_channel(SimpleNamespace(get_channel=lambda cid: channel), SimpleNamespace(admin_channel_id=77)) is channel

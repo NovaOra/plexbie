@@ -26,7 +26,7 @@ from typing import Optional
 import discord
 from discord import app_commands
 
-from core.discord_lookup import home_guild, is_household_member
+from core.discord_lookup import admin_channel_of, home_guild, is_household_member
 from core.logging import get_logger
 from core.permissions import deny, is_bot_admin
 from database.kv_store import kv_get, kv_get_all, kv_set
@@ -80,15 +80,9 @@ async def _due(kind: str, who: str, gap: timedelta, now: datetime) -> bool:
     return True
 
 
-def _admin_channel(bot):
-    from core.discord_lookup import admin_channel
-    config = getattr(getattr(bot, "services", None), "config", None)
-    return admin_channel(bot, config) if config else None
-
-
 def threads_ok(bot) -> Optional[str]:
     """None when Plexbie can keep DM threads in the admin channel, else what's missing."""
-    channel = _admin_channel(bot)
+    channel = admin_channel_of(bot)
     guild = getattr(channel, "guild", None)
     if not channel or not guild or not guild.me:
         return None
@@ -101,7 +95,7 @@ def threads_ok(bot) -> Optional[str]:
 async def thread_for(bot, who: str, name: str, *, create: bool = True):
     """The person's thread under the admin channel (made on first use), else the admin
     channel itself when threads aren't allowed, else None."""
-    channel = _admin_channel(bot)
+    channel = admin_channel_of(bot)
     if channel is None:
         return None
     tid = await kv_get(THREADS, who)

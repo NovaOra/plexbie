@@ -21,7 +21,7 @@ from core import notify
 from core.admin_mirror import dm_user_id
 from utils.embeds import truncate_field
 from utils.views import RequesterOnlyView, reply_failure
-from core.discord_lookup import admin_channel
+from core.discord_lookup import AdminChannelUnavailable, require_admin_channel  # callers catch AdminChannelUnavailable from here too
 from database.request_store import (
     SEERR_SOURCES,
     STATUS_APPROVED, STATUS_DECLINED, get_request, mark_resolved, pending_requests, save_request, set_fields,
@@ -93,19 +93,6 @@ async def no_tvdb_entry(services, tmdb_id) -> bool:
         return False
     return isinstance(tv, dict) and bool(tv.get("name")) and not ((tv.get("externalIds") or {}).get("tvdbId"))
 
-class AdminChannelUnavailable(RuntimeError):
-    """The admin channel is unset or the bot cannot see it, so nothing was posted."""
-
-
-def _admin_channel(bot, services):
-    if not services.config.admin_channel_id:
-        raise AdminChannelUnavailable("Admin channel not configured")
-    channel = admin_channel(bot, services.config)
-    if channel is None:
-        raise AdminChannelUnavailable(f"Admin channel {services.config.admin_channel_id} not found")
-    return channel
-
-
 async def post_media_request(bot, services, user, media: dict, seasons=None, monitor: bool = False, extra: Optional[Dict[str, Any]] = None) -> int:
     """Post the Approve/Decline card for a TV or film request and record it.
 
@@ -114,7 +101,7 @@ async def post_media_request(bot, services, user, media: dict, seasons=None, mon
     request's key in the store. Raises AdminChannelUnavailable when it cannot post,
     and whatever stopped the post or the save otherwise.
     """
-    admin_channel = _admin_channel(bot, services)
+    admin_channel = require_admin_channel(bot, services.config)
 
     title = media.get('title') or media.get('name', 'Unknown')
     media_type = media.get('media_type', 'unknown')
@@ -170,7 +157,7 @@ async def post_book_request(bot, services, user, book: dict, extra: Optional[Dic
     Raises AdminChannelUnavailable when it cannot post, and whatever stopped the
     post or the save otherwise.
     """
-    admin_channel = _admin_channel(bot, services)
+    admin_channel = require_admin_channel(bot, services.config)
 
     title = book.get('title', 'Unknown')
     author = book.get('author', 'Unknown Author')
@@ -281,7 +268,7 @@ async def _edit_card(message, **changes) -> None:
 async def _close_admin_card(bot, services, message_id: int, *, approved: bool, by: str, note: str = "") -> None:
     """Mark a request's admin card decided, the way the Discord buttons do."""
     try:
-        message = await _admin_channel(bot, services).fetch_message(int(message_id))
+        message = await require_admin_channel(bot, services.config).fetch_message(int(message_id))
     except Exception as e:
         logger.warning(f"Could not update admin card {message_id}: {e}")
         return

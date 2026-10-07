@@ -206,6 +206,21 @@ async def unsubscribe(endpoint: str, *, plex_account_id: Optional[str], discord_
         await kv_delete(SUBS_NAMESPACE, key)
 
 
+async def _matching(namespace: str, *, plex_account_id: Optional[str], plex_name: Optional[str],
+                    discord_id: Optional[str]) -> List[tuple]:
+    """(key, record) for every browser (SUBS_NAMESPACE) or phone (APP_NAMESPACE) that's
+    this member's, by the rule subscriptions_for gives."""
+    pid = str(plex_account_id) if plex_account_id else None
+    did = str(discord_id) if discord_id else None
+    if (plex_name or pid) and not (pid and did):
+        row = await _row_for(plex_name, pid)
+        if row is not None:
+            pid = pid or (str(row.plex_user_id) if row.plex_user_id else None)
+            did = did or (str(row.discord_id) if row.discord_id else None)
+    return [(k, r) for k, r in (await kv_get_all(namespace)).items() if isinstance(r, dict) and (
+        (pid and r.get("plex_account_id") == pid) or (did and r.get("discord_id") == did))]
+
+
 async def subscriptions_for(*, plex_account_id: Optional[str] = None, plex_name: Optional[str] = None,
                             discord_id: Optional[str] = None) -> List[tuple]:
     """(key, record) for every browser this member turned alerts on in.
@@ -214,20 +229,7 @@ async def subscriptions_for(*, plex_account_id: Optional[str] = None, plex_name:
     through Plexbie's own row of that name, never compared with the name a browser
     signed up under: that's the subscriber's plex.tv username, which anyone can set
     to someone else's ("Kids")."""
-    pid = str(plex_account_id) if plex_account_id else None
-    did = str(discord_id) if discord_id else None
-    if (plex_name or pid) and not (pid and did):
-        row = await _row_for(plex_name, pid)
-        if row is not None:
-            pid = pid or (str(row.plex_user_id) if row.plex_user_id else None)
-            did = did or (str(row.discord_id) if row.discord_id else None)
-    out = []
-    for key, rec in (await kv_get_all(SUBS_NAMESPACE)).items():
-        if not isinstance(rec, dict):
-            continue
-        if (pid and rec.get("plex_account_id") == pid) or (did and rec.get("discord_id") == did):
-            out.append((key, rec))
-    return out
+    return await _matching(SUBS_NAMESPACE, plex_account_id=plex_account_id, plex_name=plex_name, discord_id=discord_id)
 
 
 # --------------------------------------------------------------- senders
@@ -337,15 +339,7 @@ async def apps_for(*, plex_account_id: Optional[str] = None, plex_name: Optional
                    discord_id: Optional[str] = None) -> List[tuple]:
     """(key, record) for every phone this member turned app alerts on in. By account
     id or Discord id only, the same rule as subscriptions_for."""
-    pid = str(plex_account_id) if plex_account_id else None
-    did = str(discord_id) if discord_id else None
-    if (plex_name or pid) and not (pid and did):
-        row = await _row_for(plex_name, pid)
-        if row is not None:
-            pid = pid or (str(row.plex_user_id) if row.plex_user_id else None)
-            did = did or (str(row.discord_id) if row.discord_id else None)
-    return [(k, r) for k, r in (await kv_get_all(APP_NAMESPACE)).items() if isinstance(r, dict) and (
-        (pid and r.get("plex_account_id") == pid) or (did and r.get("discord_id") == did))]
+    return await _matching(APP_NAMESPACE, plex_account_id=plex_account_id, plex_name=plex_name, discord_id=discord_id)
 
 
 def app_push_on() -> bool:
@@ -498,17 +492,11 @@ def alert_admins_soon(bot, config, *, title: str, body: str, url: str, tag: str)
     Expo or web push, and it never raises."""
     async def go():
         try:
-            from core.discord_lookup import home_guild
+            from core.discord_lookup import admin_discord_ids
             from database.kv_store import kv_get as get
             from portal.auth import OWNER_ID
-            ids = {str(config.bot_owner_id)} if getattr(config, "bot_owner_id", None) else set()
-            guild = home_guild(bot, config)
-            for m in (guild.members if guild else []):
-                roles = {r.id for r in m.roles}
-                if m.guild_permissions.administrator or (config.admin_role_id and config.admin_role_id in roles):
-                    ids.add(str(m.id))
             owner = await get(*OWNER_ID)
-            await push_to_admins(discord_ids=ids, plex_account_ids={owner} if owner else set(),
+            await push_to_admins(discord_ids=admin_discord_ids(bot, config), plex_account_ids={owner} if owner else set(),
                                  title=title, body=body, url=url, tag=tag)
         except Exception as e:
             logger.info(f"Couldn't alert the admins ({tag}): {type(e).__name__}")

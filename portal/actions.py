@@ -24,7 +24,7 @@ from core.logging import get_logger
 from database.kv_store import kv_get, kv_get_all, kv_set
 from database.request_store import get_request
 from portal.data import Data
-from core.discord_lookup import admin_channel, home_guild
+from core.discord_lookup import admin_channel, admin_discord_ids, home_guild
 
 
 def discord_escape(text: str) -> str:
@@ -641,13 +641,7 @@ class Actions:
                 await channel.send(embed=embed, **({"view": view} if view else {}))
             except Exception as e:
                 logger.warning(f"Could not post a help request to the admin channel: {e}")
-        guild = home_guild(self.bot, self.config)
-        ids = {str(self.config.bot_owner_id)} if self.config.bot_owner_id else set()
-        if guild:
-            for m in guild.members:
-                roles = {r.id for r in m.roles}
-                if m.guild_permissions.administrator or (self.config.admin_role_id and self.config.admin_role_id in roles):
-                    ids.add(str(m.id))
+        ids = self._admin_ids()
         from database.kv_store import kv_get
         from portal.auth import OWNER_ID
         owner_id = await kv_get(*OWNER_ID)                # the Plex owner's account, as plex.tv said
@@ -998,14 +992,7 @@ class Actions:
         return f"{(self.public_url or '').rstrip('/')}/manage?tab=tickets&ticket={hid}"
 
     def _admin_ids(self) -> set:
-        guild = home_guild(self.bot, self.config)
-        ids = {str(self.config.bot_owner_id)} if self.config.bot_owner_id else set()
-        if guild:
-            for m in guild.members:
-                roles = {r.id for r in m.roles}
-                if m.guild_permissions.administrator or (self.config.admin_role_id and self.config.admin_role_id in roles):
-                    ids.add(str(m.id))
-        return ids
+        return admin_discord_ids(self.bot, self.config)
 
     async def request_search(self, user: dict, key: str, how: str) -> dict:
         """Search again (whole, episode by episode, or by name) straight from a request.

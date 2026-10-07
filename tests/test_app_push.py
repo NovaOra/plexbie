@@ -272,3 +272,22 @@ def test_a_new_request_alerts_the_admins_phones_straight_away():
         expo.close()
     assert [m["to"] for m in expo.sent] == [TOKEN], "only the admin's phone"
     assert expo.sent[0]["title"] == "Sam asked for Sintel" and expo.sent[0]["data"]["url"] == "/manage?tab=requests"
+
+
+def test_a_plex_sign_in_name_never_reaches_another_persons_phone():
+    """Phones are matched the way browsers are: a plex.tv username someone chose
+    ("Kids") must not pick up the phone of the member Plexbie knows by that name."""
+    from database.session import get_session
+    from plugins.user_mgmt.models import PlexUser
+
+    async def body():
+        async with get_session() as s:
+            s.add(PlexUser(plex_username="Kids", plex_user_id=900, discord_id=999))
+            await s.commit()
+        await notify.register_app(TOKEN, "android", plex_account_id=None, plex_name="Kids", discord_id="999")
+        return (await notify.apps_for(plex_account_id="555", plex_name="Kids"),
+                await notify.apps_for(plex_name="Kids"))
+
+    attacker, own = _db(body)
+    assert attacker == [], "a chosen name must not pick up another person's phone"
+    assert len(own) == 1, "Plexbie's own names still resolve"

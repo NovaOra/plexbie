@@ -1,7 +1,8 @@
-"""The home guild and the admin channel, looked up the same way everywhere.
+"""The home guild, the admin channel and the admins, looked up the same way everywhere.
 
 Each returns None when the setting is unset, the bot is missing, or the bot
 can't see it; callers decide what that means for them (skip, log, or refuse).
+require_admin_channel is for callers that refuse: it raises, saying which.
 
 Also how Plexbie works out its household's server when GUILD_ID is blank, and
 what Manage → Health says about the servers it's in.
@@ -52,6 +53,39 @@ async def is_household_member(bot, config, user_id: int, ask: bool = True) -> bo
 def admin_channel(bot, config):
     """The admin channel from the bot's cache, or None."""
     return bot.get_channel(int(config.admin_channel_id)) if (bot and config.admin_channel_id) else None
+
+
+def admin_channel_of(bot):
+    """The admin channel, with the settings taken from the bot itself, or None."""
+    config = getattr(getattr(bot, "services", None), "config", None)
+    return admin_channel(bot, config) if config else None
+
+
+class AdminChannelUnavailable(RuntimeError):
+    """The admin channel is unset or the bot cannot see it, so nothing was posted."""
+
+
+def require_admin_channel(bot, config):
+    """The admin channel, else AdminChannelUnavailable: not configured, or not found."""
+    if not config.admin_channel_id:
+        raise AdminChannelUnavailable("Admin channel not configured")
+    channel = admin_channel(bot, config)
+    if channel is None:
+        raise AdminChannelUnavailable(f"Admin channel {config.admin_channel_id} not found")
+    return channel
+
+
+def admin_discord_ids(bot, config) -> Set[str]:
+    """Discord ids of whoever gets the admins' alerts: the bot owner, and the household
+    server's Administrators and ADMIN_ROLE_ID holders (none while it can't be seen)."""
+    owner = getattr(config, "bot_owner_id", None)
+    role = getattr(config, "admin_role_id", None)
+    ids = {str(owner)} if owner else set()
+    guild = home_guild(bot, config)
+    for m in (guild.members if guild else []):
+        if m.guild_permissions.administrator or (role and role in {r.id for r in m.roles}):
+            ids.add(str(m.id))
+    return ids
 
 
 async def resolve_channel(bot, channel_id: int):

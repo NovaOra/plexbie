@@ -133,7 +133,7 @@ class _World:
             (cog.AdminApprovalView, "_fulfill_request", fulfil),
             (cog.AdminApprovalView, "_register_with_tracking", track),
             (cog, "dm_user_id", dm),
-            (cog, "_admin_channel", lambda bot, services: _Channel(world.card)),
+            (cog, "require_admin_channel", lambda bot, config: _Channel(world.card)),
         ]
 
     def run(self, scenario):
