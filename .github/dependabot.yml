@@ -4,7 +4,9 @@
 # are pinned in constraints.txt as a set that's known to work together; bumping
 # one of those alone (say multidict, under aiohttp) can't install, so every such
 # pull request failed its tests. Refresh constraints.txt from a working image
-# (pip freeze) when a direct update needs newer ones.
+# (pip freeze) when a direct update needs newer ones. pytest's own dependencies
+# aren't in the image: a pytest update may need the section at the end of
+# constraints.txt refreshed too (it says how).
 version: 2
 updates:
   - package-ecosystem: github-actions

@@ -12,12 +12,14 @@ FROM python:3.11-slim@sha256:bab1b7ef4b450c81002278d035eff85ebe394ae94df904f7a3b
 # Set working directory
 WORKDIR /app
 
-# Python packages, at the exact versions in constraints.txt. A compiler is only
-# needed while installing, so it's removed in the same step and never ships.
+# Python packages, at the exact versions in constraints.txt. pip, setuptools and
+# wheel are pinned here too, so every build installs the same ones (bump them by
+# hand). A compiler is only needed while installing, so it's removed in the same
+# step and never ships.
 COPY requirements.txt constraints.txt ./
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc && \
-    pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir pip==26.2.1 setuptools==84.0.0 wheel==0.48.0 -c constraints.txt && \
     pip install --no-cache-dir -r requirements.txt -c constraints.txt && \
     apt-get purge -y gcc && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*

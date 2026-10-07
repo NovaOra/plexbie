@@ -1,5 +1,6 @@
 # Exact versions of what requirements.txt pulls in, from a working image
-# (pip freeze). Used as: pip install -r requirements.txt -c constraints.txt
+# (pip freeze), then pytest's at the end. Used as:
+# pip install -r requirements.txt -c constraints.txt
 aiohappyeyeballs==2.7.1
 aiosignal==1.4.0
 annotated-types==0.8.0
@@ -22,3 +23,13 @@ typing-inspection==0.4.4
 typing_extensions==4.16.0
 urllib3==2.8.0
 yarl==1.25.1
+
+# What requirements-dev.txt adds for pytest (CI's pytest job; never in the image,
+# except packaging, which the Dockerfile's wheel needs too). From pytest's metadata,
+# for Python 3.11 on Linux. An image's pip freeze doesn't list these, so keep this
+# section when refreshing the rest. When a pytest update needs newer ones, take
+# them from pip freeze after pip install -r requirements-dev.txt on Python 3.11.
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+pygments==2.21.0
