@@ -945,7 +945,7 @@ async def download_cover(url: str, dest: Path, cache_dir: Path | None = None) ->
     Only public http(s) hosts are fetched, and only a JPEG, PNG or WebP image
     up to COVER_MAX_BYTES is written (or cached).
     """
-    if dest.exists():
+    if await run_blocking(dest.exists):
         logger.debug(f"Cover already exists: {dest}")
         return True
 
@@ -1170,6 +1170,17 @@ def _usable_folder(path: Path) -> bool:
     the container itself: neither is a mapped volume, so both count as missing.
     """
     return path.is_absolute() and path != Path(path.anchor) and path.is_dir()
+
+
+def _list_watch_dir(path: Path) -> list[Path] | None:
+    """Blocking: the items in a watch folder, hidden files aside, in name order.
+
+    None when the folder is not usable (see _usable_folder). One call for both,
+    so the check and the listing cost a single thread hop.
+    """
+    if not _usable_folder(path):
+        return None
+    return sorted(p for p in path.iterdir() if not p.name.startswith("."))
 
 
 def _item_signature(path: Path) -> tuple:
@@ -1804,10 +1815,16 @@ async def process_item(
     ebook_lib: Path,
     cache_dir: Path | None = None,
     bot=None,
+    expected_signature: tuple | None = None,
 ):
     """
     Process a single download (folder or file) into Audiobookshelf format.
     media_type: 'audiobook' or 'ebook'
+
+    Returns True when filed (or there was nothing to do) and False when it could
+    not be. With expected_signature, returns None when the download changed from
+    it before anything was moved: it is still being written, and should settle
+    again.
 
     Metadata priority (file contents first, folder name last):
       1. Hint file (.plexbie_hint_*.json beside the download, written by the
@@ -1875,7 +1892,7 @@ async def process_item(
             return False
 
     # 1. Find book files first
-    single_file = source_path.is_file()
+    single_file = await run_blocking(source_path.is_file)
     if single_file:
         book_files = [source_path]
         existing_covers = []
@@ -1985,6 +2002,12 @@ async def process_item(
     # 4. Build destination path. A folder holding another book gets a numbered
     # name; one holding this download's own unfinished attempt is reused.
     if not earlier:
+        # Reading the tags and looking the book up can take a while. A download
+        # that changed meanwhile is not finished after all: nothing is moved.
+        if expected_signature is not None and \
+                await run_blocking(_item_signature, source_path) != expected_signature:
+            logger.info(f"Not filed yet: {source_path.name} changed while it was being looked up")
+            return None
         base_dest = build_destination(library, final)
         dest = await run_blocking(_choose_destination, base_dest, source_path)
         if dest != base_dest:
@@ -2092,9 +2115,9 @@ async def process_item(
         await run_blocking(_remove_source, source_path)
 
     # 9. Clean up hint file if used
-    if hint_used and hint_file.exists():
+    if hint_used:
         try:
-            hint_file.unlink()
+            await run_blocking(hint_file.unlink, missing_ok=True)
             logger.debug("Removed hint file after successful processing")
         except Exception:
             pass
@@ -2130,10 +2153,13 @@ async def process_item(
                         embed.add_field(name="Series", value=series_text, inline=True)
                     embed.set_footer(text="Added to Audiobookshelf")
 
-                    # Attach cover image if available
-                    cover_path = dest / "cover.jpg"
-                    if cover_path.exists():
-                        file = discord.File(str(cover_path), filename="cover.jpg")
+                    # Attach cover image if available. Opening it is disk
+                    # access too, so the File is made off the loop.
+                    try:
+                        file = await run_blocking(discord.File, str(dest / "cover.jpg"), filename="cover.jpg")
+                    except OSError:
+                        file = None
+                    if file is not None:
                         embed.set_thumbnail(url="attachment://cover.jpg")
                         await channel.send(embed=embed, file=file)
                     else:
@@ -2242,7 +2268,7 @@ class BookshelfProcessorCog(commands.Cog):
                 self._note_folder(library, f"{media_type} library", await run_blocking(_usable_folder, library))
 
         # Ensure cache directory exists
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        await run_blocking(self.cache_dir.mkdir, parents=True, exist_ok=True)
 
         # Note anything already sitting in the watch dirs, but do NOT process it
         # here - it goes through the same settle wait as anything new. Processing
@@ -2289,11 +2315,7 @@ class BookshelfProcessorCog(commands.Cog):
         seeded = 0
         now = datetime.now()
         for watch_dir in (self.audiobook_watch, self.ebook_watch):
-            if not await run_blocking(_usable_folder, watch_dir):
-                continue
-            for path in sorted(watch_dir.iterdir()):
-                if path.name.startswith("."):
-                    continue
+            for path in await run_blocking(_list_watch_dir, watch_dir) or ():
                 signature = await run_blocking(_item_signature, path)
                 if await run_blocking(_kept_signature, path) == signature:
                     # Filed already, and kept for files that could not be moved.
@@ -2328,7 +2350,8 @@ class BookshelfProcessorCog(commands.Cog):
             (self.audiobook_watch, "audiobook"),
             (self.ebook_watch, "ebook"),
         ]:
-            if not await run_blocking(_usable_folder, watch_dir):
+            items = await run_blocking(_list_watch_dir, watch_dir)
+            if items is None:
                 self._note_folder(watch_dir, f"{media_type} watch", False)
                 continue
             self._note_folder(watch_dir, f"{media_type} watch", True)
@@ -2342,10 +2365,7 @@ class BookshelfProcessorCog(commands.Cog):
                 await run_blocking(_expire_stale_hints, watch_dir)
                 await run_blocking(_expire_orphan_filing_records, watch_dir)
 
-            for path in await run_blocking(lambda d=watch_dir: list(d.iterdir())):
-                if path.name.startswith("."):
-                    continue
-
+            for path in items:
                 path_str = str(path)
                 seen_paths.add(path_str)
                 signature = await run_blocking(_item_signature, path)
@@ -2386,24 +2406,30 @@ class BookshelfProcessorCog(commands.Cog):
             if (now - last_changed).total_seconds() < self.settle_seconds:
                 continue
             path = Path(path_str)
-            if str(path).startswith(str(self.audiobook_watch)):
-                media_type = "audiobook"
-            else:
-                media_type = "ebook"
+            # By the folder it sits in: a string prefix would take an ebook
+            # watch folder such as /watch/books-ebooks for /watch/books.
+            media_type = "audiobook" if path.parent == self.audiobook_watch else "ebook"
             if media_type not in library_ready:
                 library = self.audiobook_lib if media_type == "audiobook" else self.ebook_lib
                 library_ready[media_type] = await run_blocking(_usable_folder, library)
                 self._note_folder(library, f"{media_type} library", library_ready[media_type])
             if not library_ready[media_type]:
                 continue
-            settled.append((path, media_type, last_changed))
+            settled.append((path, media_type, signature, last_changed))
             del self.pending[path_str]
 
-        for path, media_type, last_changed in settled:
+        for path, media_type, signature, last_changed in settled:
             library = self.audiobook_lib if media_type == "audiobook" else self.ebook_lib
             if not library_ready[media_type]:
                 # Gone while an earlier item in this batch was being filed.
                 self.pending[str(path)] = (await run_blocking(_item_signature, path), last_changed)
+                continue
+            # Filing an earlier item can take minutes, and a download that
+            # resumed meanwhile is not finished after all: it settles again.
+            current = await run_blocking(_item_signature, path)
+            if current != signature:
+                self.pending[str(path)] = (current, datetime.now())
+                logger.debug(f"{path.name} changed while waiting to be filed, settle timer reset")
                 continue
             try:
                 processed = await process_item(
@@ -2411,22 +2437,29 @@ class BookshelfProcessorCog(commands.Cog):
                     self.audiobook_lib, self.ebook_lib,
                     cache_dir=self.cache_dir,
                     bot=self.bot,
+                    expected_signature=current,
                 )
             except Exception as e:
                 logger.error(f"Failed to process {media_type} {path.name}: {e}", exc_info=True)
                 processed = False
 
-            if not processed and path.exists() and not await run_blocking(_usable_folder, library):
+            if processed is None:
+                # Changed while it was being looked up: it settles again.
+                self.pending[str(path)] = (await run_blocking(_item_signature, path), datetime.now())
+                continue
+
+            still_there = await run_blocking(path.exists)
+            if not processed and still_there and not await run_blocking(_usable_folder, library):
                 # The library went away while this batch was being filed: the
                 # item waits for it like any other, rather than counting as failed.
                 library_ready[media_type] = False
                 self._note_folder(library, f"{media_type} library", False)
                 self.pending[str(path)] = (await run_blocking(_item_signature, path), last_changed)
-            elif processed and path.exists():
+            elif processed and still_there:
                 # Filed, and kept for files that could not be moved in beside the
                 # book (already logged): it holds no book, so leave it be.
                 self.failed[str(path)] = await run_blocking(_item_signature, path)
-            elif not processed and path.exists():
+            elif not processed and still_there:
                 # Record the failure against the item as processing left it, so
                 # it is not reprocessed (and re-logged) on every scan forever.
                 # One empty folder previously produced 30,931 processing cycles

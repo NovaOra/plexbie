@@ -17,6 +17,7 @@ Regression coverage for these defects:
     downloads. A pack of several ebooks was filed as one book.
 """
 import asyncio
+import builtins
 import contextlib
 import errno
 import inspect
@@ -25,6 +26,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1037,6 +1039,177 @@ def test_moves_and_destination_choice_run_off_the_event_loop():
     assert "run_blocking(_read_filing_record" in source
     assert "_place_book(" not in source, "never called on the loop itself"
     assert "failed_moves" not in source
+
+
+@contextlib.contextmanager
+def _disk_calls_on_the_loop():
+    """Record each Path call the bookshelf module makes on the event loop thread,
+    and each file opened there by anything (a discord.File opens its file).
+
+    The watch and library folders sit on array disks that spin down, so even a
+    stat can hold up the loop (and the gateway heartbeat) for seconds.
+    """
+    calls = []
+    real_open = builtins.open
+
+    def opening(file, *args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            calls.append(f"open({os.path.basename(str(file))})")
+        return real_open(file, *args, **kwargs)
+
+    names = ("exists", "is_file", "is_dir", "iterdir", "mkdir", "unlink", "stat",
+             "glob", "rglob", "open", "read_bytes", "write_bytes", "read_text", "write_text")
+    real = {name: getattr(Path, name) for name in names}
+
+    def wrap(name):
+        def call(self, *args, **kwargs):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                pass  # a worker thread
+            else:
+                if sys._getframe(1).f_code.co_filename == shelf.__file__:
+                    calls.append(f"{name}({self.name})")
+            return real[name](self, *args, **kwargs)
+        return call
+
+    for name in names:
+        setattr(Path, name, wrap(name))
+    builtins.open = opening
+    try:
+        yield calls
+    finally:
+        builtins.open = real_open
+        for name, method in real.items():
+            setattr(Path, name, method)
+
+
+def test_the_watcher_and_filing_touch_the_disks_only_off_the_event_loop():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        (source / "folder.jpg").write_bytes(b"\xff\xd8\xff" + b"x" * 6000)
+        cover = Path(tmp) / "cover.jpg"
+        cover.write_bytes(b"\xff\xd8\xff" + b"x" * 2000)
+        cog = _bare_cog(source.parent, lib, tmp)
+        cog.scan_loop = SimpleNamespace(start=lambda: None)
+        settled = datetime.now() - timedelta(seconds=300)
+        with _recorded_dms() as dms, _disk_calls_on_the_loop() as calls:
+            asyncio.run(cog.cog_load())
+            assert str(source) in cog.pending
+            cog.pending = {key: (signature, settled) for key, (signature, _) in cog.pending.items()}
+            asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+            assert asyncio.run(shelf.download_cover("https://covers.example/1.jpg", cover)) is True
+        assert not source.exists() and not hint.exists() and dms == ["42"], "filed"
+        files = [post["file"] for post in cog.bot.channel.sent]
+        assert [file.filename for file in files] == ["cover.jpg"], "announced with its cover"
+        for file in files:
+            file.close()
+        assert calls == [], calls
+
+
+def test_an_ebook_watch_folder_named_like_the_audiobook_one_still_holds_ebooks():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        audiobooks, ebooks = root / "books", root / "books-ebooks"
+        audiobooks.mkdir()
+        item = ebooks / "Ann Author - The Book"
+        item.mkdir(parents=True)
+        (item / "The Book.epub").write_bytes(b"epub" * 100)
+        cog = _bare_cog(audiobooks, root / "lib_a", tmp)
+        cog.ebook_watch = ebooks
+        cog.audiobook_lib.mkdir()
+        cog.ebook_lib.mkdir()
+        cog.pending = {str(item): (shelf._item_signature(item), datetime.now() - timedelta(seconds=300))}
+
+        calls = []
+        real = shelf.process_item
+
+        async def recording(path, media_type, *args, **kwargs):
+            calls.append((path, media_type))
+            return False
+
+        shelf.process_item = recording
+        try:
+            asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        finally:
+            shelf.process_item = real
+        assert calls == [(item, "ebook")], calls
+
+
+def test_a_download_that_changes_while_another_is_filed_waits_again():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        other = source.parent / "Bea Writer - Second Book"
+        shutil.copytree(source, other)
+        cog = _bare_cog(source.parent, lib, tmp)
+        settled = datetime.now() - timedelta(seconds=300)
+        cog.pending = {str(p): (shelf._item_signature(p), settled) for p in (source, other)}
+
+        calls = []
+        real = shelf.process_item
+
+        async def filing(path, *args, **kwargs):
+            calls.append(path)
+            if len(calls) == 1:
+                # The other download picks up again while this one is filed.
+                (other / "CD2" / "02.mp3").write_bytes(DISC2)
+            shutil.rmtree(path)
+            return True
+
+        shelf.process_item = filing
+        try:
+            asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+            assert calls == [source], "the changed download is not filed in the same pass"
+            signature, last_changed = cog.pending[str(other)]
+            assert signature == shelf._item_signature(other)
+            assert (datetime.now() - last_changed).total_seconds() < 60, "its settle wait starts over"
+            assert str(other) not in cog.failed
+
+            cog.pending[str(other)] = (signature, settled)
+            asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        finally:
+            shelf.process_item = real
+        assert calls == [source, other], "filed once it has settled again"
+
+
+def test_a_download_that_changes_while_it_is_looked_up_is_not_moved():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        hint.unlink()
+        cog = _bare_cog(source.parent, lib, tmp)
+        settled = datetime.now() - timedelta(seconds=300)
+        cog.pending = {str(source): (shelf._item_signature(source), settled)}
+
+        lookups = []
+        real_fetch = shelf.fetch_metadata
+
+        async def lookup(author, title, isbn=None):
+            lookups.append(title)
+            if len(lookups) == 1:
+                # The download picks up again while the book is looked up.
+                (source / "CD2" / "02.mp3").write_bytes(DISC2)
+            return {}
+
+        shelf.fetch_metadata = lookup
+        try:
+            with _recorded_dms() as dms:
+                asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+                assert lookups and not list(lib.rglob("*")), "nothing is moved"
+                assert (source / "CD1" / "01.mp3").exists() and dms == []
+                signature, last_changed = cog.pending[str(source)]
+                assert signature == shelf._item_signature(source)
+                assert (datetime.now() - last_changed).total_seconds() < 60, "its settle wait starts over"
+                assert str(source) not in cog.failed
+
+                cog.pending[str(source)] = (signature, settled)
+                asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        finally:
+            shelf.fetch_metadata = real_fetch
+        assert not source.exists() and len(list(lib.rglob("*.mp3"))) == 3, "filed once it has settled again"
 
 
 # --- what a hint may carry ------------------------------------------------------

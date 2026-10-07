@@ -258,7 +258,10 @@ who's watching from one place instead of five.
   already off and whose newest request is over 90 days old as one it turned
   off.) In practice mode it only reports what it would change.
 - Audiobook and ebook downloads are watched, waited on until they stop changing,
-  then renamed and filed into an Audiobookshelf-shaped library. A multi-disc
+  then renamed and filed into an Audiobookshelf-shaped library. Each one is
+  checked again when its turn comes and once more after its details are looked
+  up, before anything is moved: a download that changed meanwhile is left where
+  it is and waits out the settle time again. A multi-disc
   release whose tracks share names (`CD1/01.mp3`, `CD2/01.mp3`) is filed as
   `Disc 01 - 01.mp3`, `Disc 02 - 01.mp3`, so no track replaces another. If any
   file can't be moved, everything already moved is put back, the download and
