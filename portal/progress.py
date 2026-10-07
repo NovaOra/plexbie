@@ -271,7 +271,8 @@ class Progress:
             # Downloaded, but Sonarr/Radarr won't import it by themselves (core/blocked_imports):
             # an admin has to look at it, so it isn't "Adding to Plex".
             return {"stage": "importing", "percent": 100, "detail": "Downloaded. An admin needs to check it before it goes to Plex",
-                    "problem": f"Import blocked: {blocked}" if blocked else "Import blocked: Sonarr or Radarr won't import it by itself"}
+                    "problem": "It didn't pass the automatic checks. The admins have been told.",
+                    "adminProblem": f"Import blocked: {blocked}" if blocked else "Import blocked: Sonarr or Radarr won't import it by itself"}
         elif finished == len(groups) or (states & {"importPending", "importing", "imported"} and left <= 0):
             return {"stage": "importing", "percent": 100, "detail": "Downloaded, moving it onto Plex"}
 
@@ -288,10 +289,15 @@ class Progress:
         else:
             when = Progress._time_left(eta_text)
         detail = ", ".join(x for x in (what, when) if x) or None
+        problem = problem if problem not in (None, "ok") else None
+        # Sonarr's or Radarr's own words (release names, server paths) are for the admins:
+        # the member who asked gets a plain sentence (Data.request_row).
+        raw = problem if problem and not failed else None
         return {
             "stage": "downloading", "percent": pct, "eta": eta,
             "detail": detail[0].upper() + detail[1:] if detail else None,
-            "problem": problem if problem not in (None, "ok") else None,
+            "problem": "There's a problem with the download. The admins can see what it is." if raw else problem,
+            **({"adminProblem": raw} if raw else {}),
         }
 
     # ----------------------------------------------------------------- plex

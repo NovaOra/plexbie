@@ -1292,12 +1292,15 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
   const files = (p?.files ?? []).map((f) => {
     const c = picks[f.name] ?? { name: f.name };
     const episodeIds = c.episodeIds ?? (series ? [] : f.episodes.map((e) => e.id));
-    const movie = c.movieId ? { id: c.movieId } : f.movie;
-    return { f, c, skip: !!c.skip, episodeIds, placed: tv ? episodeIds.length > 0 : !!movie?.id };
+    const movie = c.movieId ? { id: c.movieId, title: (c as BlockedChoice & { movieLabel?: string }).movieLabel } : f.movie;
+    return { f, c, skip: !!c.skip, episodeIds, movie, placed: tv ? episodeIds.length > 0 : !!movie?.id };
   });
+  // Two files as one episode, or as one film (Radarr keeps one file per film: CD1 and CD2, or a sample).
   const used = new Map<number, number>();
-  files.filter((x) => !x.skip).forEach((x) => x.episodeIds.forEach((id) => used.set(id, (used.get(id) ?? 0) + 1)));
-  const doubled = [...used].filter(([, n]) => n > 1).map(([id]) => episodes.find((e) => e.id === id)?.label ?? "an episode");
+  files.filter((x) => !x.skip).forEach((x) => (tv ? x.episodeIds : x.movie?.id ? [x.movie.id] : [])
+    .forEach((id) => used.set(id, (used.get(id) ?? 0) + 1)));
+  const doubled = [...used].filter(([, n]) => n > 1).map(([id]) => tv ? episodes.find((e) => e.id === id)?.label ?? "an episode"
+    : files.find((x) => x.movie?.id === id)?.movie?.title ?? "the same film");
   const going = files.filter((x) => !x.skip);
   const unplaced = going.filter((x) => !x.placed);
   const blocker = !going.length ? "Every file is skipped." : unplaced.length ? `Pick which ${tv ? "episode" : "film"} ${unplaced[0].f.name} is, or skip it.`

@@ -545,9 +545,14 @@ class Data:
                 logger.info(f"portal: Seerr didn't say whether request {rid} is still there: {e}")
         return None
 
-    async def request_row(self, key: str, rec: dict, open_help: Dict[str, dict], books: Dict[str, Any]) -> dict:
+    #: What of a request's live progress its member sees (none of Plexbie's own marks).
+    MEMBER_PROGRESS = ("percent", "eta", "detail", "problem", "partial", "seasons", "releaseDate", "releaseKind")
+
+    async def request_row(self, key: str, rec: dict, open_help: Dict[str, dict], books: Dict[str, Any],
+                          admin: bool = False) -> dict:
         """One request as members see it: its title, live stage and progress. Shared by
-        My requests and the admins' All requests. `books` caches the shelf between rows."""
+        My requests and the admins' All requests. `books` caches the shelf between rows.
+        With `admin`, a problem is in Sonarr's or Radarr's own words."""
         from portal import help as helpdesk
         media = rec.get("media") or {}
         is_book = rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media
@@ -602,6 +607,12 @@ class Data:
         seasons = rec.get("seasons")
         if rec.get("monitor") and isinstance(seasons, list) and len(seasons) == 1:
             seasons = "latest"
+        progress = {k: v for k, v in live.items() if k != "stage"}
+        if admin:
+            if progress.get("adminProblem"):
+                progress["problem"] = progress.pop("adminProblem")
+        else:
+            progress = {k: v for k, v in progress.items() if k in self.MEMBER_PROGRESS}
         return {
             "id": key,
             "slot": rec["_slot"],
@@ -610,7 +621,7 @@ class Data:
             if key in open_help else None,
             "title": title,
             "stage": stage,
-            "progress": {k: v for k, v in live.items() if k != "stage"} or None,
+            "progress": progress or None,
             "requestedAt": _iso(rec.get("timestamp")),
             "updatedAt": _iso(rec.get("resolved_at") or rec.get("timestamp")),
             "seasons": seasons if not is_book else None,

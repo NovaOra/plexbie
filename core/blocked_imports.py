@@ -239,15 +239,15 @@ async def do_import(services, app: str, download_id: str, choices: Optional[List
     would, with the admin's choices for each file (`choices`: name, skip, seriesId,
     episodeIds / movieId, qualityId, languageIds, releaseGroup). Every choice is checked
     against Sonarr/Radarr; a program in the download, an unplaced file or two files as
-    one episode refuse it."""
+    one episode or film refuse it. With `choices`, they must name every file now in it: one
+    that turned up after the admin looked isn't imported unseen."""
     p = await preview(services, app, download_id)
     client = _client(services, app)
     thing = "episode" if app == "sonarr" else "film"
     if not p["ok"]:
         raise ValueError("Not importing this one from Plexbie: " + (p["warnings"][-1] if p["warnings"] else "nothing in it can be imported."))
     by_name = {c.get("name"): c for c in choices or [] if isinstance(c, dict)}
-    unknown = set(by_name) - {f["name"] for f in p["files"]}
-    if unknown:
+    if choices is not None and set(by_name) != {f["name"] for f in p["files"]}:
         raise ValueError("The download changed since you looked at it. Look again.")
     qualities = {q["id"]: q for q in p["options"]["qualities"]}
     languages = {x["id"]: x for x in p["options"]["languages"]}
@@ -298,6 +298,10 @@ async def do_import(services, app: str, download_id: str, choices: Optional[List
                 movie_ids = movie_ids or {m.get("id") for m in await client.movies()}
                 if movie_id not in movie_ids:
                     raise ValueError("That film isn't in Radarr.")
+            # Radarr keeps one file per film: CD1 and CD2, or a sample, as the same film would lose one.
+            if movie_id in claimed:
+                raise ValueError(f"{claimed[movie_id]} and {f['name']} are both set as the same film.")
+            claimed[movie_id] = f["name"]
             entry["movieId"] = movie_id
         files.append(entry)
     if not files:
@@ -345,17 +349,22 @@ async def check(bot, services) -> None:
             continue
         app_name = "Sonarr" if item["app"] == "sonarr" else "Radarr"
         why = item["messages"][0] if item["messages"] else "it wasn't sure of the files"
-        note = (f"{item['title']} finished downloading, but {app_name} won't import it by itself: {why} "
-                "Look at the files on this ticket before you import it: a blocked import can be the wrong "
+        look = ("Look at the files on this ticket before you import it: a blocked import can be the wrong "
                 "episode, the wrong film, or something that shouldn't be there.")
+        note = f"{item['title']} finished downloading, but {app_name} won't import it by itself: {why} {look}"
         blocked_ref = {"app": item["app"], "downloadId": item["downloadId"]}
         req = await _request_for(item)
         h = None
         if req:
-            h = await season_search.open_help(bot, req, seasons=None, reason="blocked", note=note,
-                                              status_now="Downloaded, import blocked")
+            # A new ticket's first entry is shown to the member who asked: what Sonarr or
+            # Radarr said (release names, server paths) and what to check go on an entry
+            # only admins see. The admin channel still hears all of it.
+            h = await season_search.open_help(bot, req, seasons=None, reason="blocked",
+                                              note=f"{item['title']} finished downloading, but {app_name} won't import it by itself. An admin will check it.",
+                                              status_now="Downloaded, import blocked", admin_note=note)
             if h:
-                await helpdesk.add(h["id"], "action", "Plexbie", "", blocked=blocked_ref)
+                await helpdesk.add(h["id"], "action", "Plexbie",
+                                   (f"{app_name} says: {why} " if item["messages"] else "") + look, blocked=blocked_ref)
             else:
                 # A ticket's already open on it: this goes on that one.
                 open_one = next(iter((await helpdesk.open_for({str(req)})).values()), None)

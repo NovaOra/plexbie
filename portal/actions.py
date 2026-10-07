@@ -658,7 +658,7 @@ class Actions:
             logger.warning(f"Help request {h['id']} saved, but telling the admins failed: {type(e).__name__}: {e}")
         return {"ok": True, "message": "Sent. An admin will take a look and get back to you.", "help": {"id": h["id"], "reason": h["reason"]}}
 
-    async def _tell_admins_about_help(self, h: dict) -> None:
+    async def _tell_admins_about_help(self, h: dict, note: Optional[str] = None) -> None:
         import discord
         from core import notify
         seasons = h.get("seasons")
@@ -668,7 +668,7 @@ class Actions:
         if channel:
             opened = h.get("opened_by")
             embed = discord.Embed(title=f"{'🛠️ Ticket opened' if opened else '🆘 Help asked'} on {number}: {what}", color=discord.Color.orange(),
-                                  description=f"**{h['reason']}**" + (f"\n> {h['note']}" if h.get("note") else ""))
+                                  description=f"**{h['reason']}**" + (f"\n> {note or h['note']}" if note or h.get("note") else ""))
             if opened:
                 embed.add_field(name="Opened by", value=opened, inline=True)
                 embed.add_field(name="Requested by", value=h["who"], inline=True)

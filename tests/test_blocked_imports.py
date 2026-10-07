@@ -84,10 +84,11 @@ GOOD = [("East.Of.Eden.S01E01.mkv", 9 * 2**30, 1), ("East.Of.Eden.S01E02.mkv", 9
 def test_a_blocked_download_opens_a_ticket_once_and_closes_it_when_imported():
     from core import season_search
     from portal import help as helpdesk
-    opened = []
+    opened, told = [], []
 
-    async def open_help(bot, key, *, seasons, reason, note, status_now, offer=None):
-        assert reason == "blocked" and "won't import it by itself" in note and "Look at the files" in note
+    async def open_help(bot, key, *, seasons, reason, note, status_now, offer=None, admin_note=None):
+        assert reason == "blocked" and "won't import it by itself" in note and "Look at the files" not in note
+        told.append(admin_note)
         h = await helpdesk.create(request_key=str(key), slot=1, title="East of Eden", kind="tv", seasons=None,
                                   user={"user": {"name": "Sam"}}, reason=helpdesk.PLEXBIE_REASONS[reason],
                                   note=note, status_now=status_now)
@@ -114,6 +115,49 @@ def test_a_blocked_download_opens_a_ticket_once_and_closes_it_when_imported():
             season_search.open_help = saved
     h = _db(body)
     assert len(opened) == 1 and h["status"] == "resolved"
+    said = "release was matched to series by ID"
+    assert said not in str(helpdesk.member_view(h)), "Sonarr's own words are for the admins"
+    assert "Look at the files" not in str(helpdesk.member_view(h)), "what to check is for the admins"
+    assert any(said in e["text"] and "Look at the files" in e["text"] and e["kind"] == "action"
+               for e in helpdesk.thread_of(h))
+    assert said in told[0] and "Look at the files" in told[0], "the admin channel still hears what Sonarr said"
+
+
+def test_the_admins_are_told_what_the_member_isnt():
+    """The ticket's first entry is the member's; the admin channel hears the admin note,
+    with or without the website running."""
+    from types import SimpleNamespace
+
+    from core import season_search
+    from portal import help as helpdesk
+    sent, told = [], []
+
+    class Channel:
+        async def send(self, text):
+            sent.append(text)
+
+    class Actions:
+        async def _tell_admins_about_help(self, h, note=None):
+            told.append(note)
+
+    config = SimpleNamespace(admin_channel_id=5)
+
+    async def body():
+        from database.kv_store import kv_set
+        from database.request_store import REQUESTS_NAMESPACE
+        for key in ("1001", "1002"):
+            await kv_set(REQUESTS_NAMESPACE, key, {"status": "approved", "media": {"id": 555, "media_type": "tv", "name": "East of Eden"}})
+        site = SimpleNamespace(portal_actions=Actions())
+        no_site = SimpleNamespace(services=SimpleNamespace(config=config), get_channel=lambda cid: Channel() if cid == 5 else None)
+        hs = []
+        for bot, key in ((site, 1001), (no_site, 1002)):
+            hs.append(await season_search.open_help(bot, key, seasons=None, reason="blocked", note="An admin will check it.",
+                                                    status_now="Downloaded, import blocked", admin_note="Sonarr says: matched by ID"))
+        return hs
+    hs = _db(body)
+    assert all("matched by ID" not in str(helpdesk.member_view(h)) for h in hs)
+    assert told == ["Sonarr says: matched by ID"]
+    assert len(sent) == 1 and "matched by ID" in sent[0] and "An admin will check it" not in sent[0]
 
 
 def test_the_preview_shows_what_looks_off_and_import_goes_through_sonarr():
@@ -160,7 +204,46 @@ def test_a_blocked_download_is_a_problem_not_adding_to_plex():
     from portal.progress import Progress
     live = Progress._downloading([{"downloadId": "d", "size": 100, "sizeleft": 0, "trackedDownloadState": "importBlocked",
                                    "statusMessages": [{"messages": ["Matched to series by ID."]}]}], {"d": {"_done": "Completed"}})
-    assert live["stage"] == "importing" and live["problem"] == "Import blocked: Matched to series by ID."
+    assert live["stage"] == "importing" and live["adminProblem"] == "Import blocked: Matched to series by ID."
+    assert "Matched" not in live["problem"]
+
+
+def test_members_see_a_plain_sentence_not_what_sonarr_said():
+    """Sonarr's and the download client's own words carry release names and server paths.
+    The admins see them on All requests; the member who asked sees a plain sentence."""
+    from core.config import Config
+    from database.request_store import mark_resolved, save_request
+    from helpers import FakeServices
+    from portal.admin import Admin
+    from portal.data import Data
+    from portal.progress import Progress
+    data = Data(FakeServices(Config()))
+    said = {
+        "Blocked": Progress._downloading([{"downloadId": "b", "size": 100, "sizeleft": 0, "trackedDownloadState": "importBlocked",
+                                           "statusMessages": [{"messages": ["/data/usenet/complete/East.Of.Eden.S01-GRP: matched by ID"]}]}],
+                                         {"b": {"_done": "Completed"}}),
+        "Warned": Progress._downloading([{"downloadId": "w", "size": 100, "sizeleft": 50, "trackedDownloadStatus": "warning",
+                                          "errorMessage": "Unpacking failed in /data/usenet/incomplete/Night.Train-GRP"}], {}),
+    }
+
+    async def video(media, seasons):
+        return {**said[media["name"]], "plexKey": "11509"}
+    data.progress.video = video
+
+    async def body():
+        for key, name in ((1, "Blocked"), (2, "Warned")):
+            await save_request(key, user_id=7, media={"id": key, "media_type": "tv", "name": name}, seasons=[1])
+            await mark_resolved(key, "approved", "Sam")
+        return await data.my_requests(7), await Admin(data).all_requests()
+    mine, listed = _db(body)
+    for r in mine:
+        progress = r["progress"]
+        assert "/data" not in str(progress) and "GRP" not in str(progress), progress
+        assert progress["problem"] and set(progress) <= {"percent", "eta", "detail", "problem", "partial", "seasons",
+                                                         "releaseDate", "releaseKind"}
+    admin = {r["title"]["title"]: r for r in listed["rows"]}
+    assert "East.Of.Eden.S01-GRP" in admin["Blocked"]["progress"]["problem"]
+    assert any("Night.Train-GRP" in s for s in admin["Warned"]["stuck"])
 
 
 def _import(files, choices):
@@ -186,21 +269,78 @@ def test_a_file_sonarr_couldnt_place_is_imported_once_an_admin_picks_its_episode
     files = GOOD + [("Extras.mkv", 2 * 2**30, 0)]
     refused, none = _import(files, None)
     assert "Pick which episode Extras.mkv is" in refused and not none
-    message, commands = _import(files, [{"name": "Extras.mkv", "episodeIds": [903]}])
+    as_seen = [{"name": "East.Of.Eden.S01E01.mkv"}, {"name": "East.Of.Eden.S01E02.mkv"}]
+    message, commands = _import(files, as_seen + [{"name": "Extras.mkv", "episodeIds": [903]}])
     assert [f["episodeIds"] for f in commands[0][1]["files"]] == [[901], [902], [903]]
-    message, commands = _import(files, [{"name": "Extras.mkv", "skip": True}])
+    message, commands = _import(files, as_seen + [{"name": "Extras.mkv", "skip": True}])
     assert len(commands[0][1]["files"]) == 2, "a skipped file stays where it is"
 
 
 def test_choices_are_checked_against_sonarr():
-    two, none = _import(GOOD, [{"name": "East.Of.Eden.S01E02.mkv", "episodeIds": [901]}])
+    first, second = {"name": "East.Of.Eden.S01E01.mkv"}, {"name": "East.Of.Eden.S01E02.mkv"}
+    two, none = _import(GOOD, [first, {**second, "episodeIds": [901]}])
     assert "both set as the same episode" in two and not none
-    other, none = _import(GOOD, [{"name": "East.Of.Eden.S01E01.mkv", "episodeIds": [12345]}])
+    other, none = _import(GOOD, [{**first, "episodeIds": [12345]}, second])
     assert "aren't in that show" in other and not none
-    stale, none = _import(GOOD, [{"name": "Something.Else.mkv", "skip": True}])
+    stale, none = _import(GOOD, [first, second, {"name": "Something.Else.mkv", "skip": True}])
     assert "changed since you looked" in stale and not none
-    quality, none = _import(GOOD, [{"name": "East.Of.Eden.S01E01.mkv", "qualityId": 99}])
+    quality, none = _import(GOOD, [{**first, "qualityId": 99}, second])
     assert "doesn't have that quality" in quality and not none
+
+
+def test_a_file_that_turned_up_after_the_look_inside_isnt_imported_blind():
+    """The admin looked at two episodes; a third finished unpacking before they pressed
+    Import. It would have gone in with Sonarr's guesses, unseen."""
+    seen = [{"name": "East.Of.Eden.S01E01.mkv"}, {"name": "East.Of.Eden.S01E02.mkv"}]
+    later, none = _import(GOOD + [("East.Of.Eden.S01E03.mkv", 9 * 2**30, 3)], seen)
+    assert "changed since you looked" in later and not none
+    message, commands = _import(GOOD, seen)
+    assert len(commands[0][1]["files"]) == 2
+
+
+class Films(Arr):
+    """A Radarr whose download holds one film in two files (CD1 and CD2)."""
+    name = "Radarr"
+
+    async def queue(self, **params):
+        return [{"downloadId": DID, "trackedDownloadState": "importBlocked", "title": "Night.Train.2026.CD1.CD2",
+                 "outputPath": self.folder, "movieId": 77, "movie": {"title": "Night Train", "year": 2026, "tmdbId": 777}}]
+
+    async def get(self, path, **params):
+        if path == "manualimport":
+            return [{"path": f"{self.folder}/{name}", "relativePath": name, "size": size,
+                     "movie": {"id": 77, "title": "Night Train", "year": 2026},
+                     "quality": {"quality": {"id": 18, "name": "WEBDL-2160p"}, "revision": {"version": 1}},
+                     "rejections": []} for name, size, _n in self.files]
+        return await super().get(path, **params)
+
+    async def movies(self):
+        return [{"id": 77, "title": "Night Train"}, {"id": 78, "title": "Night Train (1959)"}]
+
+
+def test_two_files_set_as_the_same_film_are_refused():
+    """Radarr keeps one file per film: importing CD1 and CD2 as one would keep only one of them."""
+    parts = [("Night.Train.CD1.mkv", 3 * 2**30, 0), ("Night.Train.CD2.mkv", 3 * 2**30, 0)]
+
+    def run(choices):
+        async def body():
+            arr = Films(_folder(), parts)
+            services = Services(Off())
+            services.radarr = arr
+            try:
+                return await blocked_imports.do_import(services, "radarr", DID, choices), arr.commands
+            except ValueError as e:
+                return str(e), arr.commands
+        return asyncio.run(body())
+    cd1, cd2 = {"name": "Night.Train.CD1.mkv"}, {"name": "Night.Train.CD2.mkv"}
+    two, none = run([cd1, cd2])
+    assert "both set as the same film" in two and not none
+    picked, none = run([cd1, {**cd2, "movieId": 77}])
+    assert "both set as the same film" in picked and not none
+    message, commands = run([cd1, {**cd2, "skip": True}])
+    assert [f["movieId"] for f in commands[0][1]["files"]] == [77]
+    message, commands = run([cd1, {**cd2, "movieId": 78}])
+    assert [f["movieId"] for f in commands[0][1]["files"]] == [77, 78]
 
 
 def test_the_preview_carries_sonarrs_reasons_and_the_choices():

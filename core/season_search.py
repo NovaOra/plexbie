@@ -161,9 +161,11 @@ async def open_movie_not_found_help(bot, request_key: Any, report: str) -> None:
 
 
 async def open_help(bot, request_key: Any, *, seasons: Any, reason: str, note: str, status_now: str,
-                    offer: Optional[str] = None) -> Optional[dict]:
+                    offer: Optional[str] = None, admin_note: Optional[str] = None) -> Optional[dict]:
     """Open a help request for the admins on this request, on Plexbie's own
-    initiative (once: not while one is open), and tell them."""
+    initiative (once: not while one is open), and tell them. `note` is the
+    ticket's first entry, which the member sees; `admin_note`, if given, is what
+    the admins are told instead."""
     from database.request_store import get_request
     from portal import help as helpdesk
     if request_key is None or await helpdesk.open_for({str(request_key)}):
@@ -186,14 +188,14 @@ async def open_help(bot, request_key: Any, *, seasons: Any, reason: str, note: s
         kind=media.get("media_type") or "tv", seasons=seasons, user=user, reason=helpdesk.REASONS.get(reason) or helpdesk.PLEXBIE_REASONS[reason],
         note=note, status_now=status_now, offer=offer)
     if actions:
-        await actions._tell_admins_about_help(h)
+        await actions._tell_admins_about_help(h, note=admin_note)
     else:
         # No website running: the admin channel still hears about it.
         channel_id = bot.services.config.admin_channel_id if getattr(bot, "services", None) else None
         channel = bot.get_channel(int(channel_id)) if channel_id else None
         if channel:
             try:
-                await channel.send(f"🆘 **{h['title']}**: {h['reason']}. {note}")
+                await channel.send(f"🆘 **{h['title']}**: {h['reason']}. {admin_note or note}")
             except Exception as e:
                 logger.warning(f"Could not tell the admin channel about {h['title']}: {e}")
     return h

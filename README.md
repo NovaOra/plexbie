@@ -617,7 +617,9 @@ so the household can do everything above without Discord:
 - **Members:** request films, TV and books through the same admin approval
   cards as `/request`, follow each request with live Sonarr/Radarr/SABnzbd
   progress, see what arrived and what's leaving under the cleanup countdown,
-  and turn on phone alerts.
+  and turn on phone alerts. When a download has a problem, members see a plain
+  sentence; what Sonarr or Radarr actually said (release names, folders) is for
+  admins, on Manage → All requests, the request's ticket and the admin channel.
 - **Admins (Manage):** approve and decline requests and join requests, make
   invite links, manage people and Discord links, change cleanup settings (going
   live, and switching cleanup on while practice mode is off, take a press and
@@ -634,7 +636,10 @@ so the household can do everything above without Discord:
   plex.tv or the admin action limit). If Plexbie can't be reached, what's on screen stays, with "Couldn't refresh,
   last updated…" and Try again; a list that couldn't load says so rather than
   looking empty, and Health says when Sonarr or Radarr couldn't be asked about
-  downloads they won't import by themselves.
+  downloads they won't import by themselves. Such a download is imported from
+  its ticket or Health once you've looked inside it; Plexbie refuses when the
+  files changed since you looked (look again) or when two files are set as the
+  same episode or film (skip one, such as a sample).
 - **Invite links** let someone without Discord join: single use, expiring
   after 1 to 30 days (a whole number; anything else is refused), optionally
   locked to an email (at most 254 characters), stored only as a SHA-256. A locked link works

@@ -266,7 +266,7 @@ class Admin:
 
     async def _admin_row(self, key: str, rec: dict, who: str, open_help: Dict[str, dict], seen: Dict[str, Any],
                          books: Dict[str, Any], now: datetime) -> dict:
-        row = await self.data.request_row(key, rec, open_help, books)
+        row = await self.data.request_row(key, rec, open_help, books, admin=True)
         progress = row.get("progress") or {}
         mark = await _remember_stage(key, row["stage"], progress.get("percent"), seen.get(key), now)
         approved_at = rec.get("resolved_at") if rec.get("status") == "approved" else None
