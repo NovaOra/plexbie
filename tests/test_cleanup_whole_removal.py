@@ -353,3 +353,117 @@ def test_a_request_that_never_reaches_sonarr_opens_a_ticket():
             season_search.POLL_SECONDS = saved
     asyncio.run(body())
     assert told == ["ticket"]
+
+
+def _libraries(cog, *sections, excluded=()):
+    """Plex sections as (title, type, items); `excluded` are skipped by cleanup."""
+    class Lib:
+        def __init__(self, title, kind, items):
+            self.title, self.type, self._items = title, kind, items
+
+        def all(self):
+            return self._items
+
+    class Library:
+        def sections(self):
+            return [Lib(*s) for s in sections]
+    cog.services.plex_server.library = Library()
+    cog.config["exclude_libraries"] = list(excluded)
+
+
+def _watched(movie, days):
+    movie.lastViewedAt = datetime.now() - timedelta(days=days)
+    return movie
+
+
+def test_a_copy_watched_in_another_library_keeps_the_title():
+    """The same film in Movies and Movies 4K: the 4K copy sat idle, so Radarr's entry
+    (and its files) went and Seerr was cleared, while the other copy was watched weekly."""
+    cog = _cog()
+    idle = Movie(1, "Dune", 2021, ["tmdb://438631"])
+    watched = _watched(Movie(2, "Dune", 2021, ["tmdb://438631", "imdb://tt1160419"]), 5)
+    _libraries(cog, ("Movies 4K", "movie", [idle]), ("Movies", "movie", [watched]))
+    assert cog._scan_libraries_for_cleanup() == ([], []), "nothing removed or warned while a copy is in use"
+
+
+def test_a_copy_due_soon_holds_back_the_removal_but_still_warns():
+    cog = _cog()
+    idle = Movie(1, "Dune", 2021, ["tmdb://438631"])
+    soon = _watched(Movie(2, "Dune", 2021, ["tmdb://438631"]), 85)
+    _libraries(cog, ("Movies 4K", "movie", [idle]), ("Movies", "movie", [soon]))
+    notify, delete = cog._scan_libraries_for_cleanup()
+    assert delete == [] and [n["rating_key"] for n in notify] == ["2"]
+
+
+def test_a_title_idle_in_every_library_is_still_removed():
+    cog = _cog()
+    a, b = Movie(1, "Dune", 2021, ["tmdb://438631"]), Movie(2, "Dune", 2021, ["tmdb://438631"])
+    other = _watched(Movie(3, "Heat", 1995, ["tmdb://949"]), 5)
+    _libraries(cog, ("Movies 4K", "movie", [a]), ("Movies", "movie", [b, other]))
+    notify, delete = cog._scan_libraries_for_cleanup()
+    assert notify == [] and sorted(d["rating_key"] for d in delete) == ["1", "2"]
+
+
+def test_a_copy_in_a_skipped_or_exempt_library_keeps_the_title():
+    cog = _cog()
+    _libraries(cog, ("Movies", "movie", [Movie(1, "Dune", 2021, ["tmdb://438631"])]),
+               ("Kids", "movie", [Movie(2, "Dune", 2021, ["tmdb://438631"])]), excluded=["Kids"])
+    assert cog._scan_libraries_for_cleanup() == ([], [])
+    cog = _cog()
+    cog.config["exempt_items"] = {"2": {"title": "Dune"}}
+    _libraries(cog, ("Movies", "movie", [Movie(1, "Dune", 2021, ["tmdb://438631"]),
+                                         Movie(2, "Dune", 2021, ["tmdb://438631"])]))
+    assert cog._scan_libraries_for_cleanup() == ([], [])
+
+
+def test_a_film_and_a_show_with_the_same_tmdb_number_are_different_titles():
+    cog = _cog()
+    film = Movie(1, "Old Film", 1990, ["tmdb://1396"])
+    show = Show(2, [Episode(viewed=3)], title="Breaking Bad")
+    show.guids = [Guid("tmdb://1396")]
+    _libraries(cog, ("Movies", "movie", [film]), ("TV", "show", [show]))
+    notify, delete = cog._scan_libraries_for_cleanup()
+    assert [d["rating_key"] for d in delete] == ["1"]
+
+
+def test_a_copy_plex_has_no_ids_for_still_keeps_the_title():
+    """A legacy-agent copy has no guids, but Radarr's title-and-year match finds the
+    same entry, so it counts as the same title."""
+    cog = _cog()
+    idle = Movie(1, "Dune", 2021, ["tmdb://438631"])
+    _libraries(cog, ("Movies 4K", "movie", [idle]), ("Movies", "movie", [_watched(Movie(2, "Dune", 2021), 5)]))
+    assert cog._scan_libraries_for_cleanup() == ([], [])
+    cog = _cog()
+    idle, remake = Movie(1, "Dune", 2021), _watched(Movie(2, "Dune", 1984), 5)
+    _libraries(cog, ("Movies 4K", "movie", [idle]), ("Movies", "movie", [remake]))
+    assert [d["rating_key"] for d in cog._scan_libraries_for_cleanup()[1]] == ["1"], "a namesake isn't a copy"
+
+
+def test_copies_linked_through_a_third_copy_are_judged_together():
+    cog = _cog()
+    a = Movie(1, "Dune", 2021, ["tmdb://438631"])
+    b = Movie(2, "Dune: Part One", 2021, ["tmdb://438631", "imdb://tt1160419"])
+    c = _watched(Movie(3, "Dune (4K)", 2021, ["imdb://tt1160419"]), 5)
+    _libraries(cog, ("Movies", "movie", [a]), ("Movies 4K", "movie", [b]), ("UHD", "movie", [c]))
+    assert cog._scan_libraries_for_cleanup() == ([], [])
+
+
+def test_copies_are_judged_without_fetching_each_item_again():
+    """plexapi fetches an item again for an attribute the listing left empty; a skipped
+    library of home videos (no guids) would cost a request per clip."""
+    fetched = []
+
+    class Clip(Movie):
+        def __getattribute__(self, attr):
+            value = object.__getattribute__(self, attr)
+            if value in (None, []) and not attr.startswith("_") and self.__dict__.get("_autoReload", True):
+                fetched.append(attr)
+            return value
+
+    cog = _cog()
+    clips = [Clip(10 + n, f"Birthday {n}") for n in range(3)]
+    _libraries(cog, ("Movies", "movie", [Movie(1, "Dune", 2021, ["tmdb://438631"])]),
+               ("Home Videos", "movie", clips), excluded=["Home Videos"])
+    assert [d["rating_key"] for d in cog._scan_libraries_for_cleanup()[1]] == ["1"]
+    assert fetched == []
+    assert all(c.__dict__.get("_autoReload", True) for c in clips), "plexapi's own setting is put back"

@@ -2,7 +2,9 @@
 """How long each title has before media_cleanup removes it.
 
 This mirrors MediaCleanupCog.check_item_for_cleanup step for step, so the
-countdown on the site is the bot's own schedule, not an estimate:
+countdown on the site is the bot's own schedule, not an estimate. One exception: a
+title in Plex more than once is counted down per copy here, while the bot keeps
+every copy as long as any one of them isn't due (see _judge_copies_together):
 
   last activity = latest of
       when anyone last watched it: every account's plays, from the server's own

@@ -42,6 +42,26 @@ def _ids_of(item) -> Dict[str, str]:
     return out
 
 
+def _copy_keys(item, ids: Optional[Dict[str, str]] = None) -> set:
+    """What ties a Plex item to its other copies: its ids, and its title and year, which
+    Sonarr/Radarr fall back to for an item Plex has no ids for. A film's TMDB number
+    and a show's are different titles, so each key carries the type.
+
+    Read as library.all() listed it: plexapi fetches an item again for any attribute
+    the listing left empty (an unmatched item has no guids), which across a library of
+    home videos would be one request per item."""
+    was = getattr(item, "_autoReload", True)
+    item._autoReload = False
+    try:
+        kind, title, year = item.type, item.title, getattr(item, "year", None)
+        ids = _ids_of(item) if ids is None else ids
+    finally:
+        item._autoReload = was
+    keys = {(kind, k, v) for k, v in ids.items()}
+    keys.add((kind, "title", str(title or "").lower(), year))
+    return keys
+
+
 class ArrUnavailable(Exception):
     """Sonarr/Radarr is set up but couldn't be read, or didn't delete the title."""
 
@@ -692,8 +712,6 @@ class MediaCleanupCog(commands.Cog):
         per-show season/episode requests inside check_item_for_cleanup - can end
         up back on the event loop.
         """
-        items_to_notify = []
-        items_to_delete = []
         # What anyone on the server watched lately. Without it nothing is deleted: Plex's
         # own "last viewed" on an item is only the owner's, so a show the household is
         # watching would look untouched.
@@ -703,25 +721,76 @@ class MediaCleanupCog(commands.Cog):
             logger.warning(f"Media cleanup: couldn't read Plex's watch history ({e}); deleting nothing today")
             return [], []
 
+        checked = []  # (item, result or None) for every film and show in Plex
         for library in self.services.plex_server.library.sections():
-            # Skip excluded libraries
-            if library.title in self.config["exclude_libraries"]:
-                logger.info(f"Skipping excluded library: {library.title}")
-                continue
-
             # Only process movie and show libraries
             if library.type not in ["movie", "show"]:
+                continue
+
+            # Skip excluded libraries; their copies still keep the same title elsewhere
+            if library.title in self.config["exclude_libraries"]:
+                logger.info(f"Skipping excluded library: {library.title}")
+                checked.extend((item, None) for item in library.all())
                 continue
 
             logger.info(f"Checking library: {library.title}")
 
             for item in library.all():
-                result = self.check_item_for_cleanup(item, views)
-                if result:
-                    if result["action"] == "notify":
-                        items_to_notify.append(result)
-                    elif result["action"] == "delete":
-                        items_to_delete.append(result)
+                checked.append((item, self.check_item_for_cleanup(item, views)))
+
+        return self._judge_copies_together(checked)
+
+    def _judge_copies_together(self, checked):
+        """Blocking: (items_to_notify, items_to_delete) from the per-item results.
+
+        A title can be in Plex more than once (a 4K library, overlapping folders), but
+        Sonarr/Radarr and Seerr remove it by id (or by title and year), for every copy
+        at once. So a copy is acted on only as far as its least idle copy allows: one
+        being watched (or exempt, or in a skipped library) keeps them all, and one only
+        due a warning holds back the removal. Copies are linked through any key they
+        share, also by way of a third copy.
+        """
+        rank = {None: 0, "notify": 1, "delete": 2}
+        if not any(result for _, result in checked):
+            return [], []
+
+        try:
+            keyed = [(_copy_keys(item, result.get("ids") if result else None), result)
+                     for item, result in checked]
+        except Exception as e:
+            logger.warning(f"Media cleanup: couldn't read Plex's ids for every title ({e}); deleting nothing today")
+            return [], []
+
+        parent = {}
+
+        def group(key):
+            while parent.setdefault(key, key) != key:
+                parent[key] = parent[parent[key]]
+                key = parent[key]
+            return key
+
+        for keys, _ in keyed:
+            first, *rest = keys
+            for key in rest:
+                parent[group(key)] = group(first)
+
+        least = {}
+        for keys, result in keyed:
+            g = group(next(iter(keys)))
+            least[g] = min(least.get(g, 2), rank[result and result["action"]])
+
+        items_to_notify = []
+        items_to_delete = []
+        for keys, result in keyed:
+            if not result:
+                continue
+            if least[group(next(iter(keys)))] < rank[result["action"]]:
+                logger.info(f"Holding back cleanup of {result['title']}: another copy of it in Plex isn't due yet")
+                continue
+            if result["action"] == "notify":
+                items_to_notify.append(result)
+            elif result["action"] == "delete":
+                items_to_delete.append(result)
 
         return items_to_notify, items_to_delete
 
