@@ -147,9 +147,11 @@ def test_expo_being_down_is_never_an_error_for_the_caller():
 def test_every_discord_dm_also_reaches_the_app_without_waiting_for_it():
     from core import admin_mirror
     calls = []
+    # The phone copy can't finish until the DM has returned, however slow the host.
+    release = asyncio.Event()
 
     async def fake(discord_id, *, title, body, url="/app"):
-        await asyncio.sleep(0.05)
+        await release.wait()
         calls.append((discord_id, title, body))
         return 1
     saved = notify.push_app_to_discord
@@ -164,11 +166,18 @@ def test_every_discord_dm_also_reaches_the_app_without_waiting_for_it():
         async def scenario():
             await _init(pathlib.Path(tempfile.mkdtemp()) / "d.db")
             try:
-                await admin_mirror.send_user_dm(None, None, User(), context="test", content="**Dune** was approved")
+                await asyncio.wait_for(admin_mirror.send_user_dm(None, None, User(), context="test",
+                                                                 content="**Dune** was approved"), 5)
             except RuntimeError:
                 pass
+            except asyncio.TimeoutError:
+                return None, list(calls)  # the DM sat waiting on the phone copy
             before = list(calls)
-            await asyncio.sleep(0.2)
+            release.set()
+            for _ in range(500):  # up to 5 s on a slow host
+                if calls:
+                    break
+                await asyncio.sleep(0.01)
             return before, list(calls)
         before, after = asyncio.run(scenario())
     finally:
