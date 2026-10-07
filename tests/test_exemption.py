@@ -608,6 +608,85 @@ def test_a_rename_in_tautulli_keeps_the_top_three_protection():
     assert "river975" not in h.removed and "river975" not in h.warned
 
 
+def test_a_name_two_tautulli_users_share_matches_neither():
+    """Measuring either "sam" could warn or remove the wrong person."""
+    h = _Harness(
+        users=[_user("Sam", 1, 40, warning_sent=True)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700),
+                       _u("sam", 10, user_id=11), _u("SAM", 5, user_id=12)],
+    )
+    h.run()
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
+
+    # One user's display name is another's Plex login.
+    h = _Harness(
+        users=[_user("Sam", 1, 40, warning_sent=True)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700),
+                       _u("sam", 10, user_id=11), {**_u("Sammy", 5, user_id=12), "username": "sam"}],
+    )
+    h.run()
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
+
+
+def test_every_tautulli_user_is_read_not_just_the_first_page():
+    """Tautulli answers 25 users unless asked for more: everyone past them was never
+    warned or removed, and the top three came from a partial list."""
+    from types import SimpleNamespace
+    from core.clients import Tautulli
+    from helpers import FakeTautulliHttp
+    everyone = [_u(f"user{i:03}", i, user_id=i) for i in range(230)]
+
+    def page(fields):
+        start, length = int(fields.get("start", 0)), int(fields.get("length", 25))
+        return {"recordsTotal": len(everyone), "recordsFiltered": len(everyone),
+                "data": everyone[start:start + length]}
+
+    http = FakeTautulliHttp({"get_users_table": page})
+    services = SimpleNamespace(config=SimpleNamespace(tautulli_url="http://tautulli", tautulli_token="k"),
+                               http_session=http)
+    rows = asyncio.run(Tautulli(services).users_table())
+    assert [r["user_id"] for r in rows] == list(range(230))
+    assert len(http.asked) <= 3, f"{len(http.asked)} requests"
+
+    assert len(asyncio.run(Tautulli(services).users_table(length=10))) == 10, "an explicit length is kept"
+
+
+def test_a_tautulli_past_the_page_limit_is_logged():
+    """Stopping at the page limit would otherwise leave the rest out without a word."""
+    import logging
+    import core.clients as clients
+    from helpers import FakeTautulliHttp
+    everyone = [_u(f"user{i}", i, user_id=i) for i in range(7)]
+
+    def page(fields):
+        start, length = int(fields.get("start", 0)), int(fields.get("length", 25))
+        return {"recordsTotal": len(everyone), "recordsFiltered": len(everyone),
+                "data": everyone[start:start + length]}
+
+    services = SimpleNamespace(config=SimpleNamespace(tautulli_url="http://tautulli", tautulli_token="k"),
+                               http_session=FakeTautulliHttp({"get_users_table": page}))
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    saved = clients.USERS_TABLE_PAGE, clients.USERS_TABLE_PAGES, clients.logger.level
+    clients.USERS_TABLE_PAGE, clients.USERS_TABLE_PAGES = 2, 2
+    clients.logger.addHandler(handler)
+    clients.logger.setLevel(logging.WARNING)
+    try:
+        rows = asyncio.run(clients.Tautulli(services).users_table())
+        assert len(rows) == 4
+        assert [r.getMessage() for r in records] == ["Tautulli: read the first 4 users and stopped; it reports 7"]
+
+        everyone[:] = everyone[:4]
+        records.clear()
+        assert len(asyncio.run(clients.Tautulli(services).users_table())) == 4
+        assert records == [], "a list that ends exactly on the limit is complete"
+    finally:
+        clients.logger.removeHandler(handler)
+        clients.USERS_TABLE_PAGE, clients.USERS_TABLE_PAGES, level = saved
+        clients.logger.setLevel(level)
+
+
 # ===================================================================
 # brakes: stale Tautulli history, and too many removals in one pass
 # ===================================================================

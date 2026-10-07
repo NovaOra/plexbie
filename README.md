@@ -207,7 +207,9 @@ who's watching from one place instead of five.
 - Accounts are warned after a configurable period of inactivity and removed
   later, with the warning always delivered a full pass before any removal.
   The removal takes off the Plex account whose inactivity was measured, never
-  whoever an old email or name now points at.
+  whoever an old email or name now points at. Every Tautulli user is read, page by
+  page, up to 5,000 (past that the log says so); a name two Tautulli users share (ignoring case) matches neither,
+  and the log says so.
 - The warning goes by Discord DM; when their DMs are closed (or they have no
   Discord), by phone/browser alert or email instead. If none of those reaches
   them, the admins are told (admin channel and phone alerts; Manage → Messages
@@ -811,6 +813,11 @@ route a secret and opens the listener to your network (`WEBHOOK_BIND=0.0.0.0`).
   - Someone warned for not watching is told they're fine right away.
   - A new viewer is linked at once.
   - Plex going down reaches the admins within seconds.
+
+  Plexbie sends the secret header to Tautulli in a POST body, so it stays out of the request
+  URLs that Tautulli and any proxy in front of it write to their access logs. If your Tautulli
+  only accepts the query string, Plexbie falls back to that. Plexbie re-applies the webhook on
+  every start but only sends the secret again when it changed.
 
   Once events arrive, Plexbie checks far less often: Now Watching every minute instead of every
   10 seconds, the boards and account linking hourly instead of every 5 minutes. Those checks stay

@@ -9,7 +9,9 @@ the setup page's "Connect" buttons call these. What they set up:
              the request events Plexbie uses.
   Tautulli   a Webhook notification agent named "Plexbie": Plexbie's URL, a
              Bearer secret header, and webhooks/tautulli_handler.BODY on the
-             playback and server up/down triggers. Reused if it already exists.
+             playback and server up/down triggers. Reused if it already exists;
+             the secret goes in a POST body where Tautulli takes one, and is
+             only sent again when it changed.
 
 Plexbie's webhook listener has to be reachable from those apps, so connecting
 also makes sure every webhook route has a secret (new_secrets) before the
@@ -86,7 +88,11 @@ async def connect_tautulli(services, base_url: str, secret: str) -> str:
     from webhooks.tautulli_handler import BODY, TRIGGERS
     tautulli = services.tautulli
     notifier = await _plexbie_notifier(tautulli)
-    if notifier is None:
+    stored = {}
+    if notifier is not None:
+        stored = (await _notifier_config(tautulli, notifier)).get("notify_text")
+        stored = stored if isinstance(stored, dict) else {}
+    else:
         before = {n.get("id") for n in await tautulli.call("get_notifiers") or []}
         await tautulli.call("add_notifier_config", agent_id=TAUTULLI_AGENT_ID)
         added = [n for n in await tautulli.call("get_notifiers") or []
@@ -101,9 +107,11 @@ async def connect_tautulli(services, base_url: str, secret: str) -> str:
         params[trigger] = 0                         # switched on by earlier versions
     for trigger in TRIGGERS:
         params[trigger] = 1
-        params[f"{trigger}_subject"] = headers      # the Webhook agent's "JSON headers"
+        text = stored.get(trigger)
+        if not isinstance(text, dict) or text.get("subject") != headers:
+            params[f"{trigger}_subject"] = headers  # the Webhook agent's "JSON headers", only when changed
         params[f"{trigger}_body"] = BODY            # ...and its "JSON data"
-    await tautulli.call("set_notifier_config", **params)
+    await tautulli.call("set_notifier_config", post=True, **params)
     return "Tautulli now tells Plexbie about playback and Plex going up or down."
 
 
@@ -139,12 +147,18 @@ async def refresh_connections(services, base_url: str) -> None:
             log.warning(f"Couldn't refresh Tautulli's webhook: {e}")
 
 
-async def _tautulli_hook(tautulli, notifier) -> str:
-    """The address Plexbie's Tautulli notifier sends to now ("" if it can't be read)."""
+async def _notifier_config(tautulli, notifier) -> dict:
+    """The notifier's stored settings ({} if they can't be read)."""
     try:
         cfg = await tautulli.call("get_notifier_config", notifier_id=notifier["id"]) or {}
     except ServiceError:
-        return ""
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+async def _tautulli_hook(tautulli, notifier) -> str:
+    """The address Plexbie's Tautulli notifier sends to now ("" if it can't be read)."""
+    cfg = await _notifier_config(tautulli, notifier)
     options = cfg.get("config") if isinstance(cfg.get("config"), dict) else cfg
     return str(options.get("hook") or options.get("webhook_hook") or "")
 

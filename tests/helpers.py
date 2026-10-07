@@ -156,3 +156,46 @@ class FakeRequest:
     def __init__(self, headers=None, query=None):
         self.headers = headers or {}
         self.query = query or {}
+
+
+class _TautulliResponse:
+    status, content_length = 200, None
+
+    def __init__(self, body):
+        self.body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def json(self, **kw):
+        return self.body
+
+    async def text(self):
+        import json
+        return json.dumps(self.body)
+
+
+class FakeTautulliHttp:
+    """Answers /api/v2 the way Tautulli does: the command and its parameters from the
+    query string or, when takes_post, a form body. `answers` maps a command to its
+    data (or to a function of the parameters); `asked` records (method, url, fields)."""
+
+    def __init__(self, answers=None, takes_post=True):
+        self.answers = answers or {}
+        self.takes_post = takes_post
+        self.asked = []
+
+    def request(self, method, url, params=None, data=None, **kw):
+        fields = dict(params or {})
+        if method == "POST" and self.takes_post:
+            fields.update(data or {})
+        self.asked.append((method, url, fields))
+        cmd = fields.get("cmd")
+        if cmd not in self.answers:
+            return _TautulliResponse({"response": {"result": "error", "message": "Unknown command"}})
+        answer = self.answers[cmd]
+        data = answer(fields) if callable(answer) else answer
+        return _TautulliResponse({"response": {"result": "success", "data": data}})

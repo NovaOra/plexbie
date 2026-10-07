@@ -208,6 +208,22 @@ def _add_departure_fields(embed: discord.Embed, stats: Optional[Dict[str, Any]])
     )
 
 
+def _by_unique_name(tautulli_users) -> Dict[str, dict]:
+    """Tautulli users by lower-cased friendly_name and Plex login. A name two users
+    answer to matches neither: measuring the wrong one could remove the wrong person."""
+    found: Dict[str, dict] = {}
+    shared = set()
+    for u in tautulli_users:
+        for name in {(u.get('friendly_name') or '').lower(), (u.get('username') or '').lower()} - {''}:
+            other = found.setdefault(name, u)
+            if other is not u and (other.get('user_id') != u.get('user_id') or not u.get('user_id')):
+                shared.add(name)
+    for name in sorted(shared):
+        logger.warning(f"Two Tautulli users are called {name!r}; neither is matched by that name")
+        del found[name]
+    return found
+
+
 def _fetch_shared_usernames(config) -> set:
     """Blocking: the names that currently have access to the server.
 
@@ -439,12 +455,11 @@ class UserMgmtCog(commands.Cog):
             # Get user data from Tautulli (uses same usernames as our database)
             tautulli_users = await self.services.tautulli.users_table()
 
-            # Build lookup by friendly_name (case-insensitive)
-            tautulli_lookup = {u.get('friendly_name', '').lower(): u for u in tautulli_users}
+            # Build lookup by friendly_name or Plex login (case-insensitive)
+            tautulli_by_name = _by_unique_name(tautulli_users)
             # Tautulli's user_id is the Plex account id: the sure match once a row knows
             # its account (reconcile_accounts), whatever either side calls the person.
             tautulli_by_id = {str(u.get('user_id')): u for u in tautulli_users if u.get('user_id')}
-            tautulli_by_login = {(u.get('username') or '').lower(): u for u in tautulli_users if u.get('username')}
 
             # Standings, for the top-watcher exemption. Computed from the response
             # already in hand plus watch-party credits, through the same helper the
@@ -527,8 +542,7 @@ class UserMgmtCog(commands.Cog):
                 # Find corresponding Tautulli user
                 tautulli_user = tautulli_by_id.get(str(tracked_user.plex_user_id or ""))
                 if not tautulli_user:
-                    by_name = (tautulli_lookup.get(tracked_user.plex_username.lower())
-                               or tautulli_by_login.get(tracked_user.plex_username.lower()))
+                    by_name = tautulli_by_name.get(tracked_user.plex_username.lower())
                     # A row that knows its account only takes a name match for that
                     # same account: the name can belong to someone else by now, and
                     # measuring them could remove the wrong person.

@@ -16,7 +16,14 @@ from typing import Any, Dict, Iterable, List, Optional
 
 import aiohttp
 
+from core.logging import get_logger
+
+logger = get_logger(__name__)
+
 DEFAULT_TIMEOUT = 15
+#: Tautulli's users table is read this many at a time, up to this many pages.
+USERS_TABLE_PAGE = 100
+USERS_TABLE_PAGES = 50
 
 
 class ServiceError(aiohttp.ClientError):
@@ -92,14 +99,40 @@ class Tautulli(_Client):
     def configured(self) -> bool:
         return bool(self.config.tautulli_url and self.config.tautulli_token)
 
-    async def call(self, cmd: str, *, timeout: float = DEFAULT_TIMEOUT, **params) -> Any:
-        """Run one API command and return its `data`."""
-        body = await self._request("GET", f"{self.config.tautulli_url.rstrip('/')}/api/v2", timeout=timeout,
-                                   params={"apikey": self.config.tautulli_token, "cmd": cmd, **params})
+    #: The address a POST has been seen to work at (see call).
+    _post_url: Optional[str] = None
+
+    async def call(self, cmd: str, *, timeout: float = DEFAULT_TIMEOUT, post: bool = False, **params) -> Any:
+        """Run one API command and return its `data`.
+
+        post=True sends the parameters as a form body, so a secret among them stays
+        out of the query string that Tautulli and any proxy in front of it log. A
+        harmless read is posted first to see that this Tautulli takes them; if it
+        doesn't, they go in the query string as before."""
+        url = f"{self.config.tautulli_url.rstrip('/')}/api/v2"
+        fields = {"apikey": self.config.tautulli_token, "cmd": cmd, **params}
+        if post and await self._takes_post(url, timeout):
+            body = await self._request("POST", url, timeout=timeout, data={k: str(v) for k, v in fields.items()})
+        else:
+            body = await self._request("GET", url, timeout=timeout, params=fields)
+        return self._data(body)
+
+    @staticmethod
+    def _data(body) -> Any:
         response = (body or {}).get("response") or {}
         if response.get("result") != "success":
             raise ServiceError(f"Tautulli said: {response.get('message') or 'unknown error'}")
         return response.get("data")
+
+    async def _takes_post(self, url: str, timeout: float) -> bool:
+        if self._post_url != url:
+            try:
+                self._data(await self._request("POST", url, timeout=timeout, data={
+                    "apikey": self.config.tautulli_token, "cmd": "get_notifiers"}))
+            except ServiceError:
+                return False
+            self._post_url = url
+        return True
 
     async def ping(self, timeout: float = 6) -> None:
         await self.call("status", timeout=timeout)
@@ -109,8 +142,23 @@ class Tautulli(_Client):
         return await self.call("get_users") or []
 
     async def users_table(self, **params) -> List[Dict[str, Any]]:
-        """Users with play counts and last-seen times (get_users_table)."""
-        return ((await self.call("get_users_table", **params)) or {}).get("data") or []
+        """Users with play counts and last-seen times (get_users_table). Every user,
+        a page at a time, unless a length is given (Tautulli's own default is 25)."""
+        if "length" in params:
+            return ((await self.call("get_users_table", **params)) or {}).get("data") or []
+        rows: List[Dict[str, Any]] = []
+        for _ in range(USERS_TABLE_PAGES):
+            page = (await self.call("get_users_table", **{**params, "start": len(rows),
+                                                           "length": USERS_TABLE_PAGE})) or {}
+            batch = page.get("data") or []
+            rows.extend(batch)
+            total = page.get("recordsFiltered", page.get("recordsTotal"))
+            if len(batch) < USERS_TABLE_PAGE or (total is not None and len(rows) >= int(total)):
+                break
+        else:
+            logger.warning("Tautulli: read the first %d users and stopped; it reports %s",
+                           len(rows), total if total is not None else "more")
+        return rows
 
 
 class Arr(_Client):

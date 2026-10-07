@@ -382,6 +382,75 @@ def test_connecting_tautulli_adds_one_named_webhook_with_every_trigger():
     assert not any(c[0] == "add_notifier_config" for c in calls)
 
 
+def _tautulli_services(http):
+    from types import SimpleNamespace
+    services = FakeServices(SimpleNamespace(tautulli_url="http://tautulli:8181", tautulli_token="k"))
+    services.http_session = http
+    return services
+
+
+def _plexbie_notifier_answers():
+    return {"get_notifiers": [{"id": 9, "agent_id": 25, "friendly_name": "Plexbie"}],
+            "get_notifier_config": {"config": {"hook": "http://10.0.0.5:7980/webhook/tautulli"}},
+            "set_notifier_config": None}
+
+
+def test_connecting_tautulli_keeps_the_secret_out_of_the_url():
+    """The secret header goes in a POST body, not the query string Tautulli and any
+    proxy in front of it write to their access logs."""
+    from core.webhook_connect import connect_tautulli
+    from helpers import FakeTautulliHttp
+    http = FakeTautulliHttp(_plexbie_notifier_answers())
+    asyncio.run(connect_tautulli(_tautulli_services(http), "http://10.0.0.5:7980", "sekrit"))
+    sent = [(method, fields) for method, _, fields in http.asked if fields.get("cmd") == "set_notifier_config"]
+    assert len(sent) == 1 and sent[0][0] == "POST", http.asked
+    assert "sekrit" in sent[0][1]["on_play_subject"]
+    assert not [a for a in http.asked if a[0] == "GET" and "sekrit" in json.dumps(a[2])]
+
+
+def test_a_tautulli_that_takes_no_post_is_still_connected():
+    from core.webhook_connect import connect_tautulli
+    from helpers import FakeTautulliHttp
+    http = FakeTautulliHttp(_plexbie_notifier_answers(), takes_post=False)
+    asyncio.run(connect_tautulli(_tautulli_services(http), "http://10.0.0.5:7980", "sekrit"))
+    sent = [method for method, _, fields in http.asked if fields.get("cmd") == "set_notifier_config"]
+    assert sent == ["GET"], http.asked
+
+
+def test_an_unchanged_tautulli_secret_is_not_sent_again():
+    """Every start refreshes Plexbie's notifier; the header is only sent when it changed."""
+    from core.webhook_connect import connect_tautulli
+    from webhooks.tautulli_handler import BODY, TRIGGERS
+    calls = []
+
+    class Taut:
+        def __init__(self, stored):
+            self.stored = stored
+
+        async def call(self, cmd, **params):
+            calls.append((cmd, params))
+            if cmd == "get_notifiers":
+                return [{"id": 9, "agent_id": 25, "friendly_name": "Plexbie"}]
+            if cmd == "get_notifier_config":
+                subject = json.dumps({"Authorization": f"Bearer {self.stored}"})
+                return {"config": {"hook": "http://10.0.0.5:7980/webhook/tautulli"},
+                        "notify_text": {t: {"subject": subject, "body": BODY} for t in TRIGGERS}}
+
+    class S:
+        tautulli = Taut("sekrit")
+    asyncio.run(connect_tautulli(S(), "http://10.0.0.5:7980", "sekrit"))
+    cmd, params = calls[-1]
+    assert cmd == "set_notifier_config"
+    assert not [k for k in params if k.endswith("_subject")], params
+    assert all(params[t] == 1 and params[f"{t}_body"] == BODY for t in TRIGGERS)
+
+    calls.clear()
+    S.tautulli = Taut("old")                        # the secret was changed since
+    asyncio.run(connect_tautulli(S(), "http://10.0.0.5:7980", "sekrit"))
+    cmd, params = calls[-1]
+    assert all(json.loads(params[f"{t}_subject"]) == {"Authorization": "Bearer sekrit"} for t in TRIGGERS)
+
+
 def test_tautulli_recently_added_is_announced():
     calls = _Calls()
 
