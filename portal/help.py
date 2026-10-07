@@ -116,7 +116,8 @@ async def resolve(hid: str, actor: str, reply: str) -> Optional[dict]:
 
 # ---------------------------------------------------------------- the thread
 #: Kinds of thread entry: what the member wrote; an admin's note (admins only); a reply
-#: sent to the member; what someone did (a search and its result); a status change.
+#: sent to the member ("missed": it reached nobody); what someone did (a search and its
+#: result); a status change.
 KINDS = ("member", "note", "reply", "action", "status")
 #: What the member sees of their own ticket: what they said, what was said to them, and
 #: whether it's solved (not who took it, or that it's "waiting on them").
@@ -159,6 +160,23 @@ async def add(hid: str, kind: str, by: str, text: str, **changes) -> Optional[di
     rec.update(thread=thread, **changes)
     await kv_set(NAMESPACE, hid, rec)
     return {**rec, "id": hid}
+
+
+def last_reply(rec: dict) -> Optional[str]:
+    """The id of the ticket's newest reply to the member, if it has one."""
+    return next((e.get("id") for e in reversed(thread_of(rec)) if e.get("kind") == "reply"), None)
+
+
+async def not_reached(hid: str, entry: Optional[str], why: str) -> None:
+    """A message to the member reached nobody: Plexbie says so on the thread, and the reply
+    it was (`entry`, if it was one) is marked "missed", in the same write."""
+    rec = await kv_get(NAMESPACE, hid)
+    if not isinstance(rec, dict):
+        return
+    thread = [{**e, "missed": True} if entry and e.get("id") == entry and e.get("kind") == "reply" else e
+              for e in thread_of(rec)]
+    rec["thread"] = thread + [_entry("action", "Plexbie", why)]
+    await kv_set(NAMESPACE, hid, rec)
 
 
 async def reopen(hid: str, actor: str) -> Optional[dict]:

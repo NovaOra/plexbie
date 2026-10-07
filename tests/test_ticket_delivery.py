@@ -286,3 +286,93 @@ def test_quiet_tickets_notes_and_waiting_have_no_told():
     assert all("told" not in out for out in (quiet, note, waiting, solved))
     assert solved == {"ok": True, "message": "Resolved."}
     assert dms == [] and alerts == [] and "action" not in [e["kind"] for e in thread]
+
+
+# ------------------------------------------- the reply on the ticket's thread
+def _served(actions, hid):
+    """The ticket as Manage → Tickets gets it (GET /api/admin/ticket/{id}), and as the member sees it."""
+    from database.kv_store import kv_get
+    from portal import help as helpdesk
+    from portal.admin import Admin
+
+    async def both():
+        return await Admin(actions.data).ticket(hid), helpdesk.member_view(await kv_get(helpdesk.NAMESPACE, hid))
+    return both()
+
+
+def test_a_reply_that_reaches_nobody_is_marked_missed_for_admins_only():
+    async def scenario(actions):
+        h = await _ticket()
+        await actions.ticket_comment(ADMIN, h["id"], {"kind": "reply", "text": "Is it the 4K one?"})
+        return await _served(actions, h["id"])
+
+    (admin, member), _, _ = _run(scenario, closed=True, fallback="none")
+    replies = [e for e in admin["thread"] if e["kind"] == "reply"]
+    assert len(replies) == 1 and replies[0]["text"] == "Is it the 4K one?" and replies[0]["missed"] is True
+    assert all("missed" not in e for e in admin["thread"] if e["kind"] != "reply")
+    assert [e["kind"] for e in member["thread"]] == ["member", "reply"]
+    assert all("missed" not in e for e in member["thread"]), "the member never sees whether it reached them"
+
+
+def test_only_the_reply_that_reached_nobody_is_marked():
+    async def scenario(actions):
+        h = await _ticket()
+        await actions.ticket_comment(ADMIN, h["id"], {"kind": "reply", "text": "Is it the 4K one?"})
+        actions.bot = _bot([], closed=True)
+        await actions.ticket_comment(ADMIN, h["id"], {"kind": "reply", "text": "Is it the 4K one?"})
+        return await _served(actions, h["id"])
+
+    (admin, _), dms, _ = _run(scenario, fallback="none")
+    assert len(dms) == 1
+    assert [e.get("missed") for e in admin["thread"] if e["kind"] == "reply"] == [None, True]
+
+
+def test_a_reply_that_arrives_is_not_marked():
+    async def scenario(actions):
+        h = await _ticket()
+        await actions.ticket_comment(ADMIN, h["id"], {"kind": "reply", "text": "Is it the 4K one?"})
+        return await _served(actions, h["id"])
+
+    for closed, fallback in ((False, "none"), (True, "push")):
+        (admin, _), _, _ = _run(scenario, closed=closed, fallback=fallback)
+        assert [e["kind"] for e in admin["thread"]] == ["member", "reply"]
+        assert "missed" not in admin["thread"][-1]
+
+
+def test_solving_with_a_last_message_that_reaches_nobody_marks_it():
+    async def scenario(actions):
+        h = await _ticket()
+        await actions.ticket_status(ADMIN, h["id"], {"status": "resolved", "message": "On Plex now"})
+        return await _served(actions, h["id"])
+
+    (admin, member), _, _ = _run(scenario, closed=True, fallback="none")
+    assert [(e["kind"], e.get("missed")) for e in admin["thread"]] == [
+        ("member", None), ("reply", True), ("status", None), ("action", None)]
+    assert all("missed" not in e for e in member["thread"])
+
+
+def test_solving_without_a_last_message_marks_nothing():
+    async def scenario(actions):
+        h = await _ticket()
+        await actions.ticket_comment(ADMIN, h["id"], {"kind": "reply", "text": "Is it the 4K one?"})
+        actions.bot = _bot([], closed=True)
+        out = await actions.help_resolve(ADMIN, h["id"], {})
+        return out, await _served(actions, h["id"])
+
+    (out, (admin, _)), dms, _ = _run(scenario, fallback="none")
+    assert out["told"] is False and len(dms) == 1
+    assert [e["kind"] for e in admin["thread"]] == ["member", "reply", "status", "action"]
+    assert all("missed" not in e for e in admin["thread"]), "the default sentence has no entry, and the earlier reply arrived"
+
+
+def test_opening_a_ticket_and_telling_them_marks_the_message_that_reached_nobody():
+    from database.request_store import mark_resolved, save_request
+
+    async def scenario(actions):
+        await save_request(201, user_id=7, media={"id": 1, "media_type": "movie", "title": "Searching Forever"})
+        await mark_resolved(201, "approved", "Sam")
+        out = await actions.admin_ticket(ADMIN, "201", {"note": "Indexer was down", "tell": True})
+        return await _served(actions, out["help"]["id"])
+
+    (admin, _), _, _ = _run(scenario, closed=True, fallback="none")
+    assert [(e["kind"], e.get("missed")) for e in admin["thread"]] == [("note", None), ("reply", True), ("action", None)]

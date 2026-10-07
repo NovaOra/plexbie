@@ -555,15 +555,20 @@ function threadOf(h: Help): Entry[] {
   ];
   return threads[h.id];
 }
-function entry(id: string, kind: Entry["kind"], by: string, text: string) {
+function entry(id: string, kind: Entry["kind"], by: string, text: string): Entry | undefined {
   const h = helps.find((x) => x.id === id);
-  if (h) threadOf(h).push({ id: `x${nextEntry++}`, at: new Date().toISOString(), by, kind, text });
+  if (!h) return undefined;
+  const e: Entry = { id: `x${nextEntry++}`, at: new Date().toISOString(), by, kind, text };
+  threadOf(h).push(e);
+  return e;
 }
 /** h2's member can't be reached (closed DMs, no alerts, no email): an admin's reply or
- *  "Solved" on it says so, and so does its timeline; on any other ticket it arrives. */
-function told(h: Help | undefined, said: string, done: string) {
+ *  "Solved" on it says so, and so does its timeline (the reply it was, `sent`, is marked
+ *  missed); on any other ticket it arrives. */
+function told(h: Help | undefined, said: string, done: string, sent?: Entry) {
   if (h?.id !== "h2") return { ok: true, told: true, message: said };
   const why = "Plexbie couldn't DM them on Discord, and no phone alert or email reached them either.";
+  if (sent?.kind === "reply") sent.missed = true;
   entry(h.id, "action", "Plexbie", `This didn't reach ${h.who}: ${why}`);
   return { ok: true, told: false, message: `${done}, but it didn't reach ${h.who}: ${why} Tell them another way.` };
 }
@@ -590,19 +595,19 @@ export const adminTicket = (id: string) => {
     blocked: h.id === "h4" ? sampleBlocked : null }, 250);
 };
 export const ticketComment = (id: string, kind: "note" | "reply", text: string) => {
-  entry(id, kind, "Sam Rivera", text);
+  const sent = entry(id, kind, "Sam Rivera", text);
   const h = helps.find((x) => x.id === id);
-  if (kind === "reply") return wait(told(h, `Sent to ${h?.who ?? "them"} (Discord DM).`, "Added to the ticket"), 350);
+  if (kind === "reply") return wait(told(h, `Sent to ${h?.who ?? "them"} (Discord DM).`, "Added to the ticket", sent), 350);
   return wait({ ok: true, message: "Note added. Only admins see it." }, 350);
 };
 export const ticketStatus = (id: string, status: "open" | "waiting" | "resolved", message = "") => {
   const h = helps.find((x) => x.id === id);
   if (!h) return wait({ ok: false, message: "No such ticket." });
   if (status === "resolved") {
-    if (message.trim()) entry(id, "reply", "Sam Rivera", message.trim());
+    const sent = message.trim() ? entry(id, "reply", "Sam Rivera", message.trim()) : undefined;
     entry(id, "status", "Sam Rivera", "Solved");
     h.status = "resolved"; h.resolved_by = "Sam Rivera"; h.resolved_at = new Date().toISOString(); waits[id] = false;
-    return wait(told(h, `Resolved, and ${h.who} has been told (Discord DM).`, "Resolved"));
+    return wait(told(h, `Resolved, and ${h.who} has been told (Discord DM).`, "Resolved", sent));
   }
   if (h.status === "resolved") { h.status = "open"; entry(id, "status", "Sam Rivera", "Reopened"); }
   if (status === "waiting") { waits[id] = true; entry(id, "status", "Sam Rivera", "Waiting on them"); }
@@ -627,6 +632,6 @@ function withTicket(r: MediaRequest): MediaRequest {
   const h = helps.find((x) => x.request === r.id && x.status === "open");
   if (!h) return r;
   const thread = threadOf(h).filter((e) => e.kind === "member" || e.kind === "reply" || (e.kind === "status" && ["Solved", "Reopened"].includes(e.text)))
-    .map((e) => (e.kind === "member" ? { ...e, by: "You" } : e));
+    .map(({ id, at, by, kind, text }) => ({ id, at, kind, text, by: kind === "member" ? "You" : by }));
   return { ...r, help: { id: h.id, reason: h.reason, status: h.status, waiting: !!waits[h.id], thread } };
 }

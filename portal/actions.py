@@ -711,18 +711,20 @@ class Actions:
             return {"ok": True, "message": "Resolved."}
         text = reply or f"An admin looked into your request for {h['title']} and it should be sorted now."
         how = await self.tell_member(h, text, context=f"help resolved for {h['title']}", reply_button=False,
-                                     by=self.actor(user) if reply else None)
+                                     by=self.actor(user) if reply else None, entry=helpdesk.last_reply(h) if reply else None)
         logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']}, told: {how or 'nobody'}")
         if how:
             return {"ok": True, "told": True, "message": f"Resolved, and {h['who']} has been told ({TOLD_BY[how]})."}
         return {"ok": True, "told": False, "message": f"Resolved, but {self._not_told(h)}"}
 
-    async def tell_member(self, h: dict, text: str, *, context: str, reply_button: bool = True, by: Optional[str] = None) -> Optional[str]:
+    async def tell_member(self, h: dict, text: str, *, context: str, reply_button: bool = True, by: Optional[str] = None,
+                          entry: Optional[str] = None) -> Optional[str]:
         """A message to the member a ticket is about: a Discord DM (with a Reply button, so
         they can answer on the ticket from Discord), else (no Discord, or the DM didn't
         arrive) a phone/browser alert or email. `by`: the admin who wrote it, shown as
         "Message from …" under the request's title. Returns how it reached them ("discord",
-        "push" or "email"), or None: it reached nobody, which goes on the ticket's thread."""
+        "push" or "email"), or None: it reached nobody, which goes on the ticket's thread, and
+        the thread's reply entry it was (`entry`, its id) is marked "missed"."""
         if h.get("discord_id") and self.bot:
             from core.admin_mirror import dm_user_id
             from portal.ticket_view import reply_embed, reply_view
@@ -738,7 +740,7 @@ class Actions:
             return how
         if h.get("id"):
             from portal import help as helpdesk
-            await helpdesk.add(h["id"], "action", "Plexbie", f"This didn't reach {h['who']}: {self._why_not(h)}")
+            await helpdesk.not_reached(h["id"], entry, f"This didn't reach {h['who']}: {self._why_not(h)}")
         return None
 
     def _why_not(self, h: dict) -> str:
@@ -805,7 +807,8 @@ class Actions:
             message = str(body.get("message") or "").strip()[:600] or \
                 f"An admin is looking into your request for {title}. You'll hear back here when it's sorted."
             h = await helpdesk.add(h["id"], "reply", self.actor(user), message) or h
-            how = await self.tell_member(h, message, context=f"ticket opened on {title}", by=self.actor(user) if body.get("message") else None)
+            how = await self.tell_member(h, message, context=f"ticket opened on {title}", by=self.actor(user) if body.get("message") else None,
+                                         entry=helpdesk.last_reply(h))
         logger.info(f"{self.actor(user)} opened ticket {h['id']} on No. {row.get('slot')} ({title}), told: {(how or 'nobody') if tell else 'no'}")
         out = {"ok": True, "message": "Ticket opened. It's on Manage → Tickets.", "help": {"id": h["id"], "reason": h["reason"]}}
         if tell and how:
@@ -833,7 +836,8 @@ class Actions:
             raise web.HTTPBadRequest(text='{"error":"Write something first."}', content_type="application/json")
         if body.get("kind") == "reply":
             h = await helpdesk.add(hid, "reply", self.actor(user), text, quiet=False)
-            how = await self.tell_member(h, text, context=f"ticket reply on {h['title']}", by=self.actor(user))
+            how = await self.tell_member(h, text, context=f"ticket reply on {h['title']}", by=self.actor(user),
+                                         entry=helpdesk.last_reply(h))
             if how:
                 return {"ok": True, "told": True, "message": f"Sent to {h['who']} ({TOLD_BY[how]})."}
             return {"ok": True, "told": False, "message": f"Added to the ticket, but {self._not_told(h)}"}

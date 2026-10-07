@@ -2393,7 +2393,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
                 ) : (
                   <>
                     <span className="m-thread__head">
-                      <b>{e.by}</b>{ENTRY_LABEL[e.kind] ? <span className="m-thread__tag">{e.kind === "reply" ? `Sent to ${t.who}` : ENTRY_LABEL[e.kind]}</span> : null}
+                      <b>{e.by}</b>{ENTRY_LABEL[e.kind] ? <span className={`m-thread__tag${e.missed ? " is-missed" : ""}`}>{e.kind === "reply" ? (e.missed ? "Not delivered" : `Sent to ${t.who}`) : ENTRY_LABEL[e.kind]}</span> : null}
                       <span className="muted">{since(e.at)}</span>
                     </span>
                     <span className="m-thread__text">{e.text}</span>

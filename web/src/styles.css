@@ -1895,7 +1895,8 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-reqsheet__ticket { flex-wrap: wrap; align-items: center; }
 .m-reqsheet__ticket .m-btn { margin-left: auto; min-height: 36px; }
 
-/* The timeline: notes only admins see are tinted amber and labelled; replies the member got are pink. */
+/* The timeline: notes only admins see are tinted amber and labelled; replies the member got are pink
+   (one that reached nobody says "Not delivered" in the error colour). */
 .m-thread { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .m-thread__entry { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; background: var(--panel-raised); border: 1px solid transparent; }
 .m-thread__entry.is-note { background: rgb(229 160 13 / 0.1); border-color: rgb(229 160 13 / 0.35); }
@@ -1907,6 +1908,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-thread__tag { padding: 1px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; background: rgb(255 255 255 / 0.06); }
 .is-note .m-thread__tag { color: #f2c66d; background: rgb(229 160 13 / 0.16); }
 .is-reply .m-thread__tag { color: var(--screen); background: rgb(255 209 228 / 0.14); }
+.is-reply .m-thread__tag.is-missed { color: var(--tally); background: rgb(255 92 147 / 0.16); }
 .m-thread__text { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .m-composer { display: grid; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid var(--rule); background: var(--panel); }

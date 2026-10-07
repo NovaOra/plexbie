@@ -307,6 +307,8 @@ export interface TicketEntry {
   id: string; at: string; by: string;
   kind: "member" | "note" | "reply" | "action" | "status";
   text: string;
+  /** A reply that reached nobody (admins only). */
+  missed?: boolean;
 }
 export interface MemberTicket {
   id: string; reason: string;
