@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 
 #: (max actions, per seconds) by kind.
 LIMITS = {"request": (20, 3600), "join": (3, 86400), "admin": (120, 3600), "push_test": (6, 3600), "help": (5, 86400),
-          "push": (20, 3600), "lookup": (600, 3600)}
+          "push": (20, 3600), "lookup": (600, 3600), "browse": (600, 3600), "prefs": (120, 3600)}
 
 #: What the website shows when the cleanup cog won't touch its settings: it hasn't
 #: been able to read the stored ones, or couldn't store a change.

@@ -898,6 +898,12 @@ docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config
   provable server, commands are off, never global. Events from other servers are ignored, and
   DMs reach the admins only from members of the `GUILD_ID` server and `BOT_OWNER_ID`; anyone else's
   are left out of Manage → Messages and only noted in the log. Keep Public Bot off.
+- **Each member's use of the website and app has hourly limits**, counted per Discord
+  or Plex account they sign in with, so one member, or a stolen app sign-in, can't drive
+  endless calls to Seerr, TMDB and Open Library from your server: 600 searches and title
+  pages an hour (the one search box and "More like this" included), a separate 600 pages
+  of Discover shelves, and 120 saves of their language choices, with smaller limits on
+  requests, alerts and help. Past a limit the website and app say to try again later.
 - **Never commit `config/.env`.** It is gitignored, along with `config/*.db` and
   `logs/`.
 - **Only press Allow on a Plex sign-in you started yourself.** Every Plex sign-in

@@ -165,6 +165,83 @@ def test_rate_limits_stop_a_flood():
     actions.limit("plex:10", "join")  # someone else is unaffected
 
 
+def test_searching_browsing_and_saving_choices_have_hourly_limits():
+    """Each of these costs Seerr, TMDB or Open Library calls (or a disk write), so a
+    member, or a stolen app sign-in, can't drive them without end: the one search
+    box and "More like this" share search's allowance, scrolling a Discover shelf
+    has its own (so browsing can't use up searching), and so does saving language
+    choices. The call past the limit is refused before anything upstream is asked."""
+    from portal import prefs as prefs_module
+    from portal.actions import LIMITS
+    from portal.data import Data
+
+    asked = []
+
+    class _Data(Data):
+        async def search_all(self, q):
+            asked.append("search_all")
+            return {"movie": [], "tv": [], "book": []}
+
+        async def similar(self, kind, tid):
+            asked.append("similar")
+            return []
+
+        async def shelf(self, kind, key, page, langs=None):
+            asked.append("shelf")
+            return {"kind": kind, "key": key, "page": page, "items": []}
+
+    store = {}
+
+    async def kv_get(ns, key):
+        return store.get((ns, key))
+
+    async def kv_set(ns, key, value):
+        asked.append("prefs")
+        store[(ns, key)] = value
+
+    routes = (("GET", "/api/search/all?q=dune", "lookup", "search_all"),
+              ("GET", "/api/titles/movie/5/similar", "lookup", "similar"),
+              ("GET", "/api/discover/movie/genre-18?page=2", "browse", "shelf"),
+              ("POST", "/api/prefs", "prefs", "prefs"))
+
+    async def scenario(method, path, kind, uses_up=None):
+        services = FakeServices(Config())
+        actions = _Actions(services)
+
+        async def who(request):
+            return MEMBER
+
+        app = build_app(services, who=who, readonly=False, dist=None, image_cache=tempfile.mkdtemp(),
+                        data=_Data(services), actions=actions)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for _ in range(LIMITS[uses_up or kind][0] - (0 if uses_up else 1)):
+                actions.limit(MEMBER["user"]["id"], uses_up or kind)
+            statuses = []
+            for _ in range(2):
+                resp = await client.request(method, path, headers=OK_HEADERS, data=json.dumps({"languages": ["en"]}))
+                statuses.append(resp.status)
+            return statuses
+        finally:
+            await client.close()
+
+    saved = prefs_module.kv_get, prefs_module.kv_set
+    prefs_module.kv_get, prefs_module.kv_set = kv_get, kv_set
+    try:
+        for method, path, kind, upstream in routes:
+            assert kind in LIMITS, f"{path} has no hourly limit"
+            asked.clear()
+            statuses = asyncio.run(scenario(method, path, kind))
+            assert statuses == [200, 429], f"{path}: the last call within the hour works, the next is refused, got {statuses}"
+            assert asked == [upstream], f"{path}: the refused call still reached {asked[1:]}"
+        asked.clear()
+        statuses = asyncio.run(scenario("GET", "/api/discover/movie/genre-18?page=2", "browse", uses_up="lookup"))
+        assert statuses == [200, 200] and asked == ["shelf", "shelf"], "scrolling Discover isn't stopped by a used-up search allowance"
+    finally:
+        prefs_module.kv_get, prefs_module.kv_set = saved
+
+
 # ------------------------------------------------- decisions and the store
 async def _init(path):
     import database.session as session_module

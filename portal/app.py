@@ -243,7 +243,9 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         return web.json_response(await data.my_requests(*ids(user)))
 
     async def search_all(request):
-        await member(request)
+        user = await member(request)
+        if actions is not None:
+            actions.limit(user["user"]["id"], "lookup")
         return web.json_response(await data.search_all(request.query.get("q", "")))
 
     async def discover(request):
@@ -254,7 +256,11 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
 
     async def discover_shelf(request):
         from portal import prefs
-        mine = await prefs.get(await member(request))
+        user = await member(request)
+        if actions is not None:
+            # Its own allowance: scrolling Discover shouldn't use up searching.
+            actions.limit(user["user"]["id"], "browse")
+        mine = await prefs.get(user)
         try:
             page = int(request.query.get("page", "1"))
         except ValueError:
@@ -267,7 +273,9 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         return web.json_response({**await prefs.get(await member(request)), "languageOptions": prefs.options()})
 
     async def similar(request):
-        await member(request)
+        user = await member(request)
+        if actions is not None:
+            actions.limit(user["user"]["id"], "lookup")
         return web.json_response(await data.similar(request.match_info["kind"], request.match_info["id"]))
 
     async def popular(request):
@@ -570,7 +578,9 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         async def post_prefs(request):
             from portal import prefs
             payload = await body(request)
-            return web.json_response(await prefs.save(await member(request), payload))
+            user = await member(request)
+            actions.limit(user["user"]["id"], "prefs")
+            return web.json_response(await prefs.save(user, payload))
         r.add_post("/api/prefs", safe(post_prefs))
         r.add_post("/api/join", safe(post_join))
 
