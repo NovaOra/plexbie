@@ -42,6 +42,8 @@ LIMITS = {"request": (20, 3600), "join": (3, 86400), "admin": (120, 3600), "push
 #: been able to read the stored ones, or couldn't store a change.
 CLEANUP_UNREADABLE = "Couldn't read the saved cleanup settings, so nothing was changed. Try again in a moment."
 CLEANUP_UNSAVED = "Couldn't save the cleanup settings, so nothing was changed. Try again in a moment."
+#: How a message about their ticket reached the member, as an admin is told it.
+TOLD_BY = {"discord": "Discord DM", "push": "phone alert", "email": "email"}
 
 
 def _flag(body: dict, key: str) -> bool:
@@ -708,26 +710,48 @@ class Actions:
             logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']} (an admin's own ticket; nobody told)")
             return {"ok": True, "message": "Resolved."}
         text = reply or f"An admin looked into your request for {h['title']} and it should be sorted now."
-        await self.tell_member(h, text, context=f"help resolved for {h['title']}", reply_button=False,
-                               by=self.actor(user) if reply else None)
-        logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']}")
-        return {"ok": True, "message": f"Resolved, and {h['who']} has been told."}
+        how = await self.tell_member(h, text, context=f"help resolved for {h['title']}", reply_button=False,
+                                     by=self.actor(user) if reply else None)
+        logger.info(f"{self.actor(user)} resolved help {hid} on {h['title']}, told: {how or 'nobody'}")
+        if how:
+            return {"ok": True, "told": True, "message": f"Resolved, and {h['who']} has been told ({TOLD_BY[how]})."}
+        return {"ok": True, "told": False, "message": f"Resolved, but {self._not_told(h)}"}
 
-    async def tell_member(self, h: dict, text: str, *, context: str, reply_button: bool = True, by: Optional[str] = None) -> None:
+    async def tell_member(self, h: dict, text: str, *, context: str, reply_button: bool = True, by: Optional[str] = None) -> Optional[str]:
         """A message to the member a ticket is about: a Discord DM (with a Reply button, so
-        they can answer on the ticket from Discord), else a phone/browser alert or email.
-        `by`: the admin who wrote it, shown as "Message from …" under the request's title."""
+        they can answer on the ticket from Discord), else (no Discord, or the DM didn't
+        arrive) a phone/browser alert or email. `by`: the admin who wrote it, shown as
+        "Message from …" under the request's title. Returns how it reached them ("discord",
+        "push" or "email"), or None: it reached nobody, which goes on the ticket's thread."""
         if h.get("discord_id") and self.bot:
             from core.admin_mirror import dm_user_id
             from portal.ticket_view import reply_embed, reply_view
             view = reply_view(h["id"]) if reply_button and h.get("id") else None
-            await dm_user_id(self.bot, self.services, h["discord_id"], context=context, embed=reply_embed(h, text, by, reply=bool(view)),
-                             view=view, sent_by=by)
-        else:
-            from core.notify import notify_member
-            await notify_member(self.services, title=f"About your request: {h['title']}", body=f"Message from {by}: {text}" if by else text,
-                                url="/schedule", plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"),
-                                context=context, sent_by=by)
+            if await dm_user_id(self.bot, self.services, h["discord_id"], context=context, embed=reply_embed(h, text, by, reply=bool(view)),
+                                view=view, sent_by=by, own_fallback=True):
+                return "discord"
+        from core.notify import notify_member
+        how = await notify_member(self.services, title=f"About your request: {h['title']}", body=f"Message from {by}: {text}" if by else text,
+                                  url="/schedule", plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"),
+                                  discord_id=h.get("discord_id"), context=context, sent_by=by)
+        if how in TOLD_BY:
+            return how
+        if h.get("id"):
+            from portal import help as helpdesk
+            await helpdesk.add(h["id"], "action", "Plexbie", f"This didn't reach {h['who']}: {self._why_not(h)}")
+        return None
+
+    def _why_not(self, h: dict) -> str:
+        # "Reached them" rather than "they have": notify_member can't tell nowhere to send
+        # apart from a send that failed (an email server that refused it).
+        if h.get("discord_id"):
+            dm = "Plexbie couldn't DM them on Discord" if self.bot else "Plexbie isn't connected to Discord"
+            return f"{dm}, and no phone alert or email reached them either."
+        return "no phone alert or email reached them."
+
+    def _not_told(self, h: dict) -> str:
+        """The end of an answer whose message reached nobody."""
+        return f"it didn't reach {h['who']}: {self._why_not(h)} Tell them another way."
 
     # ------------------------------------------------- all requests (admin)
     async def _request_for_admin(self, key: str) -> dict:
@@ -776,14 +800,19 @@ class Actions:
             await self._tell_admins_about_help(h)
         except Exception as e:
             logger.warning(f"Ticket {h['id']} saved, but telling the admins failed: {type(e).__name__}: {e}")
+        how = None
         if tell:
             message = str(body.get("message") or "").strip()[:600] or \
                 f"An admin is looking into your request for {title}. You'll hear back here when it's sorted."
             h = await helpdesk.add(h["id"], "reply", self.actor(user), message) or h
-            await self.tell_member(h, message, context=f"ticket opened on {title}", by=self.actor(user) if body.get("message") else None)
-        logger.info(f"{self.actor(user)} opened ticket {h['id']} on No. {row.get('slot')} ({title}), told: {tell}")
-        return {"ok": True, "message": f"Ticket opened{f', and {who} has been told' if tell else ''}. It's on Manage → Tickets.",
-                "help": {"id": h["id"], "reason": h["reason"]}}
+            how = await self.tell_member(h, message, context=f"ticket opened on {title}", by=self.actor(user) if body.get("message") else None)
+        logger.info(f"{self.actor(user)} opened ticket {h['id']} on No. {row.get('slot')} ({title}), told: {(how or 'nobody') if tell else 'no'}")
+        out = {"ok": True, "message": "Ticket opened. It's on Manage → Tickets.", "help": {"id": h["id"], "reason": h["reason"]}}
+        if tell and how:
+            out.update(told=True, message=f"Ticket opened, and {who} has been told ({TOLD_BY[how]}). It's on Manage → Tickets.")
+        elif tell:
+            out.update(told=False, message=f"Ticket opened, but {self._not_told(h)} It's on Manage → Tickets.")
+        return out
 
     # ------------------------------------------------------------ tickets
     async def _ticket(self, hid: str) -> dict:
@@ -804,8 +833,10 @@ class Actions:
             raise web.HTTPBadRequest(text='{"error":"Write something first."}', content_type="application/json")
         if body.get("kind") == "reply":
             h = await helpdesk.add(hid, "reply", self.actor(user), text, quiet=False)
-            await self.tell_member(h, text, context=f"ticket reply on {h['title']}", by=self.actor(user))
-            return {"ok": True, "message": f"Sent to {h['who']}."}
+            how = await self.tell_member(h, text, context=f"ticket reply on {h['title']}", by=self.actor(user))
+            if how:
+                return {"ok": True, "told": True, "message": f"Sent to {h['who']} ({TOLD_BY[how]})."}
+            return {"ok": True, "told": False, "message": f"Added to the ticket, but {self._not_told(h)}"}
         await helpdesk.add(hid, "note", self.actor(user), text)
         return {"ok": True, "message": "Note added. Only admins see it."}
 

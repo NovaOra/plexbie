@@ -403,7 +403,7 @@ export const askHelp = (requestId: string, reason: string) => {
 export const helpResolve = (id: string) => {
   const h = helps.find((x) => x.id === id);
   if (h) { h.status = "resolved"; h.resolved_by = "Sam Rivera"; h.resolved_at = new Date().toISOString(); }
-  return wait({ ok: true, message: `Resolved, and ${h?.who ?? "they"} has been told.` });
+  return wait(told(h, `Resolved, and ${h?.who ?? "they"} has been told (Discord DM).`, "Resolved"));
 };
 
 /* ------------------------------------------------- all requests (Manage) */
@@ -484,7 +484,8 @@ export const requestTicket = (key: string, note: string, tell: boolean, message 
   threadOf(helps[0]);
   if (tell) entry(help.id, "reply", "Sam Rivera", message.trim() || `An admin is looking into your request for ${r?.title.title ?? "it"}.`);
   if (r) { r.help = help; r.stuck = [`Help asked: ${help.reason}`, ...r.stuck]; }
-  return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told` : ""}. It's on Manage → Tickets.`, help }, 450);
+  return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told (Discord DM)` : ""}. It's on Manage → Tickets.`,
+    help, ...(tell ? { told: true } : {}) }, 450);
 };
 export const requestSearch = (key: string, how: "again" | "episodes" | "name") => {
   const said = { again: "Searching again.", episodes: "Searching one episode at a time.", name: "Plexbie is searching NZBHydra by name. It reports back in the admin channel." }[how];
@@ -558,6 +559,14 @@ function entry(id: string, kind: Entry["kind"], by: string, text: string) {
   const h = helps.find((x) => x.id === id);
   if (h) threadOf(h).push({ id: `x${nextEntry++}`, at: new Date().toISOString(), by, kind, text });
 }
+/** h2's member can't be reached (closed DMs, no alerts, no email): an admin's reply or
+ *  "Solved" on it says so, and so does its timeline; on any other ticket it arrives. */
+function told(h: Help | undefined, said: string, done: string) {
+  if (h?.id !== "h2") return { ok: true, told: true, message: said };
+  const why = "Plexbie couldn't DM them on Discord, and no phone alert or email reached them either.";
+  entry(h.id, "action", "Plexbie", `This didn't reach ${h.who}: ${why}`);
+  return { ok: true, told: false, message: `${done}, but it didn't reach ${h.who}: ${why} Tell them another way.` };
+}
 function ticketRow(h: Help): import("./types").AdminTicketRow {
   const t = threadOf(h);
   const last = t[t.length - 1];
@@ -582,8 +591,9 @@ export const adminTicket = (id: string) => {
 };
 export const ticketComment = (id: string, kind: "note" | "reply", text: string) => {
   entry(id, kind, "Sam Rivera", text);
-  const who = helps.find((x) => x.id === id)?.who ?? "them";
-  return wait({ ok: true, message: kind === "reply" ? `Sent to ${who}.` : "Note added. Only admins see it." }, 350);
+  const h = helps.find((x) => x.id === id);
+  if (kind === "reply") return wait(told(h, `Sent to ${h?.who ?? "them"} (Discord DM).`, "Added to the ticket"), 350);
+  return wait({ ok: true, message: "Note added. Only admins see it." }, 350);
 };
 export const ticketStatus = (id: string, status: "open" | "waiting" | "resolved", message = "") => {
   const h = helps.find((x) => x.id === id);
@@ -592,7 +602,7 @@ export const ticketStatus = (id: string, status: "open" | "waiting" | "resolved"
     if (message.trim()) entry(id, "reply", "Sam Rivera", message.trim());
     entry(id, "status", "Sam Rivera", "Solved");
     h.status = "resolved"; h.resolved_by = "Sam Rivera"; h.resolved_at = new Date().toISOString(); waits[id] = false;
-    return wait({ ok: true, message: `Resolved, and ${h.who} has been told.` });
+    return wait(told(h, `Resolved, and ${h.who} has been told (Discord DM).`, "Resolved"));
   }
   if (h.status === "resolved") { h.status = "open"; entry(id, "status", "Sam Rivera", "Reopened"); }
   if (status === "waiting") { waits[id] = true; entry(id, "status", "Sam Rivera", "Waiting on them"); }

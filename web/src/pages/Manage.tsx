@@ -2125,7 +2125,7 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
     const out = await act("ticket", () => api.requestTicket(id, note.trim(), tell, tell ? message.trim() : ""), { failText: "Couldn’t open the ticket" });
     if (!out) return;
     buzz(12);
-    toast({ text: "Ticket opened", detail: out.message });
+    toast(out.told === false ? { tone: "error", text: "Not delivered", detail: out.message } : { text: "Ticket opened", detail: out.message });
     setWriting(false);
     setNote("");
     after();
@@ -2324,7 +2324,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const run = async (key: string, call: () => Promise<Ack>, done: string) => {
     const out = await act(key, call);
     if (!out) return false;
-    toast({ text: done, detail: out.message });
+    toast(out.told === false ? { tone: "error", text: "Not delivered", detail: out.message } : { text: done, detail: out.message });
     after();
     return true;
   };

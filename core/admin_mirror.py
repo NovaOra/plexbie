@@ -85,15 +85,23 @@ async def _to_app(user, content: Optional[str], embed) -> None:
         logger.info(f"App copy of a DM failed: {type(e).__name__}")
 
 
-async def send_user_dm(bot, services, user, *, context: str, content: Optional[str] = None,
-                       embed: Optional[discord.Embed] = None, view=None, sent_by: Optional[str] = None):
-    """DM someone and log it on Manage → Messages (delivered or not; the admin channel no
-    longer gets a receipt for every DM). Raises if the DM didn't go. A copy goes to the
-    Plexbie app on their phone either way, which helps most when their DMs are closed."""
+def _to_app_soon(user, content: Optional[str], embed) -> None:
     # In the background: the DM never waits on Expo's push service.
     task = asyncio.create_task(_to_app(user, content, embed))
     _app_tasks.add(task)
     task.add_done_callback(_app_tasks.discard)
+
+
+async def send_user_dm(bot, services, user, *, context: str, content: Optional[str] = None,
+                       embed: Optional[discord.Embed] = None, view=None, sent_by: Optional[str] = None,
+                       own_fallback: bool = False):
+    """DM someone and log it on Manage → Messages (delivered or not; the admin channel no
+    longer gets a receipt for every DM). Raises if the DM didn't go. A copy goes to the
+    Plexbie app on their phone either way, which helps most when their DMs are closed.
+    `own_fallback`: the caller tells them another way when the DM doesn't go (a ticket
+    reply), so the app copy goes only with a DM that arrived and they're never told twice."""
+    if not own_fallback:
+        _to_app_soon(user, content, embed)
     try:
         sent = await user.send(content=content, embed=embed, **({"view": view} if view is not None else {}))
     except Exception as e:
@@ -101,12 +109,15 @@ async def send_user_dm(bot, services, user, *, context: str, content: Optional[s
                    error="Their Discord DMs are closed" if isinstance(e, discord.Forbidden) else str(e))
         raise
 
+    if own_fallback:
+        _to_app_soon(user, content, embed)
     await _log(user, context=context, content=content, embed=embed, delivered=True, sent_by=sent_by)
     return sent
 
 
 async def dm_user_id(bot, services, user_id, *, context: str, content: Optional[str] = None,
-                     embed: Optional[discord.Embed] = None, view=None, sent_by: Optional[str] = None):
+                     embed: Optional[discord.Embed] = None, view=None, sent_by: Optional[str] = None,
+                     own_fallback: bool = False):
     """DM a Discord account by id: from the cache, else fetched. The sent message (truthy)
     if it went, else False; a closed DM or any failure is logged (on Manage → Messages),
     never raised."""
@@ -116,7 +127,7 @@ async def dm_user_id(bot, services, user_id, *, context: str, content: Optional[
         uid = int(user_id)
         user = bot.get_user(uid) or await bot.fetch_user(uid)
         sent = await send_user_dm(bot, services, user, context=context, content=content, embed=embed, view=view,
-                                  sent_by=sent_by)
+                                  sent_by=sent_by, own_fallback=own_fallback)
         return sent or True
     except Exception as e:
         logger.info(f"Couldn't DM {user_id} ({context}): {e}")

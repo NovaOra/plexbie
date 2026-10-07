@@ -522,13 +522,15 @@ def alert_admins_soon(bot, config, *, title: str, body: str, url: str, tag: str)
 # household's pages moved): older versions of the phone app only know those addresses.
 async def notify_member(services, *, title: str, body: str, url: str = "/app", tag: Optional[str] = None,
                         plex_account_id: Optional[str] = None, plex_name: Optional[str] = None,
-                        email: Optional[str] = None, context: str = "", sent_by: Optional[str] = None) -> str:
-    """Tell a member something without Discord. Returns "push", "email" or "none"."""
+                        discord_id: Optional[str] = None, email: Optional[str] = None, context: str = "",
+                        sent_by: Optional[str] = None) -> str:
+    """Tell a member something without Discord. Returns "push", "email" or "none".
+    `discord_id` also finds the alerts they turned on while signed in with Discord."""
     from core.message_log import record
     how = "none"
     try:
-        subs = await subscriptions_for(plex_account_id=plex_account_id, plex_name=plex_name)
-        apps = await apps_for(plex_account_id=plex_account_id, plex_name=plex_name)
+        subs = await subscriptions_for(plex_account_id=plex_account_id, plex_name=plex_name, discord_id=discord_id)
+        apps = await apps_for(plex_account_id=plex_account_id, plex_name=plex_name, discord_id=discord_id)
         payload = {"title": title, "body": body, "url": url, "tag": tag or context or None}
         if await _push(subs, payload) + await _push_app(apps, payload):
             logger.info(f"Notified {plex_name or plex_account_id} by web push ({context})")

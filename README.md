@@ -101,7 +101,9 @@ The bot serves its own website from the same container, on port 7979 out of the 
 - **Trending right now:** the top 15 films and shows this week, with *On Plex* on anything you already have.
 - **Something wrong? Open a ticket:** a member flags a stuck request on the website, in the app, or with the
   button on Plexbie's approval DM. Admins work it on Manage → Tickets: take it, add notes only admins see,
-  reply (the member answers from Discord, the website or the app), search again, and solve it.
+  reply (the member answers from Discord, the website or the app), search again, and solve it. A reply goes
+  as a Discord DM, or as a phone alert or email when their DMs are closed, and Plexbie tells you (and notes on
+  the ticket) when it reached nobody, so you can tell them another way.
 - **Plexbie's DMs, shared by the admins:** a DM to Plexbie from someone in your household's server alerts the
   admins, lands on Manage → Messages and in its own thread under the admin channel. Answer as Plexbie, signed
   with your name, from the website, the app or Discord.

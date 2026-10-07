@@ -37,8 +37,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return res.status === 204 ? (undefined as T) : res.json();
 }
 
-/** What the admin actions answer: whether it worked, and a line to show. */
-export type Ack = { ok: boolean; message: string };
+/** What the admin actions answer: whether it worked, and a line to show. `told`, on a
+ *  reply to a ticket's member, "Solved" or a ticket opened to tell them: whether it
+ *  reached them (false: it reached nobody, and `message` says so). Absent when nobody
+ *  was to be told. */
+export type Ack = { ok: boolean; message: string; told?: boolean };
 const post = <T = Ack,>(path: string, body: unknown = {}) => call<T>(path, { method: "POST", body: JSON.stringify(body) });
 const enc = encodeURIComponent;
 
