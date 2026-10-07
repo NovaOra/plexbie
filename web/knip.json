@@ -8,6 +8,7 @@
     "src/**/*.{ts,tsx}",
     "scripts/*.mjs"
   ],
+  "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@fontsource-variable/archivo"
   ]

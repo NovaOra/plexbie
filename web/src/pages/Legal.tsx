@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { useTitle, PageHead } from "../components/ui";
+import { useTitle, LegalDoc } from "../components/ui";
 import { SITE } from "../site";
 
 // Plain-language policies for this household's Plexbie. Every install shows them,
@@ -11,22 +10,13 @@ import { SITE } from "../site";
 const UPDATED = "October 4, 2026";
 const WHO = SITE.operator || "its owner";
 
-function Doc({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <article className="shell page legal">
-      <PageHead as="header" title={title} lede={`Last updated ${UPDATED}`} />
-      <div className="legal__body">{children}</div>
-    </article>
-  );
-}
-
 /** Where to ask: their email if they gave one, else the admins. */
 const Ask = () => (SITE.contact ? <a href={`mailto:${SITE.contact}`}>{SITE.contact}</a> : <>an admin in the Discord server</>);
 
 export function Privacy() {
   useTitle("Privacy");
   return (
-    <Doc title="Privacy">
+    <LegalDoc title="Privacy" updated={UPDATED}>
       <p>
         This website is a private, non-commercial service run by {WHO} for the members of one household and its
         private Discord server. It runs Plexbie, free software anyone can host for their own household. This page explains
@@ -89,14 +79,14 @@ export function Privacy() {
 
       <h2>Changes</h2>
       <p>If this page changes, the date at the top changes too, and anything significant is announced in the Discord server.</p>
-    </Doc>
+    </LegalDoc>
   );
 }
 
 export function Terms() {
   useTitle("Terms");
   return (
-    <Doc title="Terms of use">
+    <LegalDoc title="Terms of use" updated={UPDATED}>
       <p>
         These terms cover this website, run by {WHO}. By logging in you agree to them. Questions go to <Ask />.
       </p>
@@ -134,6 +124,6 @@ export function Terms() {
 
       <h2>Changes</h2>
       <p>If these terms change, the date at the top changes too. See also the <Link to="/privacy">privacy policy</Link>.</p>
-    </Doc>
+    </LegalDoc>
   );
 }

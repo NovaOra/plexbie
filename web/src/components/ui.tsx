@@ -169,7 +169,7 @@ export function since(iso: string) {
   const d = h / 24;
   if (d < 2) return "yesterday";
   if (d < 14) return `${Math.round(d)}\u00a0days ago`;
-  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return shortDate(iso);
 }
 
 export const formatSlot = (n: number) => String(n).padStart(4, "0");
@@ -217,6 +217,16 @@ export function PageHead({ title, lede, as: Tag = "div", children }: {
       {lede ? <p className="muted">{lede}</p> : null}
       {children}
     </Tag>
+  );
+}
+
+/** A Privacy or Terms page: title, "Last updated" date, then the text. */
+export function LegalDoc({ title, updated, children }: { title: string; updated: string; children: ReactNode }) {
+  return (
+    <article className="shell page legal">
+      <PageHead as="header" title={title} lede={`Last updated ${updated}`} />
+      <div className="legal__body">{children}</div>
+    </article>
   );
 }
 

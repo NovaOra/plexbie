@@ -600,7 +600,7 @@ function ticketRow(h: Help): import("./types").AdminTicketRow {
     openedBy: h.opened_by ?? null, offer: h.offer ?? null, createdAt: h.created_at, updatedAt: last?.at ?? h.created_at,
     last: last ? { by: last.by, kind: last.kind, text: last.text.slice(0, 160) } : null, count: t.length };
 }
-export function ticketsList(): import("./types").AdminTickets {
+function ticketsList(): import("./types").AdminTickets {
   const rows = helps.map(ticketRow);
   const newest = (rs: typeof rows) => rs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const action = newest(rows.filter((r) => r.status === "open" && !r.waiting));

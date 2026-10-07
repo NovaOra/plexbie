@@ -1,6 +1,5 @@
-import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { PageHead, useTitle } from "../components/ui";
+import { LegalDoc, useTitle } from "../components/ui";
 import { CONTACT, OPERATOR } from "./links";
 
 // The project site's own policies. This site only describes Plexbie: nobody signs in
@@ -9,21 +8,12 @@ import { CONTACT, OPERATOR } from "./links";
 
 const UPDATED = "October 4, 2026";
 
-function Doc({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <article className="shell page legal">
-      <PageHead as="header" title={title} lede={`Last updated ${UPDATED}`} />
-      <div className="legal__body">{children}</div>
-    </article>
-  );
-}
-
 const Mail = () => <a href={`mailto:${CONTACT}`}>{CONTACT}</a>;
 
 export function ProjectPrivacy() {
   useTitle("Privacy");
   return (
-    <Doc title="Privacy">
+    <LegalDoc title="Privacy" updated={UPDATED}>
       <p>
         plexbie.com is the website of Plexbie, a free, open-source project by {OPERATOR}. It describes the software and
         where to get it. Questions go to <Mail />.
@@ -100,14 +90,14 @@ export function ProjectPrivacy() {
       </p>
       <h2>Changes</h2>
       <p>If this page changes, the date at the top changes too.</p>
-    </Doc>
+    </LegalDoc>
   );
 }
 
 export function ProjectTerms() {
   useTitle("Terms");
   return (
-    <Doc title="Terms of use">
+    <LegalDoc title="Terms of use" updated={UPDATED}>
       <p>These terms cover plexbie.com, run by {OPERATOR}. Questions go to <Mail />.</p>
       <h2>The software</h2>
       <p>
@@ -126,6 +116,6 @@ export function ProjectTerms() {
       </p>
       <h2>Changes</h2>
       <p>If these terms change, the date at the top changes too. See also the <Link to="/privacy">privacy policy</Link>.</p>
-    </Doc>
+    </LegalDoc>
   );
 }
