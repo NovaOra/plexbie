@@ -190,6 +190,7 @@ class _Harness:
         self.warned = []
         self.removed = []
         self.exemption_lost = []
+        self.alerts = []
         self.db = str(pathlib.Path(tempfile.mkdtemp()) / "exempt.db")
 
     def _make_cog(self):
@@ -233,9 +234,13 @@ class _Harness:
             harness.removed.append(user.plex_username)
             return True
 
+        async def alert(title, text, **kw):
+            harness.alerts.append(title)
+
         cog._send_warning_dm = warn
         cog._send_exemption_lost_dm = lost
         cog._remove_inactive_user = remove
+        cog._alert_admins = alert
         return module, cog
 
     def run(self):
@@ -473,7 +478,7 @@ def test_that_period_does_eventually_expire():
             "last_watched": None,
             "warning_sent": True,
         }],
-        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700),
+        tautulli_rows=[{**_u("a", 900), "last_seen": _seen(1)}, _u("b", 800), _u("c", 700),
                        {"friendly_name": "lapsed", "duration": 10,
                         "last_seen": _seen(200)}],
     )
@@ -511,3 +516,117 @@ def test_a_rename_in_tautulli_keeps_the_top_three_protection():
     h = _Harness(users=[row], tautulli_rows=[renamed, _u("b", 800), _u("c", 700), _u("d", 10)])
     h.run()
     assert "river975" not in h.removed and "river975" not in h.warned
+
+
+# ===================================================================
+# brakes: stale Tautulli history, and too many removals in one pass
+# ===================================================================
+
+def _seen_row(name, duration, days_ago):
+    return {**_u(name, duration), "last_seen": _seen(days_ago)}
+
+
+def test_stale_tautulli_history_warns_and_removes_nobody():
+    """Tautulli still answers, but nothing has been recorded for 10 days.
+
+    Every last_seen freezes when Tautulli stops collecting (a broken Plex
+    connection, a changed server address), so everyone drifts towards removal.
+    """
+    h = _Harness(
+        users=[_user("idler", 1, 40, warning_sent=True), _user("drifter", 2, 26)],
+        tautulli_rows=[_seen_row("a", 900, 10), _seen_row("b", 800, 12), _seen_row("c", 700, 15),
+                       _seen_row("idler", 10, 40), _seen_row("drifter", 10, 26)],
+    )
+    rows = h.run()
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
+    assert h.alerts, "the admins must hear that the check paused"
+    assert rows["idler"]["days_inactive"] == 40, "the activity figures are still saved"
+    assert rows["drifter"]["warning_sent"] == 0, "a warning that wasn't sent must not be recorded"
+
+
+def test_a_recent_play_by_anyone_keeps_the_check_running():
+    h = _Harness(
+        users=[_user("idler", 1, 40, warning_sent=True), _user("drifter", 2, 26)],
+        tautulli_rows=[_seen_row("a", 900, 1), _seen_row("b", 800, 12), _seen_row("c", 700, 15),
+                       _seen_row("idler", 10, 40), _seen_row("drifter", 10, 26)],
+    )
+    h.run()
+    assert h.removed == ["idler"] and h.warned == ["drifter"]
+    assert h.alerts == []
+
+
+def test_removing_too_many_at_once_removes_nobody():
+    """Five of five tracked people due in one pass looks like a fault, not a household."""
+    names = ["p1", "p2", "p3", "p4", "p5"]
+    h = _Harness(
+        users=[_user(n, i, 40, warning_sent=True) for i, n in enumerate(names, start=1)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700)] + [_u(n, 10) for n in names],
+    )
+    rows = h.run()
+    assert h.removed == [], f"removed {h.removed} in one pass"
+    assert h.alerts, "the admins must hear why nobody was removed"
+    assert set(rows) == set(names), "every row is kept"
+
+
+def test_up_to_three_removals_go_ahead_in_a_small_household():
+    names = ["p1", "p2", "p3"]
+    h = _Harness(
+        users=[_user(n, i, 40, warning_sent=True) for i, n in enumerate(names, start=1)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700)] + [_u(n, 10) for n in names],
+    )
+    h.run()
+    assert sorted(h.removed) == names
+    assert h.alerts == []
+
+
+def test_a_quarter_of_a_larger_household_can_go_in_one_pass():
+    idle = ["p1", "p2", "p3", "p4"]
+    active = [f"q{i}" for i in range(12)]
+    h = _Harness(
+        users=([_user(n, i, 40, warning_sent=True) for i, n in enumerate(idle, start=1)]
+               + [_user(n, 100 + i, 1) for i, n in enumerate(active)]),
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700)] + [_u(n, 10) for n in idle + active],
+    )
+    h.run()
+    assert sorted(h.removed) == idle, "4 of 16 is a quarter: allowed"
+
+
+def test_a_name_match_for_another_account_is_never_measured():
+    """The row is account 55; Tautulli's "river" is account 66, who has been idle."""
+    row = _user("river", 9, 1, plex_user_id=55, warning_sent=True)
+    other = {**_u("river", 10, user_id=66), "last_seen": _seen(40)}
+    h = _Harness(users=[row], tautulli_rows=[_seen_row("a", 900, 1), _u("b", 800), _u("c", 700), other])
+    h.run()
+    assert h.removed == [] and h.warned == [], "account 66's inactivity removed account 55's person"
+
+
+def test_people_already_off_the_share_do_not_count_towards_the_limit():
+    """Five due, but two of their accounts were taken off the share in Plex already."""
+    import core.plex_account as plex_account
+
+    names = ["p1", "p2", "p3", "p4", "p5"]
+
+    class SignedIn(_Harness):
+        def _make_cog(self):
+            module, cog = super()._make_cog()
+            cog.services.config.plex_token = "owner-token"
+            return module, cog
+
+    def no_shares(config):
+        raise LookupError("offline")
+
+    h = SignedIn(
+        users=[_user(n, i, 40, warning_sent=True, plex_user_id=i) for i, n in enumerate(names, start=1)],
+        tautulli_rows=[_u("a", 900), _u("b", 800), _u("c", 700)]
+                      + [_u(n, 10, user_id=i) for i, n in enumerate(names, start=1)],
+    )
+    from plugins.user_mgmt import cog as module
+    saved = module._fetch_shared_account_ids, plex_account.shared_accounts
+    module._fetch_shared_account_ids = lambda config: {"1", "2", "3"}
+    plex_account.shared_accounts = no_shares
+    try:
+        h.run()
+    finally:
+        module._fetch_shared_account_ids, plex_account.shared_accounts = saved
+    assert h.alerts == [], "three real removals are within the limit"
+    assert {"p1", "p2", "p3"} <= set(h.removed)

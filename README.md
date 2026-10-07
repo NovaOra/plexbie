@@ -206,6 +206,17 @@ who's watching from one place instead of five.
   accounts stay associated even when the display names differ.
 - Accounts are warned after a configurable period of inactivity and removed
   later, with the warning always delivered a full pass before any removal.
+  The removal takes off the Plex account whose inactivity was measured, never
+  whoever an old email or name now points at.
+- Two brakes stop the daily check from emptying the server on bad data, and
+  each tells the admins (admin channel and phone alerts):
+  - if Tautulli hasn't recorded a play by anyone for more than 7 days, its
+    history is treated as stale and nobody is warned or removed until plays
+    show up again;
+  - if one pass would remove more than 3 people, or a quarter of everyone
+    tracked when that is more, it removes nobody. Remove them by hand
+    (Manage → People or `/remove-user`) if they really are inactive. People
+    whose Plex account is already off the share don't count towards this.
 
 **Watching**
 
@@ -474,7 +485,7 @@ reply is ephemeral unless stated otherwise.
 | `/list-tracked-users` | | Database view, flagging accounts no longer on Plex |
 | `/manage-links` | | Link or unlink a Discord member and a Plex account |
 | `/requests` | | Requests still awaiting a decision, newest first |
-| `/remove-user` | `plex_username` | Remove from Plex, notify, and drop the tracking row |
+| `/remove-user` | `plex_username` | Remove from Plex, notify, and drop the tracking row (found on the Plex share by account id; someone already off it is just forgotten, with no removal DM; never the server owner) |
 | `/who-invited` | `member` | Who invited this member |
 | `/watchparty-active` | | The watch party in progress |
 | `/say` | `channel` `message` | Send a message as the bot (logged) |

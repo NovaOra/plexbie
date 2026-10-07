@@ -289,7 +289,7 @@ def test_removing_someone_who_never_joined_plex_forgets_them_and_takes_back_the_
             return []                      # not on the server
 
     cog = object.__new__(module.UserMgmtCog)
-    cog.services = type("S", (), {"plex_server": Server(), "config": object()})()
+    cog.services = type("S", (), {"plex_server": Server(), "config": type("C", (), {"bot_owner_id": None})()})()
 
     async def remove_role(discord_id):
         calls.append(("role", discord_id))

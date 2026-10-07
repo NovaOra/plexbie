@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+from plexapi.exceptions import NotFound as PlexNotFound
 from sqlalchemy import delete, func, select, update
 
 from core.blocking import run_blocking
@@ -32,6 +33,15 @@ INVITES_NAMESPACE = "plex_invites"
 
 # Discord allows 25 fields per embed.
 MAX_LISTED_USERS = 25
+
+# The inactivity check's brakes. When the newest play Tautulli knows of, by anyone,
+# is older than this, Tautulli has most likely stopped recording, and every
+# last_seen is frozen: the pass warns and removes nobody until plays show up again.
+STALE_HISTORY_DAYS = 7
+# One pass never removes more than this many people, or this share of everyone
+# tracked if that is more. Beyond it, the pass removes nobody and asks the admins.
+MAX_REMOVALS_PER_PASS = 3
+MAX_REMOVALS_SHARE = 0.25
 
 
 async def reconcile_accounts(accounts) -> list:
@@ -213,6 +223,44 @@ def _fetch_shared_usernames(config) -> set:
     return {user.title for user in account.users() if user.title}
 
 
+def _shared_friend(account, plex_user_id=None, title=None):
+    """Blocking: the account on the share that is this person, or None.
+
+    By Plex account id when it is known, otherwise by exact Plex name. Never by a
+    stored email, and never by name once the id is known: those can be stale, and
+    a stale one can belong to someone else by now.
+    """
+    users = account.users()
+    if plex_user_id:
+        return next((u for u in users if str(u.id) == str(plex_user_id)), None)
+    if title:
+        return next((u for u in users if u.title == title), None)
+    return None
+
+
+def _is_shared_with(config, plex_user_id=None, title=None) -> bool:
+    """Blocking: whether this person is on the share right now (see _shared_friend)."""
+    return _shared_friend(owner_account(config), plex_user_id, title) is not None
+
+
+def _fetch_shared_account_ids(config) -> set:
+    """Blocking: the Plex account ids currently on the share (the owner isn't one)."""
+    return {str(user.id) for user in owner_account(config).users() if user.id}
+
+
+def _remove_friend(config, plex_user_id=None, title=None) -> bool:
+    """Blocking: take one account off the share, found as _shared_friend finds it.
+
+    False when nobody matching is shared with any more.
+    """
+    account = owner_account(config)
+    friend = _shared_friend(account, plex_user_id, title)
+    if friend is None:
+        return False
+    account.removeFriend(friend)
+    return True
+
+
 class UserMgmtCog(commands.Cog):
     """User management with automatic inactivity removal"""
 
@@ -382,6 +430,15 @@ class UserMgmtCog(commands.Cog):
                 return
             logger.info(f"Top {len(top)} watchers (exempt from removal): {', '.join(top)}")
 
+            # Tautulli can keep answering after it has stopped recording plays (a
+            # broken Plex connection or token, a changed server address). Every
+            # last_seen then freezes and the whole household drifts towards
+            # removal, so judge nobody until a recent play shows it is recording.
+            newest_seen = max((int(u.get('last_seen') or 0) for u in tautulli_users), default=0)
+            history_stale = bool(newest_seen) and (
+                datetime.now(timezone.utc) - datetime.fromtimestamp(newest_seen, tz=timezone.utc)
+            ).days > STALE_HISTORY_DAYS
+
 
             # Three phases, so that no Discord DM, plex.tv login or Tautulli call
             # happens while a database transaction is open.
@@ -425,9 +482,21 @@ class UserMgmtCog(commands.Cog):
 
             for tracked_user in tracked_users:
                 # Find corresponding Tautulli user
-                tautulli_user = (tautulli_by_id.get(str(tracked_user.plex_user_id or ""))
-                                 or tautulli_lookup.get(tracked_user.plex_username.lower())
-                                 or tautulli_by_login.get(tracked_user.plex_username.lower()))
+                tautulli_user = tautulli_by_id.get(str(tracked_user.plex_user_id or ""))
+                if not tautulli_user:
+                    by_name = (tautulli_lookup.get(tracked_user.plex_username.lower())
+                               or tautulli_by_login.get(tracked_user.plex_username.lower()))
+                    # A row that knows its account only takes a name match for that
+                    # same account: the name can belong to someone else by now, and
+                    # measuring them could remove the wrong person.
+                    other_id = (by_name or {}).get('user_id')
+                    if tracked_user.plex_user_id and other_id and str(other_id) != str(tracked_user.plex_user_id):
+                        logger.warning(
+                            f"Tracked user {tracked_user.plex_username} is Plex account {tracked_user.plex_user_id}, "
+                            f"but Tautulli's {tracked_user.plex_username} is account {other_id} - skipping"
+                        )
+                        continue
+                    tautulli_user = by_name
 
                 if not tautulli_user:
                     logger.warning(f"Tracked user {tracked_user.plex_username} not found in Tautulli - skipping (may be new)")
@@ -578,6 +647,52 @@ class UserMgmtCog(commands.Cog):
                             to_remove.append((tracked_user, tautulli_user.get('user_id', 0)))
                             continue
 
+            if history_stale and (to_warn or to_remove):
+                newest = datetime.fromtimestamp(newest_seen, tz=timezone.utc).date()
+                logger.warning(
+                    f"Inactivity check paused: Tautulli's newest play is from {newest}, so its history "
+                    f"looks stale. Not warning {len(to_warn)} or removing {len(to_remove)} this pass"
+                )
+                await self._alert_admins(
+                    "Inactivity check paused",
+                    f"Tautulli hasn't recorded a play by anyone since {newest}, so Plexbie warned and "
+                    f"removed nobody today ({len(to_warn)} warning(s) and {len(to_remove)} removal(s) "
+                    "held back). Check that Tautulli is still connected to Plex. Once it records plays "
+                    "again, the daily check carries on by itself.",
+                    push=f"Tautulli hasn't recorded a play since {newest}, so nobody was warned or removed.",
+                    url="/manage?tab=health", tag="inactivity-stale")
+                to_warn, to_remove = [], []
+
+            removal_limit = max(MAX_REMOVALS_PER_PASS, int(len(tracked_users) * MAX_REMOVALS_SHARE))
+            due_rows = to_remove
+            if len(to_remove) > removal_limit and can_sign_in(self.services.config):
+                # Rows whose account is already off the share remove nobody (they are
+                # kept until an admin forgets them), so they don't count: otherwise a
+                # few of them would hold back every real removal, every day.
+                try:
+                    shared_ids = await run_blocking(_fetch_shared_account_ids, self.services.config)
+                    due_rows = [(user, uid) for user, uid in to_remove
+                                if not (user.plex_user_id or uid) or str(user.plex_user_id or uid) in shared_ids]
+                except Exception as e:
+                    logger.info(f"Couldn't read Plex shares before the removal limit: {e}")
+            if len(due_rows) > removal_limit:
+                due = [user.plex_username for user, _ in due_rows]
+                logger.warning(
+                    f"Inactivity check would remove {len(due)} of {len(tracked_users)} people in one "
+                    f"pass (limit {removal_limit}); removing nobody: {', '.join(due)}"
+                )
+                names = discord.utils.escape_mentions(
+                    ", ".join(due[:15]) + (f" and {len(due) - 15} more" if len(due) > 15 else ""))
+                await self._alert_admins(
+                    "Inactivity removals held back",
+                    f"The daily check would have removed {len(due)} of {len(tracked_users)} people "
+                    f"from Plex in one go, more than the {removal_limit} it removes by itself, so it "
+                    f"removed nobody: {names}. If they really are inactive, remove them in Manage → "
+                    "People or with /remove-user. If not, check that Tautulli is recording plays.",
+                    push=f"{len(due)} people were due for removal at once, so nobody was removed. Have a look.",
+                    url="/manage?tab=people", tag="inactivity-cap")
+                to_remove = []
+
             # Phase 3: the slow part, with nothing held open.
             for tracked_user in to_notify_exemption_lost:
                 await self._send_exemption_lost_dm(tracked_user)
@@ -621,6 +736,13 @@ class UserMgmtCog(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error during inactivity check: {e}", exc_info=True)
+
+    async def _alert_admins(self, title: str, text: str, *, push: str, url: str, tag: str) -> None:
+        """Tell the admins the daily check held something back: the admin channel and their phones."""
+        from core.admin_mirror import _send_admin_receipt
+        from core.notify import alert_admins_soon
+        await _send_admin_receipt(self.bot, self.services, header=f"⚠️ **{title}**", content=text)
+        alert_admins_soon(self.bot, self.services.config, title=title, body=push, url=url, tag=tag)
 
     async def _link_invite(self, discord_id: int, tautulli_user: dict, invite_email: str):
         """Attach a Discord join request to the Plex account that accepted it.
@@ -901,10 +1023,28 @@ class UserMgmtCog(commands.Cog):
 
             try:
                 # Both plex.tv calls are blocking; this runs inside the daily
-                # loop, once per user being removed.
-                account = await run_blocking(owner_account, self.services.config)
-                friend_key = user.plex_email or user.plex_username
-                await run_blocking(account.removeFriend, friend_key)
+                # loop, once per user being removed. The account taken off is the
+                # one whose inactivity was measured (Tautulli's user_id is the Plex
+                # account id), not whoever the stored email or name points at now.
+                if user.plex_user_id and plex_user_id and str(plex_user_id) != str(user.plex_user_id):
+                    logger.warning(
+                        f"{user.plex_username} is Plex account {user.plex_user_id}, but the inactivity measured "
+                        f"was account {plex_user_id}; removing nobody and keeping tracking row."
+                    )
+                    return False
+                account_id = user.plex_user_id or plex_user_id
+                if account_id:
+                    if not await run_blocking(_remove_friend, self.services.config, account_id):
+                        logger.warning(
+                            f"{user.plex_username} (Plex account {account_id}) isn't shared with any more; "
+                            f"keeping tracking row. Remove them with /remove-user or Manage → People "
+                            f"to forget them."
+                        )
+                        return False
+                else:
+                    account = await run_blocking(owner_account, self.services.config)
+                    friend_key = user.plex_email or user.plex_username
+                    await run_blocking(account.removeFriend, friend_key)
                 logger.info(f"Removed {user.plex_username} from Plex server")
             except Exception as e:
                 # Do NOT fall through to the database delete. Dropping the row
@@ -1048,11 +1188,29 @@ class UserMgmtCog(commands.Cog):
                     f"They may not be tracked or may not exist on the Plex server."
                 )
 
-            # Find Plex user
-            plex_users = await run_blocking(self.services.plex_server.systemAccounts)
-            plex_user = next((u for u in plex_users if u.name == plex_username), None)
+            # The owner isn't on their own share, so the check below would forget them.
+            if self._is_permanently_exempt(tracked_user) or tracked_user.plex_username == await self._plex_owner_name():
+                return False, f"❌ `{plex_username}` is the server owner's account, which can't be removed from Plex."
 
-            if not plex_user:
+            # Are they still on the share? Asked of plex.tv by account id (by name
+            # only when the id isn't known), the same way the removal finds them.
+            # Not systemAccounts(): it keeps every account the server has ever
+            # seen, so someone already taken off the share in Plex was "found",
+            # removeFriend then failed, and the row could never be cleared. That
+            # list is only the fallback when plex.tv can't be asked, and then
+            # removing would fail anyway.
+            on_plex = None
+            if can_sign_in(self.services.config):
+                try:
+                    on_plex = await run_blocking(_is_shared_with, self.services.config,
+                                                 tracked_user.plex_user_id, tracked_user.plex_username)
+                except Exception as e:
+                    logger.warning(f"Could not read Plex shares for {plex_username}: {e}")
+            if on_plex is None:
+                plex_users = await run_blocking(self.services.plex_server.systemAccounts)
+                on_plex = any(u.name == plex_username for u in plex_users)
+
+            if not on_plex:
                 return await self._forget_never_joined(tracked_user, removed_by)
 
             # Collect stats up front (the account must still exist in Tautulli),
@@ -1065,13 +1223,27 @@ class UserMgmtCog(commands.Cog):
 
             # Remove from Plex
             try:
-                account = await run_blocking(owner_account, self.services.config)
-                friend_key = tracked_user.plex_email or plex_username
-                await run_blocking(account.removeFriend, friend_key)
-                logger.info(f"Manually removed {plex_username} from Plex by {removed_by}")
+                # The account found on the share, never a stored email: that can be
+                # stale, and a miss must not read as "already gone".
+                gone = not await run_blocking(_remove_friend, self.services.config,
+                                              tracked_user.plex_user_id, tracked_user.plex_username)
+                if not gone:
+                    logger.info(f"Manually removed {plex_username} from Plex by {removed_by}")
+            except PlexNotFound as e:
+                # Only "already gone" if a fresh look at the share agrees.
+                if await run_blocking(_is_shared_with, self.services.config,
+                                      tracked_user.plex_user_id, tracked_user.plex_username):
+                    logger.error(f"Error removing {plex_username} from Plex: {e}")
+                    return False, f"❌ Error removing user from Plex: {str(e)}"
+                gone = True
             except Exception as e:
                 logger.error(f"Error removing {plex_username} from Plex: {e}")
                 return False, f"❌ Error removing user from Plex: {str(e)}"
+            if gone:
+                # Taken off in Plex since the check above: nothing left to take
+                # away, so forget them without a removal DM.
+                logger.info(f"{plex_username} was already off the Plex share")
+                return await self._forget_never_joined(tracked_user, removed_by)
 
             # Removal succeeded - now notify and clean up Discord state.
             await self._send_manual_removal_dm(tracked_user, stats, removed_by)
