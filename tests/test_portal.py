@@ -1205,6 +1205,87 @@ def test_help_can_only_be_asked_on_your_own_request_once_and_reaches_the_admins(
     assert resolved["ok"] and not again["ok"] and dms == ["**Message from Pat**\nKicked the search"]
 
 
+def test_someone_elses_request_looks_exactly_like_one_that_doesnt_exist():
+    """Asking for help and answering on a ticket share one lookup, so neither can tell a
+    member whether another member's request number is real."""
+    from aiohttp import web
+    from database.request_store import save_request
+    actions = _Actions(FakeServices(Config()))
+    jordan = {"user": {"id": "7", "name": "Jordan", "via": "discord"}, "member": True, "admin": False, "discordId": "7"}
+    pat = {"user": {"id": "8", "name": "Pat", "via": "discord"}, "member": True, "admin": False, "discordId": "8"}
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(4343, user_id=7, media={"id": 456, "media_type": "movie", "title": "Big Buck Bunny"})
+        mine = await actions._own_request(jordan, "4343")
+        said = set()
+        for who, key in ((pat, "4343"), (jordan, "9999"), (jordan, "abc")):
+            for call in (actions._own_request, lambda u, k: actions.ask_help(u, k, {"reason": "stuck"}),
+                         lambda u, k: actions.member_reply(u, k, {"text": "Any news?"})):
+                try:
+                    await call(who, key)
+                    said.add("let through")
+                except web.HTTPException as e:
+                    said.add((e.status, e.text))
+        return mine, said
+
+    mine, said = asyncio.run(scenario())
+    assert mine["media"]["title"] == "Big Buck Bunny"
+    assert said == {(404, '{"error":"No such request."}')}
+
+
+def test_discord_presses_reach_the_website_as_the_presser_and_its_refusals_read_plainly():
+    """Tickets (members) and the DM inbox (admins) hand the same person shape to the
+    website's actions and show its refusal, or their own words when it gave none."""
+    from aiohttp import web
+    from portal import inbox, ticket_view
+    from portal.discord_actor import actor, said
+
+    class Presser:
+        id, name, display_name = 7, "jordan", "Jordan"
+
+    class Response:
+        def __init__(self):
+            self.sent = []
+
+        async def send_message(self, content, ephemeral=False):
+            self.sent.append(content)
+
+    class Actions:
+        def __init__(self, error):
+            self.error, self.people = error, []
+
+        async def _refuse(self, who, *args):
+            self.people.append(who)
+            raise self.error
+
+        ask_help = member_reply = message_reply = _refuse
+
+    def pressed(error):
+        return type("Interaction", (), {"user": Presser(), "response": Response(),
+                                        "client": type("Bot", (), {"portal_actions": Actions(error)})()})()
+
+    jordan = {"user": {"id": "7", "name": "Jordan", "via": "discord"}, "member": True, "admin": False, "discordId": "7"}
+    assert actor(pressed(None), admin=False) == jordan
+    assert actor(pressed(None), admin=True) == {**jordan, "admin": True}
+    closed = web.HTTPConflict(text='{"error":"This ticket is closed."}', content_type="application/json")
+    assert said(closed, "Try again.") == "This ticket is closed."
+    assert said(web.HTTPConflict(text="{}", content_type="application/json"), "Try again.") == "That didn't work."
+    assert said(RuntimeError("Discord hiccup"), "Try again.") == "Try again."
+
+    async def scenario():
+        member, admin = pressed(RuntimeError("down")), pressed(RuntimeError("down"))
+        await ticket_view.TicketModal("4343", "stuck").on_submit(member)
+        await inbox.reply_from_discord(admin, "d7", "On its way")
+        return member, admin
+
+    member, admin = asyncio.run(scenario())
+    assert member.client.portal_actions.people == [jordan]
+    assert member.response.sent == ["That didn't work. Try again in a moment, or use My requests on the website."]
+    assert admin.client.portal_actions.people == [{**jordan, "admin": True}]
+    assert admin.response.sent == ["That didn't work. Try again from Manage → Messages."]
+
+
 # ------------------------------------------------- all requests (Manage)
 def test_the_new_admin_request_endpoints_are_admins_only():
     assert _run(MEMBER, "GET", "/api/admin/all")[0] == 403

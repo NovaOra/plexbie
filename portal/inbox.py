@@ -28,8 +28,9 @@ from discord import app_commands
 
 from core.discord_lookup import admin_channel_of, home_guild, is_household_member
 from core.logging import get_logger
-from core.permissions import deny, is_bot_admin
+from core.permissions import admin_only, deny, is_bot_admin
 from database.kv_store import kv_get, kv_get_all, kv_set
+from portal.discord_actor import actor, said
 
 logger = get_logger(__name__)
 
@@ -233,19 +234,8 @@ async def on_dm(bot, message) -> None:
 
 
 # ------------------------------------------------------------- buttons and /reply
-def _admin(interaction: discord.Interaction) -> dict:
-    """The admin pressing, as the website's actions know people."""
-    u = interaction.user
-    return {"user": {"id": str(u.id), "name": getattr(u, "display_name", None) or u.name, "via": "discord"},
-            "member": True, "admin": True, "discordId": str(u.id)}
-
-
-def _said(e: Exception) -> str:
-    import json
-    try:
-        return json.loads(getattr(e, "text", "")).get("error") or "That didn't work."
-    except (TypeError, ValueError):
-        return "That didn't work. Try again from Manage → Messages."
+#: What a press says when the website refused without saying why.
+NOT_SAID = "That didn't work. Try again from Manage → Messages."
 
 
 async def reply_from_discord(interaction: discord.Interaction, who: str, text: str) -> None:
@@ -253,9 +243,9 @@ async def reply_from_discord(interaction: discord.Interaction, who: str, text: s
     if actions is None:
         return await interaction.response.send_message("Replies need the website running.", ephemeral=True)
     try:
-        out = await actions.message_reply(_admin(interaction), who, {"text": text})
+        out = await actions.message_reply(actor(interaction, admin=True), who, {"text": text})
     except Exception as e:
-        return await interaction.response.send_message(_said(e), ephemeral=True)
+        return await interaction.response.send_message(said(e, NOT_SAID), ephemeral=True)
     await interaction.response.send_message(f"✅ {out.get('message') or 'Sent.'}", ephemeral=True)
 
 
@@ -267,9 +257,8 @@ class ReplyModal(discord.ui.Modal, title="Reply as Plexbie"):
                                          max_length=1500, required=True)
         self.add_item(self.text)
 
+    @admin_only
     async def on_submit(self, interaction: discord.Interaction):
-        if not is_bot_admin(interaction):
-            return await deny(interaction)
         await reply_from_discord(interaction, self.who, str(self.text.value))
 
 
@@ -283,9 +272,8 @@ class ReplyButton(discord.ui.DynamicItem[discord.ui.Button], template=r"plexbie:
     async def from_custom_id(cls, interaction, item, match):
         return cls(match["who"])
 
+    @admin_only
     async def callback(self, interaction: discord.Interaction):
-        if not is_bot_admin(interaction):
-            return await deny(interaction)
         await interaction.response.send_modal(ReplyModal(self.who))
 
 
@@ -299,16 +287,15 @@ class TicketButton(discord.ui.DynamicItem[discord.ui.Button], template=r"plexbie
     async def from_custom_id(cls, interaction, item, match):
         return cls(match["key"])
 
+    @admin_only
     async def callback(self, interaction: discord.Interaction):
-        if not is_bot_admin(interaction):
-            return await deny(interaction)
         actions = getattr(interaction.client, "portal_actions", None)
         if actions is None:
             return await interaction.response.send_message("This needs the website running.", ephemeral=True)
         try:
-            out = await actions.message_to_ticket(_admin(interaction), self.key)
+            out = await actions.message_to_ticket(actor(interaction, admin=True), self.key)
         except Exception as e:
-            return await interaction.response.send_message(_said(e), ephemeral=True)
+            return await interaction.response.send_message(said(e, NOT_SAID), ephemeral=True)
         await interaction.response.send_message(f"🛠️ {out.get('message')}", ephemeral=True)
 
 
@@ -322,11 +309,10 @@ class DoneButton(discord.ui.DynamicItem[discord.ui.Button], template=r"plexbie:d
     async def from_custom_id(cls, interaction, item, match):
         return cls(match["who"])
 
+    @admin_only
     async def callback(self, interaction: discord.Interaction):
-        if not is_bot_admin(interaction):
-            return await deny(interaction)
         from core import message_log
-        await message_log.mark_done(self.who, _admin(interaction)["user"]["name"])
+        await message_log.mark_done(self.who, actor(interaction, admin=True)["user"]["name"])
         await interaction.response.send_message("✅ Marked done. It's still in Manage → Messages.", ephemeral=True)
 
 

@@ -10,33 +10,20 @@
 Each button carries its request or ticket in its custom id (discord.py dynamic items),
 so it keeps working after a restart. Who may press it is checked again on every press.
 """
-import json
 from typing import Optional
 
 import discord
 
 from core.logging import get_logger
+from portal.discord_actor import actor, said
 
 logger = get_logger(__name__)
 
 OPEN_ID = "plexbie:ticket:open:{key}"
 REPLY_ID = "plexbie:ticket:reply:{hid}"
 
-
-def _person(interaction: discord.Interaction) -> dict:
-    """The presser, as the website's actions know people."""
-    u = interaction.user
-    return {"user": {"id": str(u.id), "name": getattr(u, "display_name", None) or u.name, "via": "discord"},
-            "member": True, "admin": False, "discordId": str(u.id)}
-
-
-def _said(e: Exception) -> str:
-    """The website's refusal, in its own words."""
-    text = getattr(e, "text", None)
-    try:
-        return json.loads(text).get("error") or "That didn't work."
-    except (TypeError, ValueError):
-        return "That didn't work. Try again in a moment, or use My requests on the website."
+#: What a press says when the website refused without saying why.
+NOT_SAID = "That didn't work. Try again in a moment, or use My requests on the website."
 
 
 def open_view(key: str) -> discord.ui.View:
@@ -121,9 +108,9 @@ class TicketModal(discord.ui.Modal, title="Open a ticket"):
         if actions is None:
             return await interaction.response.send_message("Tickets need the website running. Ask an admin.", ephemeral=True)
         try:
-            out = await actions.ask_help(_person(interaction), self.key, {"reason": self.reason, "note": str(self.note.value or ""), "source": "discord"})
+            out = await actions.ask_help(actor(interaction, admin=False), self.key, {"reason": self.reason, "note": str(self.note.value or ""), "source": "discord"})
         except Exception as e:
-            return await interaction.response.send_message(_said(e), ephemeral=True)
+            return await interaction.response.send_message(said(e, NOT_SAID), ephemeral=True)
         await interaction.response.send_message(f"🛠️ {out.get('message') or 'Sent.'} You'll hear back here.", ephemeral=True)
 
 
@@ -156,9 +143,9 @@ class ReplyModal(discord.ui.Modal, title="Your answer"):
         if actions is None or not isinstance(h, dict):
             return await interaction.response.send_message("That ticket can't be found.", ephemeral=True)
         try:
-            out = await actions.member_reply(_person(interaction), h.get("request") or "", {"text": str(self.text.value), "source": "discord"})
+            out = await actions.member_reply(actor(interaction, admin=False), h.get("request") or "", {"text": str(self.text.value), "source": "discord"})
         except Exception as e:
-            return await interaction.response.send_message(_said(e), ephemeral=True)
+            return await interaction.response.send_message(said(e, NOT_SAID), ephemeral=True)
         await interaction.response.send_message(f"💬 {out.get('message') or 'Sent.'}", ephemeral=True)
 
 

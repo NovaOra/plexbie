@@ -664,11 +664,7 @@ class Actions:
     async def ask_help(self, user: dict, request_key: str, body: dict) -> dict:
         """Someone says their request went wrong: tell the admins everything at once."""
         from portal import help as helpdesk
-        if not str(request_key).isdigit():
-            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
-        rec = await get_request(int(request_key))
-        if not rec or not helpdesk.owns(rec, user):
-            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        rec = await self._own_request(user, request_key)
         reason = body.get("reason") if body.get("reason") in helpdesk.REASONS else "other"
         note = str(body.get("note") or "").strip()
         if reason == "other" and not note:
@@ -849,6 +845,15 @@ class Actions:
             raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
         rec = await get_request(int(key))
         if not rec:
+            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        return rec
+
+    async def _own_request(self, user: dict, key: str) -> dict:
+        """The member's own request. Someone else's gets the same 404 as one that doesn't
+        exist, so a request number can't be probed."""
+        from portal import help as helpdesk
+        rec = await self._request_for_admin(key)
+        if not helpdesk.owns(rec, user):
             raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
         return rec
 
@@ -1035,11 +1040,7 @@ class Actions:
         it goes on the ticket, the ticket stops waiting, and its owner (or, with no owner,
         every admin) gets an alert."""
         from portal import help as helpdesk
-        if not str(request_key).isdigit():
-            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
-        rec = await get_request(int(request_key))
-        if not rec or not helpdesk.owns(rec, user):
-            raise web.HTTPNotFound(text='{"error":"No such request."}', content_type="application/json")
+        await self._own_request(user, request_key)
         ticket = (await helpdesk.open_for({str(request_key)})).get(str(request_key))
         if not ticket:
             raise web.HTTPConflict(text='{"error":"This ticket is closed. Ask for help again if it\'s still wrong."}', content_type="application/json")

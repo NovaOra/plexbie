@@ -94,6 +94,45 @@ def test_view_gate_allows_admin():
     assert asyncio.run(view.interaction_check(interaction)) is True
 
 
+# --- admin_only: a button or modal that only admins may press ---
+
+def test_admin_only_refuses_before_the_callback_runs():
+    from core.permissions import admin_only
+    ran = []
+
+    class Button:
+        @admin_only
+        async def callback(self, interaction):
+            ran.append(interaction.user.id)
+
+    member = FakeInteraction(FakeMember(31), PermConfig)
+    admin = FakeInteraction(FakeMember(32, administrator=True), PermConfig)
+    asyncio.run(Button().callback(member))
+    asyncio.run(Button().callback(admin))
+    assert ran == [32] and len(member.refusals) == 1 and admin.refusals == []
+
+
+def test_the_dm_inbox_buttons_answer_admins_only():
+    """Reply, Add to their ticket, Done and the reply box all carry the shared gate."""
+    from core.permissions import admin_only
+    from portal import inbox
+
+    async def press():
+        refused = []
+        for item, run in ((inbox.ReplyButton("d7"), "callback"), (inbox.TicketButton("20261007T101500000000-abcdef"), "callback"),
+                          (inbox.DoneButton("d7"), "callback"), (inbox.ReplyModal("d7"), "on_submit")):
+            interaction = FakeInteraction(FakeMember(33), PermConfig)
+            await getattr(item, run)(interaction)
+            refused.append(len(interaction.refusals))
+        return refused
+
+    assert asyncio.run(press()) == [1, 1, 1, 1]
+    gate = admin_only(lambda self, interaction: None).__code__
+    for cls, run in ((inbox.ReplyButton, "callback"), (inbox.TicketButton, "callback"),
+                     (inbox.DoneButton, "callback"), (inbox.ReplyModal, "on_submit")):
+        assert getattr(cls, run).__code__ is gate, f"{cls.__name__}.{run} isn't wrapped in admin_only"
+
+
 # --- RequesterOnlyView: the /request steps answer only the member who started them ---
 
 def test_request_steps_refuse_anyone_but_the_requester():

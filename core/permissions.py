@@ -145,6 +145,26 @@ async def require_admin(interaction: discord.Interaction) -> bool:
     return False
 
 
+def admin_only(callback):
+    """Decorate a component's ``callback`` (or a modal's ``on_submit``) so anyone but an
+    admin gets the standard refusal and the callback never runs.
+
+    For items that live outside an AdminOnlyView, such as dynamic buttons rebuilt
+    from their custom id after a restart:
+
+        @admin_only
+        async def callback(self, interaction): ...
+    """
+
+    @functools.wraps(callback)
+    async def guarded(self, interaction, *args, **kwargs):
+        if not is_bot_admin(interaction):
+            return await deny(interaction)
+        return await callback(self, interaction, *args, **kwargs)
+
+    return guarded
+
+
 def _log_refusal(interaction: discord.Interaction, config) -> None:
     """One WARNING an hour per server: a stranger's server can't flood the log."""
     guild_id = getattr(interaction, "guild_id", None)
