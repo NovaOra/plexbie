@@ -1821,11 +1821,65 @@ def test_images_are_for_signed_in_members_only():
     """Anyone could fetch (and so fill the disk with) every cover there is."""
     nobody = _run(None, "GET", "/img/tmdb/w342/abcdef.jpg")
     outsider = _run(OUTSIDER, "GET", "/img/tmdb/w342/abcdef.jpg")
-    outsider_avatar = _run(OUTSIDER, "GET", "/img/avatar/123/" + "a" * 32 + ".png")
+    own = {**OUTSIDER, "user": {**OUTSIDER["user"], "avatar": "/img/avatar/123/" + "a" * 32 + ".png"}}
+    outsider_avatar = _run(own, "GET", "/img/avatar/123/" + "a" * 32 + ".png")
     member_bad_shape = _run(MEMBER, "GET", "/img/tmdb/w99/abcdef.jpg")
     assert nobody[0] == 403 and outsider[0] == 403
     assert outsider_avatar[0] != 403, "a signed-in visitor still sees their own avatar"
     assert member_bad_shape[0] == 404, "members get through to the proxy's own checks"
+
+
+def test_someone_without_access_gets_only_their_own_picture():
+    """Anyone can sign in. If a non-member could fetch anyone's plex.tv picture, the
+    "not found" for accounts off the share list would tell them who has access."""
+    from aiohttp import web
+    from portal.images import ImageProxy
+    fetched, real_fetch = [], ImageProxy._fetch
+
+    async def fetch(self, url, key):
+        fetched.append(key)
+        return web.Response(body=b"img", content_type="image/png")
+
+    class ShareList:
+        """plex.tv's pictures for the accounts with access (the sign-in routes go unused)."""
+        async def plex_thumb(self, acct):
+            return "https://plex.tv/users/3016a4115baba975/avatar" if str(acct) == "600" else None
+
+        def __getattr__(self, name):
+            async def unused(request):
+                return web.Response(status=500)
+            return unused
+
+    def fetch_as(user, path):
+        async def scenario():
+            async def who(request):
+                return user
+            ImageProxy._fetch = fetch
+            app = build_app(FakeServices(Config()), who=who, readonly=False, dist=None,
+                            image_cache=tempfile.mkdtemp(), auth=ShareList())
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                return (await client.get(path)).status
+            finally:
+                await client.close()
+                ImageProxy._fetch = real_fetch
+        return asyncio.run(scenario())
+
+    on_list, off_list = "/img/plex-avatar/600/abc.png", "/img/plex-avatar/700/abc.png"
+    someone = "/img/avatar/555/" + "b" * 32 + ".png"
+    assert fetch_as(OUTSIDER, on_list) == fetch_as(OUTSIDER, off_list) == 404, "the same answer either way"
+    assert fetch_as(OUTSIDER, someone) == 404
+    assert fetched == [], "nobody else's picture is fetched for them"
+
+    discord_outsider = {**OUTSIDER, "plexAccountId": None, "discordId": "555",
+                        "user": {**OUTSIDER["user"], "via": "discord", "avatar": "/img/plex-avatar/600/abc.png"}}
+    assert fetch_as(discord_outsider, "/img/plex-avatar/600/def.png") == 200, "their own Plex picture, any version"
+    assert fetch_as({**discord_outsider, "user": {**discord_outsider["user"], "avatar": someone}}, someone) == 200
+    assert fetch_as(discord_outsider, "/img/plex-avatar/601/abc.png") == 404
+
+    assert fetch_as(MEMBER, on_list) == 200 and fetch_as(MEMBER, someone) == 200, "members see everyone's"
+    assert fetch_as(MEMBER, off_list) == 404
 
 
 def test_the_image_cache_drops_what_was_used_least_recently():

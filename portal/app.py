@@ -824,6 +824,11 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
     # is fetched and kept on disk (see portal/images.py).
     image_limit = Limiter(*IMAGE_TRIES)
 
+    def own_picture(user: dict, request: web.Request) -> bool:
+        """Whether a profile picture is the visitor's own (the one the site gave them, any version)."""
+        mine = str((user.get("user") or {}).get("avatar") or "").split("/")
+        return len(mine) == 5 and mine[:4] == request.path.split("/")[:4]
+
     def signed_in_image(handler, members_only: bool = True):
         async def guarded(request):
             if image_limit.over(request):
@@ -831,6 +836,10 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             user = await who(request)
             if not user or (members_only and not user.get("member")):
                 return web.Response(status=403)
+            if not user.get("member") and not own_picture(user, request):
+                # Someone without access gets only their own picture. Anyone else's is
+                # the same "not found" whether or not that person has access.
+                return web.Response(status=404)
             return await handler(request)
         return guarded
 

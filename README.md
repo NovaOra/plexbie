@@ -631,7 +631,9 @@ so the household can do everything above without Discord:
   title shared in Discord, say) shows the sign-in, and signing in returns to it.
   Sign in with Plex opens a small Plex window and waits for it; closing that
   window ends the wait a few seconds later, and pressing the button again starts
-  over.
+  over. Someone signed in without access to your Plex sees their own profile
+  picture and no one else's: asking for anyone else's gets the same "not found"
+  whether or not that person is in the household.
 - **Members:** request films, TV and books through the same admin approval
   cards as `/request`, follow each request with live Sonarr/Radarr/SABnzbd
   progress, see what arrived and what's leaving under the cleanup countdown,
