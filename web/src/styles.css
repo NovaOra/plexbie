@@ -96,7 +96,6 @@ html {
   scrollbar-color: var(--rule) var(--field-deep); scrollbar-width: thin;
 }
 @media (max-width: 859px) { html { scroll-padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom) + 12px); } }
-html:has(.m-tabbar) { scroll-padding-top: 136px; }
 /* No double-tap-to-zoom delay on things you press. */
 a, button, summary, select, label { touch-action: manipulation; }
 
@@ -172,7 +171,7 @@ p { margin: 0; text-wrap: pretty; }
 }
 .muted { color: var(--slate-ink); }
 /* Rows that scroll sideways without showing a scrollbar (Firefox: scrollbar-width on each). */
-.stage__channels::-webkit-scrollbar, .chips::-webkit-scrollbar, .m-tabs::-webkit-scrollbar, .m-seg::-webkit-scrollbar, .popular__list::-webkit-scrollbar { display: none; }
+.stage__channels::-webkit-scrollbar, .chips::-webkit-scrollbar, .m-seg::-webkit-scrollbar, .popular__list::-webkit-scrollbar { display: none; }
 
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
@@ -1340,13 +1339,67 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 .m-tile.is-hot .m-tile__top { color: var(--tally); }
 @keyframes m-pulse { 0% { box-shadow: 0 0 0 0 rgb(255 92 147 / 0.55); } 100% { box-shadow: 0 0 0 10px rgb(255 92 147 / 0); } }
 
-/* tabs: one row that scrolls sideways on phones, pinned under the masthead */
-.m-tabbar { position: sticky; top: 60px; z-index: 10; margin-inline: calc(var(--pad-l) * -1) calc(var(--pad-r) * -1); padding: 8px var(--pad-r) 8px var(--pad-l); background: var(--field); scroll-margin-top: 60px; }
-.m-tabs { display: flex; width: max-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; border-radius: 999px; }
-.m-tabs .tab { flex: none; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
-.m-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; font-size: 0.72rem; font-weight: 800; background: var(--screen); color: var(--on-screen); }
-.tab:is([aria-selected="true"], [aria-pressed="true"]) .m-badge { background: var(--on-screen); color: var(--screen); }
-.m-badge.is-hot { background: var(--tally); color: var(--on-tally); }
+/* the sections: ☰ beside the title opens a panel under it; on phones, a sheet from the right */
+.m-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.m-section { margin: 0; font-size: 1.25rem; font-stretch: 88%; letter-spacing: -0.01em; scroll-margin-top: 16px; }
+.m-section:focus { outline: none; }
+.m-section:focus-visible { outline: 2px solid var(--screen); outline-offset: 4px; border-radius: 4px; }
+.m-section > span { color: var(--screen); font-weight: 600; }
+.m-section > span.is-hot { color: var(--tally); }
+.m-menu { position: relative; flex: none; }
+.m-menu__open {
+  position: relative; display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
+  border: 1px solid var(--rule); border-radius: 12px; background: var(--panel); color: var(--ink); cursor: pointer;
+  transition: transform 140ms var(--ease-out), background-color 160ms ease, border-color 160ms ease;
+}
+.m-menu__open:active { transform: scale(0.96); }
+/* Over the click-catcher only while open (so ☰ again closes it); closed, it scrolls under the masthead. */
+.m-menu__open[aria-expanded="true"] { z-index: 31; border-color: var(--screen); background: var(--panel-raised); }
+@media (hover: hover) and (pointer: fine) { .m-menu__open:hover { background: var(--panel-raised); } }
+.m-menu__dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--screen); box-shadow: 0 0 0 2px var(--panel); }
+.m-menu__dot.is-hot { background: var(--tally); }
+/* Catches a click outside; only dims the page as the phone sheet's backdrop. */
+.m-menu__scrim { position: fixed; inset: 0; z-index: 30; touch-action: none; }
+.m-menu__scrim[hidden] { display: none; }
+.m-menu__panel {
+  position: absolute; z-index: 31; top: calc(100% + 8px); right: 0; width: 300px; max-height: min(70vh, 560px);
+  overflow-y: auto; overscroll-behavior: contain; padding: 8px;
+  border: 1px solid var(--rule); border-radius: 14px; background: var(--panel-raised); box-shadow: var(--shadow);
+  transform-origin: top right;
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out), display 160ms allow-discrete;
+}
+.m-menu__panel:focus { outline: none; }
+.m-menu__panel[hidden] { display: none; opacity: 0; transform: scale(0.96) translateY(-4px); transition-duration: 120ms; }
+@starting-style { .m-menu__panel { opacity: 0; transform: scale(0.96) translateY(-4px); } }
+.m-menu__title { margin: 4px 10px 8px; font-size: 0.78rem; font-weight: 760; letter-spacing: 0.08em; text-transform: uppercase; color: var(--slate-ink); }
+.m-menu__list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.m-menu__item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 0 12px;
+  border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+}
+.m-menu__note { flex: none; font-size: 0.86rem; color: var(--screen); }
+.m-menu__item.is-hot .m-menu__note { color: var(--tally); }
+.m-menu__item[aria-current="page"] { background: var(--panel); box-shadow: inset 3px 0 0 var(--screen); font-weight: 760; }
+@media (hover: hover) and (pointer: fine) { .m-menu__item:hover { background: var(--panel); } }
+.m-menu__item:focus-visible { outline: 2px solid var(--screen); outline-offset: -2px; }
+@media (max-width: 719px) {
+  .m-menu__scrim { z-index: 80; background: rgb(3 6 18 / 0.6); transition: opacity 200ms ease, display 200ms allow-discrete; }
+  .m-menu__scrim[hidden] { opacity: 0; }
+  @starting-style { .m-menu__scrim { opacity: 0; } }
+  .m-menu__panel {
+    position: fixed; z-index: 81; inset: 0 0 0 auto; width: min(320px, 86vw); max-height: none;
+    padding: calc(14px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) 10px;
+    border-width: 0 0 0 1px; border-radius: 22px 0 0 22px; box-shadow: -20px 0 50px -20px rgb(3 6 18 / 0.9);
+    transition: transform 260ms var(--ease-out), display 260ms allow-discrete;
+  }
+  .m-menu__panel[hidden] { opacity: 1; transform: translateX(100%); transition-duration: 200ms; }
+  @starting-style { .m-menu__panel { opacity: 1; transform: translateX(100%); } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .m-menu__panel { transition: opacity 160ms ease, display 160ms allow-discrete; }
+  .m-menu__panel[hidden] { opacity: 0; transform: none; }
+  @starting-style { .m-menu__panel { opacity: 0; transform: none; } }
+}
 
 /* decision cards */
 .m-hint { font-size: 0.84rem; margin: -4px 0 0; }
@@ -1628,7 +1681,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .m-sheet__foot { position: sticky; bottom: 0; margin: 0 -18px; padding: 10px 18px calc(18px + env(safe-area-inset-bottom)); background: var(--panel); }
 .m-sheet__panel > .m-sheet__foot:last-child { margin-bottom: 0; }
 .m-sheet__grab, .m-sheet__panel h2 { user-select: none; touch-action: none; }
-html.has-sheet, html.has-sheet body { overflow: hidden; }
+html.has-sheet, html.has-sheet body, html.has-menu, html.has-menu body { overflow: hidden; }
 .m-sheet__panel h2 { margin: 0; }
 .m-sheet__panel p { margin: 0; font-size: 0.9rem; }
 .m-sheet__grab { justify-self: center; width: 40px; height: 5px; border-radius: 3px; background: var(--rule); margin-bottom: 4px; }
@@ -1802,11 +1855,6 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-match__row { display: flex; gap: 8px; flex-wrap: wrap; }
 .m-match__row .m-select { flex: 1 1 180px; min-height: 44px; }
 .m-plex-invite__edit { grid-column: 1 / -1; display: grid; gap: 10px; }
-/* Manage: what's waiting in other sections, beside the section dropdown. */
-.m-waiting { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 0; border-radius: 999px;
-  background: transparent; color: var(--screen); font: inherit; font-weight: 600; cursor: pointer; }
-.m-waiting.is-hot { color: var(--tally); }
-@media (hover: hover) and (pointer: fine) { .m-waiting:hover { background: var(--panel); } }
 
 /* plexbie.com: the films, on the TV (src/project/Screening.tsx). Inset a little so the
    screen's curved corners don't clip the controls; letterboxed in black. */

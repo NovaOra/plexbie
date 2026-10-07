@@ -6,7 +6,7 @@ import {
   AnimatePresence, LayoutGroup, animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useTransform,
 } from "motion/react";
 import {
-  ArrowLeft, Bell, Check, CircleDot, LifeBuoy, CircleAlert, CircleCheck, Copy, Hourglass, Inbox, Link2, ListOrdered, Lock, LogOut, Mail, MessageCircle, MessageSquare, Radio, Plus, RefreshCw, Search, Share2, ShieldCheck, Ticket, Trash2, UserPlus, X,
+  ArrowLeft, Bell, Check, CircleDot, LifeBuoy, CircleAlert, CircleCheck, Copy, Hourglass, Inbox, Link2, ListOrdered, Lock, LogOut, Mail, Menu, MessageCircle, MessageSquare, Radio, Plus, RefreshCw, Search, Share2, ShieldCheck, Ticket, Trash2, UserPlus, X,
 } from "../components/icons";
 import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
@@ -17,8 +17,9 @@ import { sendAgain } from "../api/alerts";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
-import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle, PageHead } from "../components/ui";
-import { useBackToClose } from "../components/overlay";
+import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
+import { afterOverlay, useBackToClose } from "../components/overlay";
+import { menuItems, menuLabel, waitingElsewhere, type MenuItem } from "./manageMenu";
 import { BottomSheet } from "../components/BottomSheet";
 
 /* ================================================================== store */
@@ -2852,6 +2853,97 @@ function Overview({ go, failed }: { go: (t: Section) => void; failed: Partial<Re
   );
 }
 
+/**
+ * The sections, behind ☰ at the top right: a panel under the button on wide
+ * screens, a sheet from the right on phones (styles.css). Opening puts focus on
+ * the open section; the arrow keys move between sections and Tab stays inside.
+ * Escape, Back, a tap outside or ☰ again closes it and hands focus back to ☰.
+ * On a phone the sheet is modal: the page behind is out of reach and stays put.
+ * A dot on ☰ says another section has something waiting, pink when it's hot.
+ */
+function SectionMenu({ items, onPick }: { items: MenuItem<Section>[]; onPick: (t: Section) => void }) {
+  const [open, setOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const scrim = useRef<HTMLDivElement>(null);
+  const id = useId();
+  // Focus goes back to ☰ once it's closed, after the page behind is reachable again.
+  const refocus = useRef(false);
+  const close = useCallback(() => {
+    refocus.current = true;
+    setOpen(false);
+  }, []);
+  useBackToClose(open, close);
+  useEffect(() => {
+    if (!open) {
+      if (refocus.current) button.current?.focus({ preventScroll: true });
+      refocus.current = false;
+      return;
+    }
+    (panel.current?.querySelector<HTMLElement>("[aria-current]") ?? panel.current?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    // A phone's sheet covers the page: everything else in it is inert (the backdrop
+    // still takes the tap that closes it) and the page doesn't scroll behind.
+    const shut: Element[] = [];
+    const sheet = panel.current;
+    if (sheet && window.matchMedia("(max-width: 719px)").matches) {
+      sheet.setAttribute("aria-modal", "true");
+      document.documentElement.classList.add("has-menu");
+      for (let el: Element = sheet; el.parentElement && el.id !== "root"; el = el.parentElement) {
+        for (const other of el.parentElement.children) {
+          if (other === el || other === scrim.current || other.hasAttribute("inert")) continue;
+          other.setAttribute("inert", "");
+          shut.push(other);
+        }
+      }
+    }
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      shut.forEach((el) => el.removeAttribute("inert"));
+      sheet?.removeAttribute("aria-modal");
+      document.documentElement.classList.remove("has-menu");
+    };
+  }, [open, close]);
+  const move = (e: ReactKeyboardEvent) => {
+    const all = [...(panel.current?.querySelectorAll<HTMLButtonElement>(".m-menu__item") ?? [])];
+    // -1 when focus is on the panel itself (a click between the items): Tab goes to the first.
+    const at = all.indexOf(document.activeElement as HTMLButtonElement);
+    const back = e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey);
+    const to = e.key === "Home" ? 0 : e.key === "End" ? all.length - 1
+      : back ? (at < 0 ? -1 : at - 1) : e.key === "ArrowDown" || e.key === "Tab" ? at + 1 : null;
+    if (to === null || !all.length) return;
+    e.preventDefault();
+    all[(to + all.length) % all.length].focus();
+  };
+  const elsewhere = waitingElsewhere(items);
+  return (
+    <div className="m-menu">
+      <button ref={button} type="button" className="m-menu__open" aria-label={menuLabel(items)}
+        aria-haspopup="dialog" aria-expanded={open} aria-controls={id} onClick={() => (open ? close() : setOpen(true))}>
+        <Menu size={22} aria-hidden />
+        {elsewhere.length ? <span className={`m-menu__dot${elsewhere.some((i) => i.hot) ? " is-hot" : ""}`} aria-hidden /> : null}
+      </button>
+      {/* Always there, hidden when closed, so closing can slide and fade out. */}
+      <div ref={scrim} className="m-menu__scrim" hidden={!open} aria-hidden onClick={close} />
+      <div ref={panel} id={id} className="m-menu__panel" role="dialog" aria-label="Sections" hidden={!open} tabIndex={-1} onKeyDown={move}>
+        <p className="m-menu__title" aria-hidden>Sections</p>
+        <ul className="m-menu__list">
+          {items.map((i) => (
+            <li key={i.id}>
+              <button type="button" className={`m-menu__item${i.hot ? " is-hot" : ""}`} aria-current={i.current ? "page" : undefined}
+                onClick={() => { setOpen(false); afterOverlay(() => onPick(i.id)); }}>
+                <span>{i.label}</span>
+                {i.note ? <span className="m-menu__note"><span className="visually-hidden">, </span>{i.note}</span> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 /* ================================================================ toasts */
 
 /** What Undo's shortcut is called on this keyboard. */
@@ -2986,7 +3078,17 @@ export function Manage() {
   const tab: Section = TABS.find((t) => t.id === asked)?.id ?? "requests";
   useTitle(`Manage: ${TABS.find((t) => t.id === tab)?.label ?? "Overview"}`);
   const panel = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const reduced = useReducedMotion();
+  // A section picked from ☰, landed once it's rendered: focus on its heading (now
+  // naming it), the page at the top of its content.
+  const landing = useRef<Section | null>(null);
+  const land = useCallback(() => {
+    landing.current = null;
+    heading.current?.focus({ preventScroll: true });
+    panel.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+  }, [reduced]);
+  useEffect(() => { if (landing.current === tab) land(); }, [tab, land]);
 
   const [data, setData] = useState<Store>({});
   const [failed, setFailed] = useState<Partial<Record<Section, boolean>>>({});
@@ -3062,16 +3164,21 @@ export function Manage() {
     setParams((p) => { p.set("tab", t); return p; }, { replace: true });
     if (scroll) panel.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
   };
+  // From the menu: to the top of the section, with focus on its heading.
+  const pick = (t: Section) => {
+    // The same one: a frame later, after Back's own scroll restore for the menu's entry.
+    if (t === tab) { requestAnimationFrame(land); return; }
+    landing.current = t;
+    go(t);
+  };
   const w = waiting(data);
   const counts: Partial<Record<Section, number>> = {
     requests: w.requests || undefined, all: data.all?.counts?.stuck || undefined, tickets: w.tickets || undefined,
     joins: w.joins, cleanup: w.leaving, health: w.down, messages: w.messages || undefined,
     invites: freshInvite ? 1 : undefined,
   };
-  /** "All requests · 2 stuck", "Invites · 1 ready" (a new link to send); everything else counts what's waiting. */
-  const word = (t: Section) => (t === "all" ? "stuck" : t === "tickets" ? "open" : t === "messages" ? "new" : t === "invites" ? "ready" : "waiting");
-  // The ready link is held on this page, so a failed invites refresh doesn't put it in doubt.
-  const doubt = (t: Section) => failed[t] && t !== "invites";
+  const items = menuItems(TABS, tab, counts, failed);
+  const here = items.find((i) => i.current)!;
   const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed, freshInvite, setFreshInvite };
   // A refresh of this tab failed over what's already on screen: say so, and how old it is.
   const stale = shows(tab).filter((s) => failed[s] && data[s]);
@@ -3079,27 +3186,21 @@ export function Manage() {
   return (
     <ManageCtx.Provider value={ctx}>
       <div className="shell page m-page">
-        <PageHead title="Manage" lede="Everything the admin commands do in Discord, in one place. Discord keeps working as before." />
+        {/* The sections behind ☰ beside the title; the open one names what's below. */}
+        <div className="page-head">
+          <div className="m-titlebar">
+            <h1 className="display page-title">Manage</h1>
+            <SectionMenu items={items} onPick={pick} />
+          </div>
+          <h2 id="m-section" ref={heading} tabIndex={-1} className="m-section">
+            {here.label}{here.note ? <span className={here.hot ? "is-hot" : undefined}> · {here.note}</span> : null}
+          </h2>
+          <p className="muted">Everything the admin commands do in Discord, in one place. Discord keeps working as before.</p>
+        </div>
 
         <Overview go={(t) => go(t, true)} failed={failed} />
 
-        {/* The sections as one dropdown, like Request and Library; what's waiting elsewhere
-            stays in sight beside it. */}
-        <div className="m-tabbar request-bar" ref={panel} role="group" aria-label="Manage">
-          <select className="select" value={tab} aria-label="Section" onChange={(e) => go(e.target.value as Section)}>
-            {TABS.map((t) => (
-              <option key={t.id} value={t.id}>{counts[t.id] ? `${t.label} · ${doubt(t.id) ? "couldn’t refresh" : `${counts[t.id]} ${word(t.id)}`}` : t.label}</option>
-            ))}
-          </select>
-          {TABS.filter((t) => t.id !== tab && counts[t.id]).map((t) => (
-            <button key={t.id} type="button" className={`m-waiting${t.id === "health" || t.id === "cleanup" ? " is-hot" : ""}`}
-              onClick={() => go(t.id)}>
-              {t.label} <span className="m-badge"><Tick value={doubt(t.id) ? "?" : counts[t.id]!} /></span>
-            </button>
-          ))}
-        </div>
-
-        <div role="region" id="m-panel" aria-label={TABS.find((t) => t.id === tab)?.label ?? "Manage"}>
+        <div role="region" id="m-panel" ref={panel} aria-labelledby="m-section">
           {failed[tab] && !data[tab] ? (
             <LoadFailed text="Couldn’t load this. Plexbie may be restarting." onRetry={() => refresh(tab)} />
           ) : (

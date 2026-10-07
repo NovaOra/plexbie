@@ -118,7 +118,7 @@ const SCENES = {
     start: "/manage?as=member&demo&tab=requests",
     async steps({ page, tap, wait }) {
       await wait(900);
-      // centred, so the sticky section bar never covers the card being swiped
+      // centred, so the card being swiped is in full view
       const card = page.locator(".m-swipe__card").first();
       await card.evaluate((el) => el.scrollIntoView({ behavior: "smooth", block: "center" }));
       await wait(900);

@@ -26,9 +26,9 @@ for (const [name, path] of shots) {
   await page.evaluate(() => document.fonts.ready);
   await page.addStyleTag({ content: ".sample-switch{display:none!important}" });
   await page.waitForTimeout(900);
-  // Manage: show the chosen section, below the overview cards, with its section bar at the top.
+  // Manage: show the chosen section, scrolled past the overview cards.
   if (path.includes("tab=")) {
-    await page.locator(".m-tabbar").first().evaluate((el) => {
+    await page.locator("#m-panel").first().evaluate((el) => {
       const header = document.querySelector("header")?.getBoundingClientRect().height ?? 64;
       window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - header - 12, behavior: "instant" });
     }).catch(() => {});

@@ -43,6 +43,27 @@ export function useBackToClose(open: boolean, onClose: () => void) {
 }
 
 /**
+ * Runs `then` once a just-closed overlay's history entry is off again, so a
+ * link it followed with `replace` replaces the page's own entry, not the
+ * overlay's (which would leave an extra Back step behind). At once when no
+ * overlay entry is open.
+ */
+export function afterOverlay(then: () => void) {
+  if (!window.history.state?.plexbieOverlay) { then(); return; }
+  let done = false;
+  const run = () => {
+    if (done) return;
+    done = true;
+    window.removeEventListener("popstate", run);
+    window.clearTimeout(late);
+    then();
+  };
+  window.addEventListener("popstate", run);
+  // Should Back never come, the link still goes.
+  const late = window.setTimeout(run, 500);
+}
+
+/**
  * A modal sheet, done properly: Back and Escape close it, focus moves into it on
  * open and back to whatever opened it on close, the page behind can't be
  * reached with Tab or scrolled while it's up.

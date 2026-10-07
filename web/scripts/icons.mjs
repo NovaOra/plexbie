@@ -19,7 +19,7 @@ const ICONS = {
   Clock: "Clock", Clock3: "Clock", Coffee: "Coffee", Copy: "Copy", Download: "DownloadSimple", Eye: "Eye",
   Flame: "Fire", FolderInput: "TrayArrowDown", GitFork: "GitFork", Headphones: "Headphones", Heart: "Heart",
   Hourglass: "Hourglass", House: "House", Inbox: "Tray", Library: "Books", LifeBuoy: "Lifebuoy", Link2: "Link",
-  ListOrdered: "ListNumbers", Lock: "Lock", LogOut: "SignOut", Mail: "Envelope", MessageCircle: "ChatCircle",
+  ListOrdered: "ListNumbers", Lock: "Lock", LogOut: "SignOut", Mail: "Envelope", Menu: "List", MessageCircle: "ChatCircle",
   MessageSquare: "ChatText", MonitorPlay: "MonitorPlay", PackageOpen: "Package", Play: "Play", PlayCircle: "PlayCircle",
   Pause: "Pause", Plus: "Plus", Power: "Power", Radio: "Broadcast", RefreshCw: "ArrowsClockwise", Search: "MagnifyingGlass",
   Settings: "GearSix", Share: "Export", Share2: "ShareNetwork", ShieldCheck: "ShieldCheck", SquarePlus: "PlusSquare",
