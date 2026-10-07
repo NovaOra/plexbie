@@ -589,7 +589,6 @@ async function finish(btn) {
 
 renderApps();
 
-const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 let moreKeys = [];
 async function renderMore() {
   const d = await api("more");
