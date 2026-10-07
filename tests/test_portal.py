@@ -2369,6 +2369,159 @@ def test_only_a_sign_in_cookie_is_a_sign_in():
     assert app_release.source_session(cfg.web_session_secret, source) == {"via": "discord", "id": "42", "name": "Pat"}
 
 
+def _cookie_auth():
+    from portal.auth import Auth
+    from portal.cache import TTLCache
+    cfg = Config()
+    cfg.web_session_secret = SECRET
+    auth = Auth(None, FakeServices(cfg), TTLCache())
+
+    async def roles(uid):
+        return {"member": True, "admin": False, "in_guild": True}
+    auth._discord_roles = roles
+    return auth
+
+
+def _with_cookie(method, path, payload):
+    from aiohttp.test_utils import make_mocked_request
+    from portal.auth import SESSION_COOKIE
+    value = sign(SECRET, {**payload, "typ": SESSION_COOKIE})
+    return make_mocked_request(method, path, headers={"Cookie": f"{SESSION_COOKIE}={value}", "X-Plexbie": "1"})
+
+
+def test_a_signed_out_cookie_stays_signed_out_even_after_a_restart():
+    """Logging out clears the cookie, but a copy of it (another tab, a shared computer,
+    a stolen one) must stop working too, and keep not working once the bot restarts."""
+    from database.kv_store import kv_get, kv_set
+    from portal.auth import REVOKED, SESSION_COOKIE
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        now = int(time.time())
+        await kv_set(*REVOKED, {"long-gone": now - 10, "still-out": now + 3600})
+        pat = {"via": "discord", "id": "42", "name": "Pat", "sid": "pat-1", "exp": now + 3600}
+        auth = _cookie_auth()
+        out = {"before": await auth.who(_with_cookie("GET", "/api/session", pat)), "first load": set(auth._revoked)}
+        r = await auth.logout(_with_cookie("POST", "/api/logout", pat))
+        out["logout"] = (r.status, r.cookies[SESSION_COOKIE].value)
+        out["after"] = await auth.who(_with_cookie("GET", "/api/session", pat))
+        out["other"] = await auth.who(_with_cookie("GET", "/api/session", {**pat, "sid": "pat-2"}))
+        out["stored"] = await kv_get(*REVOKED)
+        fresh = _cookie_auth()
+        out["after restart"] = await fresh.who(_with_cookie("GET", "/api/session", pat))
+        out["older"] = await fresh.who(_with_cookie("GET", "/api/session", {**pat, "sid": "still-out"}))
+        out["loaded"] = dict(fresh._revoked)
+        return out
+    out = asyncio.run(scenario())
+    assert out["before"]["user"]["id"] == "42"
+    assert out["first load"] == {"still-out"}, "an entry past its cookie's expiry is dropped on loading"
+    assert out["logout"] == (200, ""), "signed out, and the cookie is cleared"
+    assert out["after"] is None, "a copy of the cookie no longer signs anyone in"
+    assert out["other"]["user"]["id"] == "42", "only that sign-in ends, not their others"
+    assert out["after restart"] is None and out["older"] is None
+    assert set(out["stored"]) == {"pat-1", "still-out"}, "and isn't saved again"
+    assert set(out["loaded"]) == {"pat-1", "still-out"}
+
+
+def test_a_cookie_sign_out_that_cant_be_stored_says_so():
+    """No database to read or keep the sign-out in: a 503 the site shows as "couldn't
+    log you out", not a 500, and not "signed out" while a copy would work after a restart.
+    Trying again once the database is back really signs out."""
+    import portal.auth as auth_module
+    from database.kv_store import kv_get
+    from portal.auth import REVOKED, SESSION_COOKIE
+
+    async def broken(*a, **k):
+        raise RuntimeError("database is locked")
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        pat = {"via": "discord", "id": "42", "name": "Pat", "sid": "pat-1", "exp": int(time.time()) + 3600}
+        saved = auth_module.kv_get, auth_module.kv_set
+        try:
+            auth_module.kv_get = broken
+            unread = await _cookie_auth().logout(_with_cookie("POST", "/api/logout", pat))
+            auth_module.kv_get = saved[0]
+            auth_module.kv_set = broken
+            auth = _cookie_auth()
+            unsaved = await auth.logout(_with_cookie("POST", "/api/logout", pat))
+            still = auth.session(_with_cookie("GET", "/api/session", pat))
+        finally:
+            auth_module.kv_get, auth_module.kv_set = saved
+        again = await auth.logout(_with_cookie("POST", "/api/logout", pat))
+        stored = await kv_get(*REVOKED)
+        after_restart = await _cookie_auth().who(_with_cookie("GET", "/api/session", pat))
+        return ((unread.status, SESSION_COOKIE in unread.cookies),
+                (unsaved.status, SESSION_COOKIE in unsaved.cookies), still,
+                (again.status, again.cookies[SESSION_COOKIE].value), stored, after_restart)
+    unread, unsaved, still, again, stored, after_restart = asyncio.run(scenario())
+    assert unread == (503, False), "couldn't read the signed-out list: nothing is overwritten"
+    assert unsaved == (503, False)
+    assert still is not None, "not saved, so not signed out: trying again must save it"
+    assert again == (200, "")
+    assert set(stored) == {"pat-1"} and after_restart is None
+
+
+def test_a_signed_out_cookie_isnt_let_in_while_the_list_cant_be_read():
+    """After a restart the signed-out list is read before a cookie is believed: if that
+    read fails, the answer is "try again", never the signed-out person's account."""
+    import portal.auth as auth_module
+    from aiohttp import web
+    from database.kv_store import kv_set
+    from portal.auth import REVOKED
+
+    async def broken(*a, **k):
+        raise RuntimeError("database is locked")
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        now = int(time.time())
+        await kv_set(*REVOKED, {"pat-1": now + 3600})
+        pat = {"via": "discord", "id": "42", "name": "Pat", "sid": "pat-1", "exp": now + 3600}
+        auth = _cookie_auth()
+        saved = auth_module.kv_get
+        auth_module.kv_get = broken
+        try:
+            await auth.who(_with_cookie("GET", "/api/session", pat))
+            unreadable = None
+        except web.HTTPServiceUnavailable as e:
+            unreadable = e.status
+        finally:
+            auth_module.kv_get = saved
+        return unreadable, await auth.who(_with_cookie("GET", "/api/session", pat))
+    unreadable, readable = asyncio.run(scenario())
+    assert unreadable == 503
+    assert readable is None, "and once it can be read, still signed out"
+
+
+def test_two_sign_outs_at_once_are_both_kept():
+    """Each sign-out saves the whole list: one finishing late must not save over the other."""
+    import portal.auth as auth_module
+    from database.kv_store import kv_get
+    from portal.auth import REVOKED
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        real = auth_module.kv_set
+        delays = [0.05, 0]
+
+        async def slow(*a):
+            value = dict(a[-1])
+            await asyncio.sleep(delays.pop(0) if delays else 0)
+            await real(*a[:-1], value)
+        exp = int(time.time()) + 3600
+        auth = _cookie_auth()
+        await auth.load_revoked()
+        auth_module.kv_set = slow
+        try:
+            await asyncio.gather(*(auth.logout(_with_cookie("POST", "/api/logout", {
+                "via": "discord", "id": "42", "name": "Pat", "sid": sid, "exp": exp})) for sid in ("pat-1", "pat-2")))
+        finally:
+            auth_module.kv_set = real
+        return await kv_get(*REVOKED)
+    assert set(asyncio.run(scenario())) == {"pat-1", "pat-2"}
+
+
 def test_a_hidden_tab_cant_turn_a_page_redirect_into_another_site():
     async def scenario():
         c = _site()

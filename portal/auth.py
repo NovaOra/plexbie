@@ -187,6 +187,7 @@ class Auth:
         self._discord_states: Dict[str, float] = {}   # sign-in states already used, until they'd expire
         self._discord_pause = 0.0                     # Discord said slow down: no calls until then
         self._revoked: Optional[Dict[str, int]] = None
+        self._revoke_lock = asyncio.Lock()       # one sign-out saved at a time, none lost
         self._owner_id: Optional[str] = None
         self._tasks: Set[asyncio.Task] = set()
         self._pin_locks: Dict[int, asyncio.Lock] = {}
@@ -827,11 +828,22 @@ class Auth:
             from core import notify
             await notify.forget_app_session(s["app"])
         elif s and s.get("sid"):
-            await self.load_revoked()
-            now = int(time.time())
-            self._revoked = {k: v for k, v in self._revoked.items() if v > now}
-            self._revoked[s["sid"]] = int(s.get("exp") or now + SESSION_DAYS * 86400)
-            await kv_set(*REVOKED, self._revoked)
+            async with self._revoke_lock:
+                await self.load_revoked()
+                if self._revoked is None:
+                    # The signed-out list couldn't be read: saving one entry over it would
+                    # bring every earlier signed-out cookie back.
+                    return web.json_response({"error": UNAVAILABLE}, status=503)
+                now = int(time.time())
+                revoked = {k: v for k, v in self._revoked.items() if v > now}
+                revoked[s["sid"]] = int(s.get("exp") or now + SESSION_DAYS * 86400)
+                try:
+                    await kv_set(*REVOKED, revoked)
+                except Exception as e:
+                    # Still signed in, so trying again saves it again.
+                    logger.warning(f"Could not save a sign-out: {type(e).__name__}")
+                    return web.json_response({"error": UNAVAILABLE}, status=503)
+                self._revoked = revoked
         response = web.json_response({"ok": True})
         self._clear(response, SESSION_COOKIE)
         return response
@@ -943,6 +955,10 @@ class Auth:
         s = self.session(request)
         if not s:
             return None
+        if s.get("sid") and not s.get("app") and self._revoked is None:
+            # Can't tell whether this cookie was signed out: not "signed in" either.
+            raise web.HTTPServiceUnavailable(text=json.dumps({"error": UNAVAILABLE}), content_type="application/json",
+                                             headers={"Retry-After": "5", "Cache-Control": "no-store"})
         return await self.describe(s)
 
     async def describe(self, s: dict) -> dict:
