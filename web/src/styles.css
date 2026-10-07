@@ -1925,8 +1925,8 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-composer { display: grid; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid var(--rule); background: var(--panel); }
 .m-composer.is-note { border-color: rgb(229 160 13 / 0.45); }
 .m-composer.is-reply { border-color: rgb(255 209 228 / 0.45); }
-.m-composer .m-seg__item[aria-checked="true"] { background: var(--screen); color: var(--on-screen); }
-.m-composer.is-note .m-seg__item[aria-checked="true"] { background: #f2c66d; color: #241a05; }
+.m-composer .m-seg__item[aria-pressed="true"] { background: var(--screen); color: var(--on-screen); }
+.m-composer.is-note .m-seg__item[aria-pressed="true"] { background: #f2c66d; color: #241a05; }
 .m-textarea--note { border-color: rgb(229 160 13 / 0.5); }
 .m-textarea--reply { border-color: rgb(255 209 228 / 0.5); }
 .m-ticket__solve { justify-self: start; }

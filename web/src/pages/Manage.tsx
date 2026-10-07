@@ -12,26 +12,25 @@ import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { api, mayHaveWorked, type Ack } from "../api/client";
-import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, CleanupMatch, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
+import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, CleanupMatch, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
-import { Journey, LiveProgress } from "../components/motion";
+import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
 import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle, PageHead } from "../components/ui";
 import { useBackToClose } from "../components/overlay";
 import { BottomSheet } from "../components/BottomSheet";
-import { EASE_OUT } from "../components/motion";
 
 /* ================================================================== store */
 
-type Section = "requests" | "all" | "tickets" | "joins" | "invites" | "plexinvites" | "people" | "cleanup" | "discord" | "messages" | "health" | "help";
+type Section = "requests" | "all" | "tickets" | "joins" | "invites" | "plexinvites" | "people" | "cleanup" | "discord" | "messages" | "health";
 type Store = {
   requests?: AdminRequests; all?: AdminAllRequests; tickets?: AdminTickets; joins?: AdminJoin[]; invites?: AdminInvite[]; plexinvites?: PlexInvite[]; people?: AdminPerson[]; cleanup?: AdminCleanup;
-  discord?: DiscordOverview; messages?: MessagePerson[]; health?: HealthCheck[]; help?: AdminHelp[];
+  discord?: DiscordOverview; messages?: MessagePerson[]; health?: HealthCheck[];
 };
 type ToastIn = { tone?: "ok" | "error"; text: string; detail?: string; undo?: () => void };
 type Toast = ToastIn & { id: number };
 
-const SECTIONS: Section[] = ["requests", "all", "tickets", "joins", "invites", "plexinvites", "people", "cleanup", "discord", "messages", "health", "help"];
+const SECTIONS: Section[] = ["requests", "all", "tickets", "joins", "invites", "plexinvites", "people", "cleanup", "discord", "messages", "health"];
 const TABS: { id: Section; label: string }[] = [
   { id: "requests", label: "Requests" },
   { id: "all", label: "All requests" },
@@ -58,7 +57,7 @@ interface ManageState {
 }
 const ManageCtx = createContext<ManageState | null>(null);
 /** What each tab shows (most show only their own section). */
-const SHOWS: Partial<Record<Section, Section[]>> = { requests: ["requests", "help"], invites: ["invites", "plexinvites"] };
+const SHOWS: Partial<Record<Section, Section[]>> = { invites: ["invites", "plexinvites"] };
 const shows = (t: Section) => SHOWS[t] ?? [t];
 /** What the overview and the tab bar count, kept fresh whichever tab is open. */
 const COUNTED: Section[] = ["requests", "all", "tickets", "joins", "cleanup", "messages", "health"];
@@ -80,7 +79,8 @@ async function attempt(act: () => Promise<Ack>): Promise<Ack & { unsure?: boolea
 }
 
 /**
- * Admin actions, the same way everywhere: mark a row busy while it runs, and on
+ * Admin actions, the same way everywhere: mark a row busy while it runs (`busy`
+ * holds every key still running, so one finishing never frees another), and on
  * failure show the error (with `failText` as the headline when given, and to
  * `onFail` for a caller that also says it in place) and return null, so a caller
  * only handles success. With `unsure`, a failure that may still have gone through
@@ -89,12 +89,17 @@ async function attempt(act: () => Promise<Ack>): Promise<Ack & { unsure?: boolea
  */
 function useAct() {
   const { toast, refresh } = useManage();
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const mark = (key: string, on: boolean) => setBusy((was) => {
+    const now = new Set(was);
+    if (on) now.add(key); else now.delete(key);
+    return now;
+  });
   const act = async (key: string | null, call: () => Promise<Ack>,
     opts: { failText?: string; unsure?: string; buzzOnFail?: boolean; onFail?: (message: string, unsure: boolean) => void } = {}) => {
-    if (key !== null) setBusy(key);
+    if (key !== null) mark(key, true);
     const out = await attempt(call);
-    if (key !== null) setBusy(null);
+    if (key !== null) mark(key, false);
     if (out.ok) return out;
     if (opts.buzzOnFail) buzz(30);
     if (out.unsure && opts.unsure) {
@@ -166,7 +171,8 @@ function useKept<T>(load: () => Promise<T>, deps: unknown[]) {
 /**
  * A destructive action you have to mean: press and hold until the fill reaches
  * the end. Letting go early cancels. Keyboard users hold Space or Enter;
- * assistive tech that "clicks" without a press gets a two-step confirm instead.
+ * assistive tech that "clicks" without a press gets a two-step confirm instead,
+ * said out loud when armed and disarmed again after a few seconds.
  */
 function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail }: {
   label: string; icon?: ReactNode; onConfirm: () => void; disabled?: boolean; ms?: number;
@@ -182,8 +188,19 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail 
   const timer = useRef<number | undefined>(undefined);
   const ticker = useRef<number | undefined>(undefined);
   const bailTimer = useRef<number | undefined>(undefined);
+  const armTimer = useRef<number | undefined>(undefined);
   const pressed = useRef(false);
   const self = useRef<HTMLButtonElement>(null);
+  // The props as they are now: a hold's timer fires when the hold is done, and they may have changed by then.
+  const latest = useRef({ onConfirm, disabled });
+  useEffect(() => { latest.current = { onConfirm, disabled }; });
+
+  // Armed by a "click" with no press: a stray one much later shouldn't still confirm.
+  const arm = (on: boolean) => {
+    window.clearTimeout(armTimer.current);
+    setArmed(on);
+    if (on) armTimer.current = window.setTimeout(() => setArmed(false), 4000);
+  };
 
   // Confirming usually removes this card, and focus would drop to the page:
   // keep it nearby instead, on the next card or the section's heading.
@@ -192,7 +209,7 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail 
     const next = card?.nextElementSibling?.querySelector<HTMLElement>("button, a")
       ?? card?.previousElementSibling?.querySelector<HTMLElement>("button, a");
     const heading = self.current?.closest("section")?.querySelector<HTMLElement>("h2, h3");
-    onConfirm();
+    latest.current.onConfirm();
     window.setTimeout(() => {
       const at = document.activeElement;
       if (at && at !== document.body && at.isConnected) return;
@@ -218,6 +235,7 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail 
       window.clearInterval(ticker.current);
       pressed.current = false;
       setHolding(false);
+      if (latest.current.disabled) return;
       buzz(16);
       confirm();
     }, ms);
@@ -233,45 +251,51 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail 
     pressed.current = false;
     setHolding(false);
   };
-  useEffect(() => () => { window.clearTimeout(timer.current); window.clearInterval(ticker.current); window.clearTimeout(bailTimer.current); }, []);
+  useEffect(() => () => {
+    window.clearTimeout(timer.current); window.clearInterval(ticker.current); window.clearTimeout(bailTimer.current); window.clearTimeout(armTimer.current);
+  }, []);
   const isKey = (e: ReactKeyboardEvent) => e.key === " " || e.key === "Enter";
   const text = armed ? "Again to confirm" : bailed && bail ? bail : `Hold to ${label.toLowerCase()}`;
   const hint = useId();
 
   return (
-    <button
-      ref={self}
-      type="button"
-      className={`btn m-btn m-hold${holding ? " is-holding" : ""}${armed ? " is-armed" : ""}`}
-      style={{ "--hold": `${ms}ms` } as CSSProperties}
-      disabled={disabled}
-      // The name starts with the words on the button, so "click Hold to remove" works
-      // for voice control; how it works is the description.
-      aria-label={armed ? `Again to confirm: ${label}` : text}
-      aria-describedby={hint}
-      onPointerDown={(e) => {
-        if (e.button !== 0) return;
-        e.stopPropagation();
-        e.currentTarget.setPointerCapture(e.pointerId);
-        start();
-      }}
-      onPointerUp={cancel}
-      onPointerCancel={cancel}
-      onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
-      onKeyUp={(e) => { if (isKey(e)) { e.preventDefault(); cancel(); } }}
-      onClick={(e) => {
-        if (e.detail !== 0 || pressed.current) return;
-        if (armed) { setArmed(false); confirm(); } else setArmed(true);
-      }}
-      onBlur={() => { cancel(); setArmed(false); }}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      <span className="m-hold__label">{icon}{holding && stages?.length ? stages[stage] : text}</span>
-      <span id={hint} hidden>Press and hold, or press twice, to confirm.</span>
-      <span className="m-hold__fill" aria-hidden>
-        <span className="m-hold__label">{icon}{holding ? (stages?.[stage] ?? "Keep holding…") : text}</span>
-      </span>
-    </button>
+    <>
+      <button
+        ref={self}
+        type="button"
+        className={`btn m-btn m-hold${holding ? " is-holding" : ""}${armed ? " is-armed" : ""}`}
+        style={{ "--hold": `${ms}ms` } as CSSProperties}
+        disabled={disabled}
+        // The name starts with the words on the button, so "click Hold to remove" works
+        // for voice control; how it works is the description.
+        aria-label={armed ? `Again to confirm: ${label}` : text}
+        aria-describedby={hint}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          e.stopPropagation();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          start();
+        }}
+        onPointerUp={cancel}
+        onPointerCancel={cancel}
+        onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
+        onKeyUp={(e) => { if (isKey(e)) { e.preventDefault(); cancel(); } }}
+        onClick={(e) => {
+          if (e.detail !== 0 || pressed.current) return;
+          if (armed) { arm(false); confirm(); } else arm(true);
+        }}
+        onBlur={() => { cancel(); arm(false); }}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <span className="m-hold__label">{icon}{holding && stages?.length ? stages[stage] : text}</span>
+        <span id={hint} hidden>Press and hold, or press twice, to confirm.</span>
+        <span className="m-hold__fill" aria-hidden>
+          <span className="m-hold__label">{icon}{holding ? (stages?.[stage] ?? "Keep holding…") : text}</span>
+        </span>
+      </button>
+      {/* Said out loud: a new name on the focused button often isn't. */}
+      <span className="visually-hidden" role="status">{armed ? `Press again to confirm: ${label}` : ""}</span>
+    </>
   );
 }
 
@@ -419,10 +443,11 @@ function SwipeCard({ yes, no, yesLabel, noLabel, enabled, children }: {
         className={`m-swipe__card${enabled ? " is-live" : ""}`}
         style={{ x }}
         onPan={enabled ? (_, info) => x.set(damp(info.offset.x)) : undefined}
-        onPanEnd={enabled ? (_, info) => {
+        // Only past the line, never on a quick flick: a hasty flick would decline
+        // or deny without the hold their buttons ask for, and there's no undo.
+        onPanEnd={enabled ? () => {
           const v = x.get();
-          const flick = Math.abs(info.velocity.x) > 700 && Math.abs(v) > 40 && Math.sign(info.velocity.x) === Math.sign(v);
-          if (Math.abs(v) > line() || flick) void commit(v > 0 ? 1 : -1);
+          if (Math.abs(v) > line()) void commit(v > 0 ? 1 : -1);
           else home();
         } : undefined}
       >
@@ -478,12 +503,10 @@ function SwipeHint() {
 }
 
 function RequestsTab() {
-  const { data, patch, toast, readOnly, failed } = useManage();
+  const { data, patch, toast, readOnly } = useManage();
   const { busy, act, later } = useAct();
   const res = data.requests;
-  // Waits for the help requests too: they go above the queue, and arriving later
-  // they'd push it down under the reader's thumb.
-  if (!res || (data.help === undefined && !failed.help)) {
+  if (!res) {
     return (
       <div className="m-stack" aria-busy="true" aria-label="Loading requests">
         {[0, 1].map((i) => <div key={i} className="skeleton" style={{ height: 150, borderRadius: 16 }} />)}
@@ -516,10 +539,10 @@ function RequestsTab() {
             {pending.map((r) => (
               <motion.li key={r.id} {...fold}>
                 <SwipeCard
-                  enabled={!readOnly && busy !== r.id}
+                  enabled={!readOnly && !busy.has(r.id)}
                   yes={() => decide(r, true)} no={() => decide(r, false)} yesLabel="Approve" noLabel="Decline"
                 >
-                  <article className={`m-card${busy === r.id ? " is-busy" : ""}`} aria-busy={busy === r.id}>
+                  <article className={`m-card${busy.has(r.id) ? " is-busy" : ""}`} aria-busy={busy.has(r.id)}>
                     <span className="m-card__poster"><Art title={{ poster: r.poster, title: r.title, kind: r.kind as never }} size="w185" /></span>
                     <div className="m-card__body">
                       <span className="m-card__eyebrow">No. {formatSlot(r.slot)} · {KIND_LABEL[r.kind as keyof typeof KIND_LABEL] ?? r.kind}</span>
@@ -528,10 +551,10 @@ function RequestsTab() {
                       <span className="m-card__who"><Initial name={r.requester} /><span>{r.requester} asked {since(r.requestedAt)}</span></span>
                     </div>
                     <div className="m-card__actions">
-                      <button type="button" className="btn m-btn m-btn--go" disabled={readOnly || busy === r.id} onClick={() => void decide(r, true)}>
-                        <Check size={18} aria-hidden /> {busy === r.id ? "Working…" : "Approve"}
+                      <button type="button" className="btn m-btn m-btn--go" disabled={readOnly || busy.has(r.id)} onClick={() => void decide(r, true)}>
+                        <Check size={18} aria-hidden /> {busy.has(r.id) ? "Working…" : "Approve"}
                       </button>
-                      <HoldButton label="Decline" icon={<X size={16} aria-hidden />} disabled={readOnly || busy === r.id} onConfirm={() => void decide(r, false)} />
+                      <HoldButton label="Decline" icon={<X size={16} aria-hidden />} disabled={readOnly || busy.has(r.id)} onConfirm={() => void decide(r, false)} />
                     </div>
                   </article>
                 </SwipeCard>
@@ -612,11 +635,11 @@ function JoinsTab() {
         <ul className="m-cards">
           <AnimatePresence initial={false}>
             {pending.map((j) => {
-              const can = !readOnly && !!j.messageId && busy !== j.key;
+              const can = !readOnly && !!j.messageId && !busy.has(j.key);
               return (
                 <motion.li key={j.key} {...fold}>
                   <SwipeCard enabled={can} yes={() => decide(j, true)} no={() => decide(j, false)} yesLabel="Invite" noLabel="Deny">
-                    <article className={`m-card m-card--person${busy === j.key ? " is-busy" : ""}`} aria-busy={busy === j.key}>
+                    <article className={`m-card m-card--person${busy.has(j.key) ? " is-busy" : ""}`} aria-busy={busy.has(j.key)}>
                       <Initial name={j.name} big />
                       <div className="m-card__body">
                         <span className="m-card__eyebrow">{j.via === "plex" ? "Signed in with Plex" : "From Discord"} · asked {since(j.askedAt)}</span>
@@ -627,7 +650,7 @@ function JoinsTab() {
                         {j.messageId ? (
                           <>
                             <button type="button" className="btn m-btn m-btn--go" disabled={!can} onClick={() => void decide(j, true)}>
-                              <UserPlus size={18} aria-hidden /> {busy === j.key ? "Inviting…" : "Invite to Plex"}
+                              <UserPlus size={18} aria-hidden /> {busy.has(j.key) ? "Inviting…" : "Invite to Plex"}
                             </button>
                             <HoldButton label="Deny" icon={<X size={16} aria-hidden />} disabled={!can} onConfirm={() => void decide(j, false)} />
                           </>
@@ -747,7 +770,7 @@ function PeopleTab() {
             const tone = p.removalIn === null ? "safe" : p.removalIn <= 7 ? "hot" : p.daysIdle >= p.warnAfter ? "warm" : "calm";
             return (
               <motion.li key={p.plexName} {...fold}>
-                <article className={`m-person${busy === p.plexName ? " is-busy" : ""}`}>
+                <article className={`m-person${busy.has(p.plexName) ? " is-busy" : ""}`}>
                   <Initial name={p.displayName || p.plexName} big />
                   <div className="m-person__body">
                     {/* The heading is just the person; Rename and the status pills sit beside it. */}
@@ -793,12 +816,12 @@ function PeopleTab() {
                             aria-describedby={`rn-${p.plexName}-hint`}
                             onChange={(e) => setNewName(e.target.value)} />
                           <button type="button" className="btn m-btn" onClick={() => setRenaming(null)}>Back</button>
-                          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy === p.plexName || !newName.trim()}>Save</button>
+                          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy.has(p.plexName) || !newName.trim()}>Save</button>
                         </div>
                       </form>
                     ) : null}
                     {p.hasAccess === false && p.candidates?.length ? (
-                      <MatchPicker person={p} disabled={readOnly || busy === p.plexName} onMatch={(a) => void match(p, a)} />
+                      <MatchPicker person={p} disabled={readOnly || busy.has(p.plexName)} onMatch={(a) => void match(p, a)} />
                     ) : null}
                     {p.owner ? (
                       <span className="m-person__note">Owns the server.</span>
@@ -819,7 +842,7 @@ function PeopleTab() {
                         <Switch on={!!p.neverRemove} label={`Never remove ${p.plexName}`} disabled={readOnly} onChange={(on) => void keep(p, on)} />
                         <span>Never remove</span>
                       </label>
-                      <HoldButton label={p.hasAccess === false ? "Forget" : "Remove"} icon={<Trash2 size={16} aria-hidden />} ms={1400} disabled={readOnly || busy === p.plexName} onConfirm={() => void remove(p)} />
+                      <HoldButton label={p.hasAccess === false ? "Forget" : "Remove"} icon={<Trash2 size={16} aria-hidden />} ms={1400} disabled={readOnly || busy.has(p.plexName)} onConfirm={() => void remove(p)} />
                     </div>
                   )}
                 </article>
@@ -1471,7 +1494,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
               {blocker ? <p className="m-blocked__nope">{blocker}</p> : null}
               {notDone ? notDoneLine : null}
               <HoldButton label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
-                disabled={readOnly || !!busy || !!blocker} onConfirm={() => void go()} />
+                disabled={readOnly || busy.size > 0 || !!blocker} onConfirm={() => void go()} />
             </>
           )}
         </>
@@ -1494,6 +1517,7 @@ function ArrFinder({ app, onPick }: { app: "sonarr" | "radarr"; onPick: (item: A
       ) : rows ? (rows.length ? (
         <ul>{rows.map((r) => <li key={r.id}><button type="button" className="btn btn--quiet m-btn" onClick={() => onPick(r)}>{r.title}{r.year ? ` (${r.year})` : ""}</button></li>)}</ul>
       ) : <p className="muted">Nothing in {app === "sonarr" ? "Sonarr" : "Radarr"} by that name.</p>) : null}
+      <p className="visually-hidden" role="status">{!searching && !failed && rows ? (rows.length ? `${rows.length} ${rows.length === 1 ? "match" : "matches"}` : "No matches") : ""}</p>
     </div>
   );
 }
@@ -1667,7 +1691,7 @@ function PlexInvites() {
     later("plexinvites", 1500);
   };
   const cancel = async (i: PlexInvite) => {
-    const out = await act(null, () => api.plexInviteCancel(i.email));
+    const out = await act(i.email, () => api.plexInviteCancel(i.email));
     if (!out) return;
     toast({ text: out.message });
     patch("plexinvites", (d) => d.filter((x) => x.email !== i.email));
@@ -1692,7 +1716,7 @@ function PlexInvites() {
                     <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => { setEditing(i.email); setNext(""); }}>
                       <Mail size={16} aria-hidden /> Change email
                     </button>
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} onConfirm={() => void cancel(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || busy.has(i.email)} onConfirm={() => void cancel(i)} />
                   </div>
                 )}
                   {editing === i.email ? (
@@ -1704,8 +1728,8 @@ function PlexInvites() {
                       </div>
                       <div className="m-person__actions m-person__actions--two">
                         <button type="button" className="btn m-btn" onClick={() => { setEditing(null); setNext(""); }}>Back</button>
-                        <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy === i.email || !next.trim()}>
-                          <Mail size={16} aria-hidden /> {busy === i.email ? "Sending…" : "Send invite"}
+                        <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy.has(i.email) || !next.trim()}>
+                          <Mail size={16} aria-hidden /> {busy.has(i.email) ? "Sending…" : "Send invite"}
                         </button>
                       </div>
                     </form>
@@ -1721,7 +1745,7 @@ function PlexInvites() {
 
 function InvitesTab() {
   const { data, patch, toast, readOnly, freshInvite: made, setFreshInvite: setMade } = useManage();
-  const { act, later } = useAct();
+  const { busy: acting, act, later } = useAct();
   const [label, setLabel] = useState("");
   const [email, setEmail] = useState("");
   const [days, setDays] = useState(7);
@@ -1749,7 +1773,7 @@ function InvitesTab() {
   };
 
   const revoke = async (i: AdminInvite) => {
-    const out = await act(null, () => api.revokeInvite(i.id));
+    const out = await act(i.id, () => api.revokeInvite(i.id));
     if (!out) return;
     toast({ text: `Cancelled ${i.label}’s invite`, detail: out.message });
     patch("invites", (d) => d.map((x) => (x.id === i.id ? { ...x, status: "revoked" } : x)));
@@ -1777,7 +1801,7 @@ function InvitesTab() {
   };
 
   const remove = async (i: AdminInvite) => {
-    const out = await act(null, () => api.deleteInvite(i.id));
+    const out = await act(i.id, () => api.deleteInvite(i.id));
     if (!out) return;
     toast({ text: `Deleted ${i.label}’s invite` });
     patch("invites", (d) => d.filter((x) => x.id !== i.id));
@@ -1854,7 +1878,7 @@ function InvitesTab() {
                   </div>
                   <div className="m-person__actions m-person__actions--two">
                     {renewButton(i)}
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} onConfirm={() => void revoke(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || acting.has(i.id)} onConfirm={() => void revoke(i)} />
                   </div>
                 </article>
               </motion.li>
@@ -1887,7 +1911,7 @@ function InvitesTab() {
                     <div className={`m-person__actions${i.status === "used" ? "" : " m-person__actions--two"}`}>
                       {renewButton(i, i.status === "used" ? "Invite again" : "New link")}
                       {i.status === "used" ? null : (
-                        <HoldButton label="Delete" icon={<Trash2 size={16} aria-hidden />} ms={700} disabled={readOnly} onConfirm={() => void remove(i)} />
+                        <HoldButton label="Delete" icon={<Trash2 size={16} aria-hidden />} ms={700} disabled={readOnly || acting.has(i.id)} onConfirm={() => void remove(i)} />
                       )}
                     </div>
                   </article>
@@ -2058,7 +2082,7 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
   const { refresh, toast, readOnly } = useManage();
   const { session } = useSession();
   const { busy, act } = useAct();
-  // Its own flag: Done and the ticket buttons share `busy` and would clear a send's.
+  // The send's own flag; `sendingNow` also stops a second send from the shortcut before a re-render.
   const [sending, setSending] = useState(false);
   const sendingNow = useRef(false);
   const [text, setText] = useState("");
@@ -2104,7 +2128,7 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
         <div><h3 className="m-card__title">{person.name}</h3>
           <span className="muted m-person__meta">{person.count} message{person.count === 1 ? "" : "s"} from Plexbie{person.received ? ` · ${person.received} from ${person.name}` : ""} · by {person.via.map((v) => VIA[v].label.toLowerCase()).join(", ")}</span>
           {person.done ? <span className="muted m-person__meta">Marked done{person.done.by ? ` by ${person.done.by}` : ""} {since(person.done.at)}</span> : null}</div>
-        <button type="button" className="btn btn--quiet m-btn m-chat__done" disabled={readOnly || busy === "done"}
+        <button type="button" className="btn btn--quiet m-btn m-chat__done" disabled={readOnly || busy.has("done")}
           onClick={() => void done(!!person.unread || !person.done)}>
           {person.unread || !person.done ? <><Check size={16} aria-hidden /> Done</> : "Mark unread"}
         </button>
@@ -2133,7 +2157,7 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
                   {m.by ? <span className="muted m-msg__by">Sent by {m.by}</span> : null}
                   {m.direction === "in" && m.ticket ? <span className="muted m-msg__by"><LifeBuoy size={13} aria-hidden /> On their ticket</span> : null}
                   {m.direction === "in" && !m.ticket && person.ticket && m.context === "Discord DM" ? (
-                    <button type="button" className="btn btn--quiet m-btn m-msg__action" disabled={readOnly || busy === m.id} onClick={() => void toTicket(m.id)}>
+                    <button type="button" className="btn btn--quiet m-btn m-msg__action" disabled={readOnly || busy.has(m.id)} onClick={() => void toTicket(m.id)}>
                       <LifeBuoy size={14} aria-hidden /> Add to their ticket on {person.ticket.title}
                     </button>
                   ) : null}
@@ -2198,7 +2222,7 @@ function MessagesTab() {
                   <span className="m-inbox__top"><b>{p.name}</b>{p.unread ? <span className="m-pill m-pill--hot">{p.unread} new</span> : null}<time dateTime={p.last.at}>{since(p.last.at)}</time></span>
                   <span className="m-inbox__last">{p.last.direction === "in" ? <b>{p.name.split(" ")[0]}: </b> : null}{p.last.text}</span>
                   <span className="m-inbox__via">
-                    {p.via.map((v) => { const Icon = VIA[v].icon; return <Icon key={v} size={13} aria-label={VIA[v].label} />; })}
+                    {p.via.map((v) => { const Icon = VIA[v].icon; return <Icon key={v} size={13} role="img" aria-label={VIA[v].label} />; })}
                     {p.failed ? <span className="m-inbox__failed">{p.failed} not delivered</span> : null}
                   </span>
                 </span>
@@ -2389,19 +2413,19 @@ const SEARCHING: Record<SearchHow, string> = { again: "Searching again", episode
 
 /** Ways to send a film or show's search off again: on a request, and on its ticket. `byName` makes "Search by name" the one to try. */
 function RequestFixes({ kind, busy, disabled, byName = false, onSearch }: {
-  kind: string; busy: string | null; disabled: boolean; byName?: boolean; onSearch: (how: SearchHow) => void;
+  kind: string; busy: ReadonlySet<string>; disabled: boolean; byName?: boolean; onSearch: (how: SearchHow) => void;
 }) {
   return (
     <div className="m-reqsheet__fixes">
-      <button type="button" className="btn m-btn" disabled={disabled || !!busy} onClick={() => onSearch("again")}>
-        <RefreshCw size={16} aria-hidden className={busy === "again" ? "m-spin" : undefined} /> Search again
+      <button type="button" className="btn m-btn" disabled={disabled || busy.size > 0} onClick={() => onSearch("again")}>
+        <RefreshCw size={16} aria-hidden className={busy.has("again") ? "m-spin" : undefined} /> Search again
       </button>
       {kind === "tv" ? (
-        <button type="button" className="btn btn--quiet m-btn" disabled={disabled || !!busy} onClick={() => onSearch("episodes")}>
+        <button type="button" className="btn btn--quiet m-btn" disabled={disabled || busy.size > 0} onClick={() => onSearch("episodes")}>
           <ListOrdered size={16} aria-hidden /> Episode by episode
         </button>
       ) : null}
-      <button type="button" className={`btn m-btn${byName ? "" : " btn--quiet"}`} disabled={disabled || !!busy} onClick={() => onSearch("name")}>
+      <button type="button" className={`btn m-btn${byName ? "" : " btn--quiet"}`} disabled={disabled || busy.size > 0} onClick={() => onSearch("name")}>
         <Search size={16} aria-hidden /> Search by name
       </button>
     </div>
@@ -2422,7 +2446,7 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const titleId = useId();
   const load = res.reload;
 
-  const after = () => { window.setTimeout(() => { void load(); void refresh("all"); void refresh("help"); }, 900); };
+  const after = () => { window.setTimeout(() => { void load(); void refresh("all"); }, 900); };
   const search = async (how: SearchHow) => {
     const out = await act(how, () => api.requestSearch(id, how), { failText: "Couldn’t search" });
     if (!out) return;
@@ -2494,8 +2518,8 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
               ) : null}
               <div className="m-person__actions m-person__actions--two">
                 <button type="button" className="btn m-btn" onClick={() => { setWriting(false); setNote(""); }}>Back</button>
-                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy === "ticket" || !note.trim()} onClick={() => void ticket()}>
-                  <LifeBuoy size={16} aria-hidden /> {busy === "ticket" ? "Opening…" : "Open the ticket"}
+                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("ticket") || !note.trim()} onClick={() => void ticket()}>
+                  <LifeBuoy size={16} aria-hidden /> {busy.has("ticket") ? "Opening…" : "Open the ticket"}
                 </button>
               </div>
             </div>
@@ -2613,7 +2637,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const [last, setLast] = useState("");
   const titleId = useId();
   const load = res.reload;
-  const after = () => { void load(); window.setTimeout(() => { void refresh("tickets"); void refresh("all"); void refresh("help"); }, 600); };
+  const after = () => { void load(); window.setTimeout(() => { void refresh("tickets"); void refresh("all"); }, 600); };
 
   const run = async (key: string, call: () => Promise<Ack>, done: string) => {
     const out = await act(key, call);
@@ -2646,7 +2670,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
             <span className={`m-pill m-pill--${state!.tone}`}>{state!.label}</span>
             <span className="m-pill">{t.owner ? `${t.owner} has it` : "Nobody has it yet"}</span>
             {t.status === "open" ? (
-              <button type="button" className="btn btn--quiet m-btn m-ticket__take" disabled={readOnly || !!busy}
+              <button type="button" className="btn btn--quiet m-btn m-ticket__take" disabled={readOnly || busy.size > 0}
                 onClick={() => void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours")}>
                 {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
               </button>
@@ -2689,21 +2713,21 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
 
           {t.status === "open" ? (
             <div className={`m-composer is-${kind}`}>
-              <div className="m-seg" role="radiogroup" aria-label="Who sees it">
-                <button type="button" role="radio" aria-checked={kind === "note"} className="m-seg__item" onClick={() => setKind("note")}>Note for admins</button>
-                <button type="button" role="radio" aria-checked={kind === "reply"} className="m-seg__item" onClick={() => setKind("reply")}>Reply to {t.who}</button>
+              <div className="m-seg" role="group" aria-label="Who sees it">
+                <button type="button" aria-pressed={kind === "note"} className="m-seg__item" onClick={() => setKind("note")}>Note for admins</button>
+                <button type="button" aria-pressed={kind === "reply"} className="m-seg__item" onClick={() => setKind("reply")}>Reply to {t.who}</button>
               </div>
               <label className="visually-hidden" htmlFor={`${titleId}-say`}>{kind === "note" ? "Note for admins" : `Reply to ${t.who}`}</label>
               <textarea id={`${titleId}-say`} className={`m-textarea${kind === "reply" ? " m-textarea--reply" : " m-textarea--note"}`} rows={3} maxLength={1200}
                 value={text} onChange={(e) => setText(e.target.value)}
                 placeholder={kind === "note" ? "Only admins see this" : `${t.who} gets this as a Discord DM or an alert, and can answer`} />
               <div className="m-person__actions m-person__actions--two">
-                <button type="button" className="btn m-btn" disabled={readOnly || !!busy}
+                <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0}
                   onClick={() => void run("status", () => api.ticketStatus(id, t.waiting ? "open" : "waiting"), t.waiting ? "Back with the admins" : `Waiting on ${t.who}`)}>
                   {t.waiting ? "Back to open" : `Wait on ${t.who}`}
                 </button>
-                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy === "send" || !text.trim()} onClick={() => void send()}>
-                  {busy === "send" ? "Sending…" : kind === "note" ? "Add note" : "Send reply"}
+                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("send") || !text.trim()} onClick={() => void send()}>
+                  {busy.has("send") ? "Sending…" : kind === "note" ? "Add note" : "Send reply"}
                 </button>
               </div>
               {solving ? (
@@ -2713,9 +2737,9 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
                     onChange={(e) => setLast(e.target.value)} placeholder="Grabbed the 4K release, it’ll be on Plex tonight" />
                   <div className="m-person__actions m-person__actions--two">
                     <button type="button" className="btn m-btn" onClick={() => { setSolving(false); setLast(""); }}>Back</button>
-                    <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy === "solve"}
+                    <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("solve")}
                       onClick={async () => { if (await run("solve", () => api.ticketStatus(id, "resolved", last.trim()), "Solved")) { setSolving(false); setLast(""); } }}>
-                      <Check size={16} aria-hidden /> {busy === "solve" ? "Solving…" : "Solve it"}
+                      <Check size={16} aria-hidden /> {busy.has("solve") ? "Solving…" : "Solve it"}
                     </button>
                   </div>
                 </div>
@@ -2726,7 +2750,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
               )}
             </div>
           ) : (
-            <button type="button" className="btn m-btn" disabled={readOnly || !!busy} onClick={() => void run("reopen", () => api.ticketStatus(id, "open"), "Reopened")}>
+            <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0} onClick={() => void run("reopen", () => api.ticketStatus(id, "open"), "Reopened")}>
               <RefreshCw size={16} aria-hidden /> Reopen
             </button>
           )}
@@ -2920,7 +2944,8 @@ export function Manage() {
   const { session } = useSession();
   const [params, setParams] = useSearchParams();
   const asked = params.get("tab") ?? "";
-  const tab: Section = (SECTIONS as string[]).includes(asked) ? (asked as Section) : "requests";
+  // Only the tabs: a section loaded behind one (plexinvites) isn't a page of its own.
+  const tab: Section = TABS.find((t) => t.id === asked)?.id ?? "requests";
   useTitle(`Manage: ${TABS.find((t) => t.id === tab)?.label ?? "Overview"}`);
   const panel = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
