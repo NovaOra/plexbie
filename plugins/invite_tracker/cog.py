@@ -15,6 +15,7 @@ from core.logging import get_logger
 from core.services import BotServices
 from database.session import get_session
 from utils.embeds import create_error_embed
+from utils.formatting import ensure_utc
 from .models import InviteUse
 
 logger = get_logger(__name__)
@@ -250,9 +251,12 @@ class InviteTrackerCog(commands.Cog):
                     description=f"Information about {member.mention}",
                     color=discord.Color.blue()
                 )
-                embed.add_field(name="Invited By", value=f"<@{invite_use.inviter_id}>", inline=True)
+                # "0" is a join Discord gave no inviter for (a vanity URL, say).
+                inviter = (f"<@{invite_use.inviter_id}>" if invite_use.inviter_id not in (None, "", "0")
+                           else invite_use.inviter_name or "Unknown")
+                embed.add_field(name="Invited By", value=inviter, inline=True)
                 embed.add_field(name="Invite Code", value=invite_use.invite_code, inline=True)
-                embed.add_field(name="Joined At", value=f"<t:{int(invite_use.joined_at.timestamp())}:F>", inline=False)
+                embed.add_field(name="Joined At", value=f"<t:{int(ensure_utc(invite_use.joined_at).timestamp())}:F>", inline=False)
 
                 # Legacy: only rows from when a role was handed out on joining.
                 if invite_use.auto_role_assigned and invite_use.role_id:

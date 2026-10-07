@@ -26,6 +26,7 @@ from database.request_store import get_request
 from portal.cleanup import kept_forever, library_keys
 from portal.data import Data
 from core.discord_lookup import admin_channel, admin_discord_ids, home_guild
+from utils.formatting import ensure_utc
 
 
 def discord_escape(text: str) -> str:
@@ -1170,7 +1171,7 @@ class Actions:
                 role = guild.get_role(int(r.role_id)) if (r.auto_role_assigned and r.role_id and str(r.role_id).isdigit()) else None
                 joins.append({"who": name_of(r.joiner_id, r.joiner_name or "Someone who left"),
                               "by": name_of(r.inviter_id, r.inviter_name or "Unknown"), "via": "discord",
-                              "code": r.invite_code, "at": r.joined_at.isoformat() if r.joined_at else None,
+                              "code": r.invite_code, "at": ensure_utc(r.joined_at).isoformat() if r.joined_at else None,
                               "role": role.name if role else None})
         for rec in (await kv_get_all(INVITES)).values():
             if isinstance(rec, dict) and rec.get("used_at"):

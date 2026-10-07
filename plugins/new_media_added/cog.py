@@ -9,7 +9,7 @@ from collections import defaultdict
 import discord
 from discord.ext import commands, tasks
 
-from utils.formatting import episode_label
+from utils.formatting import episode_label, parse_utc
 from utils.embeds import truncate_field
 from utils.guids import guid_number
 from core.admin_mirror import send_user_dm
@@ -325,11 +325,10 @@ class NewMediaAddedCog(commands.Cog):
             media = (rec or {}).get("media") or {}
             if rec.get("status") != "approved" or media.get("media_type") != "movie" or not media.get("id"):
                 continue
-            try:
-                asked = datetime.fromisoformat(rec.get("timestamp") or "")
-            except ValueError:
+            asked = parse_utc(rec.get("timestamp"))
+            if asked is None:
                 continue
-            if now - (asked if asked.tzinfo else asked.replace(tzinfo=timezone.utc)) <= timedelta(days=WATCH_DAYS):
+            if now - asked <= timedelta(days=WATCH_DAYS):
                 requested[int(media["id"])] = key
         if len(self._grabs_checked) > 5000:
             self._grabs_checked.clear()
@@ -375,13 +374,8 @@ class NewMediaAddedCog(commands.Cog):
             if rec.get("status") != "approved" or rec.get("media_type") in ("ebook", "audiobook", "both") \
                     or "open_library_key" in media:
                 continue
-            try:
-                asked = datetime.fromisoformat(rec.get("timestamp") or "")
-                if asked.tzinfo is None:
-                    asked = asked.replace(tzinfo=timezone.utc)
-                if now - asked > timedelta(days=WATCH_DAYS):
-                    continue
-            except ValueError:
+            asked = parse_utc(rec.get("timestamp"))
+            if asked is None or now - asked > timedelta(days=WATCH_DAYS):
                 continue
             wk = Progress.wait_key(media, rec.get("seasons"))
             if wk in seen:

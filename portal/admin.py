@@ -17,6 +17,7 @@ from database.request_store import SEERR_SOURCES
 from database.session import get_session
 from portal.cleanup import library_keys, skipped_names
 from portal.data import Data, _iso, predates_outcomes, tmdb_art
+from utils.formatting import parse_utc
 from core.discord_lookup import PUBLIC_BOT_FIX, home_guild, home_health_items
 
 logger = get_logger(__name__)
@@ -42,30 +43,18 @@ def _card_url(guild, channel, key, rec: dict) -> Optional[str]:
     return f"https://discord.com/channels/{guild}/{channel}/{card}" if guild and channel and str(card or "").isdigit() else None
 
 
-def _parse(value: Any) -> Optional[datetime]:
-    if not value:
-        return None
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, timezone.utc)
-    try:
-        t = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
-
-
 def _ts(value: Any) -> float:
-    t = _parse(value)
+    t = parse_utc(value)
     return t.timestamp() if t else 0.0
 
 
 def _within(value: Any, now: datetime, days: int) -> bool:
-    t = _parse(value)
+    t = parse_utc(value)
     return bool(t) and (now - t).total_seconds() <= days * 86400
 
 
 def _hours_since(value: Any, now: datetime) -> float:
-    t = _parse(value)
+    t = parse_utc(value)
     return (now - t).total_seconds() / 3600 if t else 0.0
 
 

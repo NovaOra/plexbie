@@ -10,7 +10,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from sqlalchemy import select, update
 
-from utils.formatting import episode_label
+from utils.formatting import ensure_utc, episode_label
 from utils.embeds import truncate_field
 from core.discord_lookup import is_home
 from core.logging import get_logger
@@ -486,7 +486,7 @@ class WatchPartyCog(commands.Cog):
             if credit.last_credited_at:
                 embed.add_field(
                     name="Last Activity",
-                    value=f"<t:{int(credit.last_credited_at.timestamp())}:R>",
+                    value=f"<t:{int(ensure_utc(credit.last_credited_at).timestamp())}:R>",
                     inline=True
                 )
 

@@ -16,6 +16,7 @@ from core.logging import get_logger
 from core.permissions import AdminOnlyView, require_admin
 from core.services import BotServices
 from utils.embeds import create_info_embed, truncate_field
+from utils.formatting import parse_utc
 from utils.views import reply_failure
 from utils.guids import guid_number
 from database.kv_store import kv_get, kv_set
@@ -29,7 +30,7 @@ CLEANUP_NAMESPACE = "media_cleanup"
 SEERR_DELETED = 7
 
 from portal.cleanup import aware as _aware  # noqa: E402  (plexapi's zone-less local times)
-from portal.cleanup import EMPTY_HISTORY_TITLES, current_warnings, days_left, _iso  # noqa: E402
+from portal.cleanup import EMPTY_HISTORY_TITLES, current_warnings, days_left  # noqa: E402
 from portal.cleanup import guid_ids, kept_forever, missing_skipped, skipped_library  # noqa: E402
 
 
@@ -809,17 +810,10 @@ class MediaCleanupCog(commands.Cog):
         return None
 
     def _parse_request_timestamp(self, value: Optional[str]) -> Optional[datetime]:
-        if not value:
-            return None
-
-        try:
-            parsed = datetime.fromisoformat(value)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed
-        except ValueError:
+        parsed = parse_utc(value)
+        if value and parsed is None:
             logger.debug(f"Could not parse media request timestamp: {value}")
-            return None
+        return parsed
 
     def _get_recent_request_timestamp(self, item) -> Optional[datetime]:
         """Return the newest request timestamp matching this Plex item, if any."""
@@ -1062,7 +1056,7 @@ class MediaCleanupCog(commands.Cog):
         for keys, result in keyed:
             if result and least[group(next(iter(keys)))]:
                 since = warned.get(result["rating_key"])
-                first[result["rating_key"]] = since if _iso(since) else now.isoformat()
+                first[result["rating_key"]] = since if parse_utc(since) else now.isoformat()
         warned.clear()
         warned.update(first)
 

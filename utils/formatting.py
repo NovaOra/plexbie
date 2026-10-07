@@ -1,6 +1,7 @@
 # path: utils/formatting.py
-"""Display helpers for media labels."""
-from typing import Optional
+"""Display helpers for media labels and stored times."""
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 #: Shown when an episode's season or number is unknown.
 UNKNOWN_MARKER = "??"
@@ -40,3 +41,40 @@ def episode_label(
     if title:
         label = f"{label}: {title}"
     return label
+
+
+def ensure_utc(when: Optional[datetime]) -> Optional[datetime]:
+    """A stored time with its zone: one without a zone is UTC.
+
+    Every timestamp column holds UTC, but SQLite gives it back without a zone, and
+    Python reads a zone-less datetime as the host's local time - so .timestamp()
+    and .isoformat() were off by the host's offset whenever TZ was set. Not for
+    plexapi's datetimes: those are the server's local time (portal.cleanup.aware).
+    """
+    if when is None or when.tzinfo is not None:
+        return when
+    return when.replace(tzinfo=timezone.utc)
+
+
+def parse_utc(value: Any) -> Optional[datetime]:
+    """A stored time as a UTC-aware datetime, or None when it isn't one.
+
+    Takes a datetime, Unix seconds, or an ISO string with or without a zone (a
+    trailing "Z" included); a zone-less one is UTC. Each caller decides what a
+    missing or unreadable time means.
+    """
+    if not value or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return ensure_utc(value)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str):
+        return None
+    try:
+        return ensure_utc(datetime.fromisoformat(value))
+    except ValueError:
+        return None

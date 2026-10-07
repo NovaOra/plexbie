@@ -17,6 +17,7 @@ import conftest  # noqa: F401
 
 from plugins.media_cleanup import cog as cleanup
 from portal import cleanup as countdown
+from utils.formatting import parse_utc
 from test_cleanup_whole_removal import Movie, _cog, _libraries, _watched
 
 
@@ -206,9 +207,9 @@ def test_warnings_start_again_after_days_without_a_check():
     store = _Store(warned=warned, warned_checked=_ago(40))
     _scan(cog, store)
     assert removed == [] and [days for _, days in notices[0][1]] == [7, 7, 7], notices
-    assert all(countdown._iso(when) > datetime.now(timezone.utc) - timedelta(minutes=5)
+    assert all(parse_utc(when) > datetime.now(timezone.utc) - timedelta(minutes=5)
                for when in store.rows["warned"].values()), store.rows["warned"]
-    assert countdown._iso(store.rows["warned_checked"]) > datetime.now(timezone.utc) - timedelta(minutes=5)
+    assert parse_utc(store.rows["warned_checked"]) > datetime.now(timezone.utc) - timedelta(minutes=5)
 
     now = datetime.now(timezone.utc)
     assert countdown.current_warnings(warned, _ago(2), now) == warned
@@ -223,7 +224,7 @@ def test_a_damaged_warning_date_starts_again_instead_of_warning_forever():
     store = _Store(warned={"1": "last tuesday"})
     _scan(cog, store)
     assert removed == [] and notices == [("warning", [("Dune", 7)])], notices
-    assert countdown._iso(store.rows["warned"]["1"]), store.rows["warned"]
+    assert parse_utc(store.rows["warned"]["1"]), store.rows["warned"]
 
 
 def test_practice_mode_warnings_count_once_live():

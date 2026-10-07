@@ -26,6 +26,7 @@ from portal.data import Data
 from portal.images import IMAGE_TRIES, ImageProxy
 from portal.mobile import API_VERSION as MOBILE_API_VERSION, bearer
 from portal.ratelimit import Limiter, visitor_scheme as _visitor_scheme
+from utils.formatting import ensure_utc
 
 logger = get_logger(__name__)
 
@@ -300,7 +301,7 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         if not credit:
             return web.json_response({"seconds": 0, "sessions": 0, "last": None})
         return web.json_response({"seconds": credit.total_duration, "sessions": credit.total_sessions,
-                                  "last": credit.last_credited_at.isoformat() if credit.last_credited_at else None})
+                                  "last": ensure_utc(credit.last_credited_at).isoformat() if credit.last_credited_at else None})
 
     async def community(request):
         user = await member(request)

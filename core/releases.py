@@ -12,18 +12,10 @@ and disc dates, else 90 days after cinemas when neither is announced.
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, Optional
 
+from utils.formatting import parse_utc
+
 #: Radarr's guess for a film with a cinema date but no digital or disc date.
 CINEMA_TO_HOME = timedelta(days=90)
-
-
-def _when(value: Any) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
 def day(d: datetime, now: datetime) -> str:
@@ -37,8 +29,8 @@ def movie_upcoming(movie: Dict[str, Any], now: Optional[datetime] = None) -> Opt
     with when it is (releaseDate, releaseKind) and a sentence saying so. None
     once it's out (or nothing says it isn't)."""
     now = now or datetime.now(timezone.utc)
-    cinemas = _when(movie.get("inCinemas"))
-    digital, disc = _when(movie.get("digitalRelease")), _when(movie.get("physicalRelease"))
+    cinemas = parse_utc(movie.get("inCinemas"))
+    digital, disc = parse_utc(movie.get("digitalRelease")), parse_utc(movie.get("physicalRelease"))
     home = min((d for d in (digital, disc) if d), default=None)
     if home:
         if home <= now:
@@ -72,7 +64,7 @@ def show_upcoming(seasons: Iterable[Dict[str, Any]], now: Optional[datetime] = N
     if not seasons or any(not s.get("statistics") or s["statistics"].get("episodeCount") for s in seasons):
         return None                 # something has aired (or Sonarr didn't say): it's searchable
     starts = [(d, s.get("seasonNumber")) for s in seasons
-              for d in [_when((s.get("statistics") or {}).get("nextAiring"))] if d]
+              for d in [parse_utc((s.get("statistics") or {}).get("nextAiring"))] if d]
     if not starts:
         return {"stage": "upcoming", "releaseKind": "unannounced",
                 "detail": "Not aired yet, and no date is announced. Plexbie gets each episode as it airs."}
@@ -84,5 +76,5 @@ def show_upcoming(seasons: Iterable[Dict[str, Any]], now: Optional[datetime] = N
 def next_episode(seasons: Iterable[Dict[str, Any]], now: Optional[datetime] = None) -> Optional[str]:
     """", next episode Oct 7" for a season still airing, or None."""
     now = now or datetime.now(timezone.utc)
-    upcoming = [d for s in seasons for d in [_when((s.get("statistics") or {}).get("nextAiring"))] if d and d > now]
+    upcoming = [d for s in seasons for d in [parse_utc((s.get("statistics") or {}).get("nextAiring"))] if d and d > now]
     return f"next episode {day(min(upcoming), now)}" if upcoming else None

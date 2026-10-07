@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.logging import get_logger
 from database.kv_store import kv_delete_many, kv_get_all, kv_set_many
+from utils.formatting import parse_utc
 
 logger = get_logger(__name__)
 
@@ -68,14 +69,6 @@ def _text(live: dict) -> str:
     pct = live.get("percent")
     lead = f"Downloading, {pct}%" if isinstance(pct, int) else "Downloading"
     return f"{lead}. {live['detail']}" if live.get("detail") else lead
-
-
-def _when(value: Any) -> Optional[datetime]:
-    try:
-        when = datetime.fromisoformat(str(value))
-    except ValueError:
-        return None
-    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
 async def _live_apps() -> Dict[str, List[tuple]]:
@@ -158,7 +151,7 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
             continue
         if not apps and not state:
             continue
-        asked = _when(rec.get("timestamp"))
+        asked = parse_utc(rec.get("timestamp"))
         if asked and now - asked > timedelta(days=WATCH_DAYS):
             continue
         media = rec.get("media") or {}
@@ -183,9 +176,9 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
         moved = stage != state.get("stage") or pct != state.get("percent")
         if moved:
             state.update(stage=stage, percent=pct, moved=now.isoformat())
-        stalled = now - (_when(state.get("moved")) or now) > STALL
+        stalled = now - (parse_utc(state.get("moved")) or now) > STALL
         if stage in SHOWN and not stalled and apps:
-            last = _when(state.get("sent"))
+            last = parse_utc(state.get("sent"))
             due = (not state.get("shown") or stage != state.get("sentStage")
                    or (isinstance(pct, int) and abs(pct - (state.get("sentPercent") or 0)) >= STEP)
                    or not last or now - last >= KEEPALIVE)

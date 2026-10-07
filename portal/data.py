@@ -24,6 +24,7 @@ from portal import cleanup as cleanupdata
 from portal import plex as plexdata
 from portal.cache import TTLCache
 from portal.progress import Progress
+from utils.formatting import parse_utc
 from utils.standings import load_aliases, load_streaks, resolve_alias, standings
 
 logger = get_logger(__name__)
@@ -36,12 +37,8 @@ OUTCOMES_SINCE = datetime(2026, 9, 30, tzinfo=timezone.utc)
 
 
 def predates_outcomes(record: dict) -> bool:
-    stamp = record.get("timestamp")
-    try:
-        dt = datetime.fromisoformat(stamp)
-    except (TypeError, ValueError):
-        return True
-    return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)) < OUTCOMES_SINCE
+    dt = parse_utc(record.get("timestamp"))
+    return dt is None or dt < OUTCOMES_SINCE
 TMDB_SIZES = {"w185", "w342", "w780", "w1280"}
 
 
@@ -56,15 +53,7 @@ def ol_art(cover_id: Any) -> Optional[str]:
 
 
 def _iso(epoch_or_iso: Any) -> str:
-    if isinstance(epoch_or_iso, (int, float)) and epoch_or_iso:
-        return datetime.fromtimestamp(epoch_or_iso, timezone.utc).isoformat()
-    if isinstance(epoch_or_iso, str) and epoch_or_iso:
-        try:
-            dt = datetime.fromisoformat(epoch_or_iso.replace("Z", "+00:00"))
-            return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).isoformat()
-        except ValueError:
-            pass
-    return datetime.now(timezone.utc).isoformat()
+    return (parse_utc(epoch_or_iso) or datetime.now(timezone.utc)).isoformat()
 
 
 class Data:

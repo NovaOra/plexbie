@@ -21,6 +21,7 @@ import conftest  # noqa: F401
 from core import media_tracking
 from core.media_tracking import TrackedMedia
 from portal import cleanup as countdown
+from utils.formatting import parse_utc
 from test_cleanup_whole_removal import _cog
 
 NOW = datetime.now(timezone.utc)
@@ -215,7 +216,7 @@ def test_the_website_and_the_bot_agree_on_every_warning_and_removal():
     assert due == {"1": 7, "2": 4, "3": 0, "4": 4, "20": 0, "25": 3}, due
     assert bot == due, f"the bot would act on {bot}, the countdown says {due}"
     for rk, when in last.items():
-        apart = abs(countdown._iso(when) - countdown._iso(site[rk]["lastActivity"]))
+        apart = abs(parse_utc(when) - parse_utc(site[rk]["lastActivity"]))
         assert apart < timedelta(seconds=2), (rk, when, site[rk]["lastActivity"])
 
     kept = {rk: c["reason"] for rk, c in site.items() if not c["exempt"] and not c["warning"]}

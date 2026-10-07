@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from utils.formatting import parse_utc
 from utils.guids import guid_number
 
 TRACKING_FILE = Path("config/media_tracking.json")
@@ -51,16 +52,6 @@ def _ts(value) -> Optional[datetime]:
         return None
 
 
-def _iso(value) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
 def request_times() -> List[dict]:
     """Request timestamps from media tracking, the cleanup task's grace source."""
     try:
@@ -69,7 +60,7 @@ def request_times() -> List[dict]:
         return []
     out = []
     for rec in data.values():
-        ts = _iso(rec.get("request_timestamp"))
+        ts = parse_utc(rec.get("request_timestamp"))
         if ts:
             out.append({"tmdb": rec.get("tmdb_id"), "type": rec.get("media_type"), "title": rec.get("title"), "at": ts})
     return out
@@ -169,7 +160,7 @@ def days_left(inactive: int, config: dict, warned: Optional[str], now: datetime)
     was first warned about (`warned`, an ISO time; None while it hasn't been), so a
     title never goes without the whole warning first, whatever brought it past the
     threshold: lower inactivity days, a library added or no longer skipped, downtime."""
-    first = _iso(warned)
+    first = parse_utc(warned)
     since = (now - first).days if first else 0
     return max(0, int(config.get("inactivity_days", 90)) - inactive,
                int(config.get("notify_days_before", 7)) - since)
@@ -178,7 +169,7 @@ def days_left(inactive: int, config: dict, warned: Optional[str], now: datetime)
 def current_warnings(warned, checked, now: datetime) -> Dict[str, str]:
     """The "warned" record as it stands: {} when it isn't one, or when the check that
     last dated it (`checked`, an ISO time) is missing or more than WARNINGS_LAPSE ago."""
-    last = _iso(checked)
+    last = parse_utc(checked)
     if not isinstance(warned, dict) or not last or now - last > WARNINGS_LAPSE:
         return {}
     return warned

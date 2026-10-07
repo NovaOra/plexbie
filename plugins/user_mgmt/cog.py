@@ -17,6 +17,7 @@ from core.logging import get_logger
 from core.services import BotServices
 from core.admin_mirror import send_user_dm
 from utils.embeds import truncate_field
+from utils.formatting import ensure_utc
 from utils.views import disable_and_refresh, reply_failure
 from utils.standings import load_aliases, resolve_alias, top_watchers
 from database.session import get_session
@@ -605,7 +606,7 @@ class UserMgmtCog(commands.Cog):
                 if last_played:
                     # Convert Unix timestamp to datetime
                     last_watched = datetime.fromtimestamp(int(last_played), tz=timezone.utc)
-                    created_at = tracked_user.created_at.replace(tzinfo=timezone.utc) if tracked_user.created_at.tzinfo is None else tracked_user.created_at
+                    created_at = ensure_utc(tracked_user.created_at)
 
                     # The clock counts from the latest of three dates, and it must
                     # always count from *something* - see below.
@@ -629,12 +630,9 @@ class UserMgmtCog(commands.Cog):
 
                     # Losing a top-three exemption restarts the clock, which is what
                     # grants a full fresh period even to someone already long idle.
-                    lost_at = tracked_user.exemption_lost_at
-                    if lost_at is not None:
-                        if lost_at.tzinfo is None:
-                            lost_at = lost_at.replace(tzinfo=timezone.utc)
-                        if lost_at > baseline:
-                            baseline = lost_at
+                    lost_at = ensure_utc(tracked_user.exemption_lost_at)
+                    if lost_at is not None and lost_at > baseline:
+                        baseline = lost_at
 
                     days_since = (now - baseline).days
 
@@ -682,14 +680,10 @@ class UserMgmtCog(commands.Cog):
                         tracked_user.days_inactive = 0
                     else:
                         # Existing user with no new activity
-                        last_watched_aware = tracked_user.last_watched.replace(tzinfo=timezone.utc) if tracked_user.last_watched.tzinfo is None else tracked_user.last_watched
-                        baseline = last_watched_aware
-                        lost_at = tracked_user.exemption_lost_at
-                        if lost_at is not None:
-                            if lost_at.tzinfo is None:
-                                lost_at = lost_at.replace(tzinfo=timezone.utc)
-                            if lost_at > baseline:
-                                baseline = lost_at
+                        baseline = ensure_utc(tracked_user.last_watched)
+                        lost_at = ensure_utc(tracked_user.exemption_lost_at)
+                        if lost_at is not None and lost_at > baseline:
+                            baseline = lost_at
                         days_since = (now - baseline).days
                         tracked_user.days_inactive = days_since
 
@@ -1461,7 +1455,7 @@ class UserMgmtCog(commands.Cog):
                 user_info += f"**Inactive:** {status_emoji} {user.days_inactive} days"
 
                 if user.last_watched:
-                    user_info += f"\n**Last Watch:** <t:{int(user.last_watched.timestamp())}:R>"
+                    user_info += f"\n**Last Watch:** <t:{int(ensure_utc(user.last_watched).timestamp())}:R>"
 
                 embed.add_field(
                     name=f"ID: {user.id}",

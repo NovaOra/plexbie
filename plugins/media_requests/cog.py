@@ -20,6 +20,7 @@ from core.services import BotServices
 from core import notify
 from core.admin_mirror import dm_user_id
 from utils.embeds import truncate_field
+from utils.formatting import parse_utc
 from utils.views import RequesterOnlyView, reply_failure
 from core.discord_lookup import AdminChannelUnavailable, require_admin_channel  # callers catch AdminChannelUnavailable from here too
 from database.request_store import (
@@ -1971,12 +1972,7 @@ class MediaRequestsCog(commands.Cog):
                 return
 
             def submitted_at(record):
-                stamp = record.get("timestamp")
-                try:
-                    value = datetime.fromisoformat(stamp)
-                except (TypeError, ValueError):
-                    return datetime.min.replace(tzinfo=timezone.utc)
-                return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                return parse_utc(record.get("timestamp")) or datetime.min.replace(tzinfo=timezone.utc)
 
             ordered = sorted(
                 outstanding.items(), key=lambda kv: submitted_at(kv[1]), reverse=True
