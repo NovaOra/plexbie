@@ -1166,6 +1166,7 @@ class Actions:
                     select(InviteUse).where(InviteUse.guild_id == str(guild.id)).order_by(InviteUse.joined_at.desc()).limit(150)
                 )).scalars().all()
             for r in rows:
+                # Legacy: only rows from when a role was handed out on joining.
                 role = guild.get_role(int(r.role_id)) if (r.auto_role_assigned and r.role_id and str(r.role_id).isdigit()) else None
                 joins.append({"who": name_of(r.joiner_id, r.joiner_name or "Someone who left"),
                               "by": name_of(r.inviter_id, r.inviter_name or "Unknown"), "via": "discord",

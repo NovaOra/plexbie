@@ -7,7 +7,11 @@ from database.models import Base, utc_now
 
 
 class InviteTracker(Base):
-    """Track Discord invites and who used them"""
+    """Discord invites as they were last listed.
+
+    No longer written or read: the invite listing is kept in memory. The table
+    stays so older databases keep their rows.
+    """
     __tablename__ = "invite_tracker"
 
     id = Column(Integer, primary_key=True)
@@ -34,5 +38,7 @@ class InviteUse(Base):
     joiner_id = Column(String(32), nullable=False)  # Who joined using the invite
     joiner_name = Column(String(255))
     joined_at = Column(DateTime, default=utc_now)
+    # No role is handed out on joining any more; these stay for older databases
+    # and their rows.
     auto_role_assigned = Column(Boolean, default=False)
     role_id = Column(String(32))  # Role that was assigned (if any)

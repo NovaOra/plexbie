@@ -381,7 +381,8 @@ who's watching from one place instead of five.
 - Plex and Tautulli are health-checked on a timer, with alerts and recovery
   notices to an admin channel.
 - Discord API usage is sampled and logged, per route.
-- Invite attribution is recorded, so you can see who brought whom.
+- Invite attribution is recorded, so you can see who brought whom. That includes the last use of
+  an invite with a use limit, which Discord deletes as it's used.
 
 ---
 

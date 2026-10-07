@@ -128,7 +128,7 @@ def test_invite_tracker_still_records_a_join_in_the_household_server():
 
     rows = asyncio.run(scenario())
     assert [(r.guild_id, r.invite_code, r.joiner_id) for r in rows] == [(str(HOME), "abc", str(MEMBER))]
-    assert cog.refreshed == [HOME]
+    assert cog.invite_cache[str(HOME)]["abc"].uses == 2
 
 
 def test_invite_tracker_ignores_every_server_while_guild_id_is_blank():
