@@ -670,8 +670,9 @@ so the household can do everything above without Discord:
   admins, on Manage → All requests, the request's ticket and the admin channel.
 - **Admins (Manage):** approve and decline requests and join requests, make
   invite links, manage people and Discord links, change cleanup settings (going
-  live, and switching cleanup on while practice mode is off, take a press and
-  hold; a typed number of days is saved when you leave the field or press
+  live, and switching cleanup on live while practice mode is off, take a press
+  and hold, with a plain button next to it that turns cleanup on in practice
+  instead; a typed number of days is saved when you leave the field or press
   Enter) and keep titles forever (one from the countdown, or any film or show
   found by title like `/cleanup exempt add`, leaving out the libraries cleanup
   skips), post as Plexbie, see who brought whom and

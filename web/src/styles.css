@@ -1589,6 +1589,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .m-set-row { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .m-set-row > span:first-child { display: grid; gap: 2px; min-width: 0; flex: 1 1 200px; }
 .m-set-row .muted { font-size: 0.86rem; }
+.m-set-row__actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .m-set-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
 @media (min-width: 560px) { .m-set-grid { grid-template-columns: 1fr 1fr; } }
 .m-set-block { display: grid; gap: 8px; }

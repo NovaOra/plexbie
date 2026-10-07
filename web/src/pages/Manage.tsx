@@ -988,7 +988,8 @@ function Stepper({ id, label, value, min, max, step = 1, suffix, onChange, disab
  * Everything the Discord cleanup panel and /cleanup config can change. Each
  * control saves on its own; numbers wait until you stop tapping. Going live
  * (files really get deleted) is hold-to-confirm, and so are turning cleanup
- * on while practice mode is off and a live scan.
+ * on live while practice mode is off (a plain button turns it on in practice
+ * instead) and a live scan.
  */
 function CleanupSettingsCard({ settings, libraries, channels }: {
   settings: CleanupSettings; libraries: string[]; channels: { id: string; name: string }[];
@@ -1073,10 +1074,13 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
           >
             <div className="m-settings2__inner">
               <div className="m-set-row" ref={enableRow}>
-                <span><b>Cleanup</b><span className="muted">Check every day for titles nobody watches.{!settings.enabled && !settings.practice ? " Practice mode is off, so turning it on goes live." : ""}</span></span>
-                {/* With practice off, turning it on is going live: the same hold as Go live. */}
+                <span><b>Cleanup</b><span className="muted">Check every day for titles nobody watches.{!settings.enabled && !settings.practice ? " Practice mode is off: turn it on in practice, or hold to go live." : ""}</span></span>
+                {/* With practice off, turning it on is going live: the same hold as Go live, next to a plain way in through practice. */}
                 {!settings.enabled && !settings.practice
-                  ? <HoldButton label="Turn on" ms={1400} disabled={readOnly} onConfirm={() => { focusRow.current = enableRow.current; void save({ enabled: true }); }} />
+                  ? <span className="m-set-row__actions">
+                      <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => { focusRow.current = enableRow.current; void save({ enabled: true, practice: true }); }}>Turn on in practice</button>
+                      <HoldButton label="Turn on, live" ms={1400} disabled={readOnly} onConfirm={() => { focusRow.current = enableRow.current; void save({ enabled: true }); }} />
+                    </span>
                   // Sends the mode on screen too, so a practice save that failed meanwhile can't make this go live.
                   : <Switch on={settings.enabled} label="Cleanup on" disabled={readOnly} onChange={(on) => void save(on ? { enabled: true, practice: settings.practice } : { enabled: false })} />}
               </div>
