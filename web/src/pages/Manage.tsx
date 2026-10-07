@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useId, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
 } from "react";
 import {
@@ -825,20 +825,32 @@ function clockText(reason: string, when?: string) {
 
 type CleanupView = "soon" | "next" | "kept";
 
-/** A number with big − and + buttons: easy on a phone, and typing still works. */
+/** A number with big − and + buttons: easy on a phone, and typing still works.
+ *  A typed number counts once you leave the field or press Enter, not mid-word. */
 function Stepper({ id, label, value, min, max, step = 1, suffix, onChange, disabled }: {
   id: string; label: string; value: number; min: number; max: number; step?: number; suffix: string;
   onChange: (n: number) => void; disabled?: boolean;
 }) {
   const clamp = (n: number) => Math.max(min, Math.min(max, Math.round(n)));
+  const [draft, setDraft] = useState(String(value));
+  // A new value from outside (a tap, a save, a refresh) replaces the draft.
+  const [shown, setShown] = useState(value);
+  if (value !== shown) { setShown(value); setDraft(String(value)); }
+  const commit = () => {
+    const n = Number(draft);
+    const next = draft.trim() === "" || !Number.isFinite(n) ? value : clamp(n);
+    setDraft(String(next));
+    if (next !== value) onChange(next);
+  };
   return (
     <div className="m-step">
       <label htmlFor={id} className="m-field-label">{label}</label>
       <div className="m-step__row">
         <button type="button" className="m-step__btn" aria-label={`${label}: fewer`} disabled={disabled || value <= min}
           onClick={() => { buzz(5); onChange(clamp(value - step)); }}>−</button>
-        <input id={id} className="m-step__input" type="number" inputMode="numeric" min={min} max={max} value={value} disabled={disabled}
-          onChange={(e) => { const n = Number(e.target.value); if (Number.isFinite(n)) onChange(clamp(n)); }} />
+        <input id={id} className="m-step__input" type="number" inputMode="numeric" min={min} max={max} value={draft} disabled={disabled}
+          onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }} />
         <button type="button" className="m-step__btn" aria-label={`${label}: more`} disabled={disabled || value >= max}
           onClick={() => { buzz(5); onChange(clamp(value + step)); }}>+</button>
         <span className="m-step__suffix" aria-hidden>{suffix}</span>
@@ -850,7 +862,8 @@ function Stepper({ id, label, value, min, max, step = 1, suffix, onChange, disab
 /**
  * Everything the Discord cleanup panel and /cleanup config can change. Each
  * control saves on its own; numbers wait until you stop tapping. Going live
- * (files really get deleted) is hold-to-confirm, and so is a live scan.
+ * (files really get deleted) is hold-to-confirm, and so are turning cleanup
+ * on while practice mode is off and a live scan.
  */
 function CleanupSettingsCard({ settings, libraries, channels }: {
   settings: CleanupSettings; libraries: string[]; channels: { id: string; name: string }[];
@@ -868,18 +881,36 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
   useEffect(() => { setDays(settings.inactivityDays); setWarn(settings.warnDaysBefore); }, [settings.inactivityDays, settings.warnDaysBefore]);
 
   const save = async (change: Partial<CleanupSettings>, quiet = false) => {
+    // Shown straight away; a failure puts the old values back.
+    const before = Object.fromEntries(Object.keys(change).map((k) => [k, settings[k as keyof CleanupSettings]])) as Partial<CleanupSettings>;
     patch("cleanup", (d) => ({ ...d, settings: { ...d.settings, ...change } }));
     const out = await act(null, () => api.cleanupSettings(change));
-    if (out && !quiet) toast({ text: "Cleanup settings saved", detail: out.message });
+    if (!out) patch("cleanup", (d) => ({ ...d, settings: { ...d.settings, ...before } }));
+    else if (!quiet) toast({ text: "Cleanup settings saved", detail: out.message });
     later("cleanup", 600);
   };
+  // Leaving the tab before the numbers' pause is up still saves them.
+  const pending = useRef<Partial<CleanupSettings> | null>(null);
+  const saveLatest = useRef(save);
+  useEffect(() => { saveLatest.current = save; });
   const saveNumbers = (nextDays: number, nextWarn: number) => {
     setDays(nextDays);
     setWarn(nextWarn);
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => void save({ inactivityDays: nextDays, warnDaysBefore: Math.min(nextWarn, nextDays - 1) }), 900);
+    const change = { inactivityDays: nextDays, warnDaysBefore: Math.min(nextWarn, nextDays - 1) };
+    pending.current = change;
+    timer.current = window.setTimeout(() => { pending.current = null; void save(change); }, 900);
   };
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(timer.current);
+    if (pending.current) void saveLatest.current(pending.current);
+    pending.current = null;
+  }, []);
+  // A hold is swapped for another control in its row: focus moves there, not to the page.
+  const enableRow = useRef<HTMLDivElement>(null);
+  const modeRow = useRef<HTMLDivElement>(null);
+  const focusRow = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { focusRow.current?.querySelector<HTMLElement>("button")?.focus(); focusRow.current = null; }, [settings.enabled, settings.practice]);
 
   const scan = async () => {
     setScanning(true);
@@ -916,18 +947,22 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
             transition={{ duration: 0.25, ease: EASE_OUT }}
           >
             <div className="m-settings2__inner">
-              <div className="m-set-row">
-                <span><b>Cleanup</b><span className="muted">Check every day for titles nobody watches.</span></span>
-                <Switch on={settings.enabled} label="Cleanup on" disabled={readOnly} onChange={(on) => void save({ enabled: on })} />
+              <div className="m-set-row" ref={enableRow}>
+                <span><b>Cleanup</b><span className="muted">Check every day for titles nobody watches.{!settings.enabled && !settings.practice ? " Practice mode is off, so turning it on goes live." : ""}</span></span>
+                {/* With practice off, turning it on is going live: the same hold as Go live. */}
+                {!settings.enabled && !settings.practice
+                  ? <HoldButton label="Turn on" ms={1400} disabled={readOnly} onConfirm={() => { focusRow.current = enableRow.current; void save({ enabled: true }); }} />
+                  // Sends the mode on screen too, so a practice save that failed meanwhile can't make this go live.
+                  : <Switch on={settings.enabled} label="Cleanup on" disabled={readOnly} onChange={(on) => void save(on ? { enabled: true, practice: settings.practice } : { enabled: false })} />}
               </div>
 
-              <div className="m-set-row">
+              <div className="m-set-row" ref={modeRow}>
                 <span>
                   <b>{settings.practice ? "Practice mode" : "Live mode"}</b>
                   <span className="muted">{settings.practice ? "Reports what it would delete, deletes nothing." : "Really deletes the files from the server."}</span>
                 </span>
                 {settings.practice
-                  ? <HoldButton label="Go live" ms={1400} disabled={readOnly || !settings.enabled} onConfirm={() => void save({ practice: false })} />
+                  ? <HoldButton label="Go live" ms={1400} disabled={readOnly || !settings.enabled} onConfirm={() => { focusRow.current = modeRow.current; void save({ practice: false }); }} />
                   : <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => void save({ practice: true })}>Switch to practice</button>}
               </div>
 
@@ -1824,6 +1859,9 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
   const { refresh, toast, readOnly } = useManage();
   const { session } = useSession();
   const { busy, act } = useAct();
+  // Its own flag: Done and the ticket buttons share `busy` and would clear a send's.
+  const [sending, setSending] = useState(false);
+  const sendingNow = useRef(false);
   const [version, setVersion] = useState(0);
   const [text, setText] = useState("");
   const res = useLoad<LoggedMessage[]>(() => api.conversation(person.id), [person.id, version]);
@@ -1832,8 +1870,14 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
   const discord = person.id.startsWith("d");
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim()) return;
-    const out = await act("send", () => api.messageReply(person.id, text.trim()), { failText: "Not sent" });
+    // One send at a time: the shortcut skips the button's guards, so check here too.
+    const body = text.trim();
+    if (!body || readOnly || sendingNow.current) return;
+    sendingNow.current = true;
+    setSending(true);
+    const out = await act(null, () => api.messageReply(person.id, body), { failText: "Not sent" });
+    sendingNow.current = false;
+    setSending(false);
     if (!out) return;
     buzz(12);
     toast({ text: "Sent as Plexbie", detail: out.message });
@@ -1903,12 +1947,12 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
       <form className="m-chat__composer" onSubmit={send}>
         <label className="visually-hidden" htmlFor={`m-reply-${person.id}`}>Message to {person.name}</label>
         <textarea id={`m-reply-${person.id}`} className="m-textarea m-textarea--reply" rows={2} maxLength={1500} value={text}
-          onChange={(e) => setText(e.target.value)} placeholder={`Message ${person.name} as Plexbie`}
-          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send(e); }} />
+          readOnly={sending} onChange={(e) => setText(e.target.value)} placeholder={`Message ${person.name} as Plexbie`}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.repeat) void send(e); }} />
         <div className="m-chat__send">
           <span className="muted m-person__meta">{discord ? "A Discord DM from Plexbie" : "A phone alert, else an email"}, signed “— {me} (admin)”</span>
-          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy === "send" || !text.trim()}>
-            {busy === "send" ? "Sending…" : "Send as Plexbie"}
+          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || sending || !text.trim()}>
+            {sending ? "Sending…" : "Send as Plexbie"}
           </button>
         </div>
       </form>
@@ -1921,11 +1965,15 @@ function MessagesTab() {
   const { data } = useManage();
   const [params, setParams] = useSearchParams();
   // An alert about a DM opens straight on that conversation (?who=d123).
-  const [open, setOpenState] = useState<string | null>(params.get("who"));
-  const setOpen = (who: string | null) => {
-    setOpenState(who);
-    if (params.get("who")) setParams((p) => { p.delete("who"); return p; }, { replace: true });
-  };
+  const [open, setOpen] = useState<string | null>(params.get("who"));
+  // Taken off the address once read, before the conversation adds its Back entry
+  // (a later replace would drop that entry's marker and leave an extra Back press).
+  const whoDropped = useRef(false);
+  useLayoutEffect(() => {
+    if (whoDropped.current || !params.get("who")) return;
+    whoDropped.current = true;
+    setParams((p) => { p.delete("who"); return p; }, { replace: true });
+  }, [params, setParams]);
   const [query, setQuery] = useState("");
   const people = data.messages;
   if (!people) return <div className="skeleton" style={{ height: 300 }} />;
@@ -1958,7 +2006,8 @@ function MessagesTab() {
           ))}
           {!shown.length ? <li className="muted" style={{ padding: 12 }}>{q ? "Nobody matches." : "No messages yet."}</li> : null}
         </ul>
-        {current ? <Conversation person={current} onBack={() => setOpen(null)} /> : (
+        {/* Keyed by person, so a draft or a send in progress never carries over to the next one. */}
+        {current ? <Conversation key={current.id} person={current} onBack={() => setOpen(null)} /> : (
           <div className="m-inbox__empty muted">Pick someone to see their messages with Plexbie.</div>
         )}
       </div>

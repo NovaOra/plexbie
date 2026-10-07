@@ -599,9 +599,11 @@ so the household can do everything above without Discord:
   progress, see what arrived and what's leaving under the cleanup countdown,
   and turn on phone alerts.
 - **Admins (Manage):** approve and decline requests and join requests, make
-  invite links, manage people and Discord links, change cleanup settings and
-  keep titles forever, post as Plexbie, see who brought whom and the live
-  watch party, and check service health. Each command above has its
+  invite links, manage people and Discord links, change cleanup settings (going
+  live, and switching cleanup on while practice mode is off, take a press and
+  hold; a typed number of days is saved when you leave the field or press
+  Enter) and keep titles forever, post as Plexbie, see who brought whom and
+  the live watch party, and check service health. Each command above has its
   counterpart there, and both sides run the same code.
 - **Invite links** let someone without Discord join: single use, expiring,
   optionally locked to an email, stored only as a SHA-256. Without one, a Plex
