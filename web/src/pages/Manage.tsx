@@ -94,6 +94,29 @@ function useAct() {
   return { busy, act, later };
 }
 
+/**
+ * Search as you type: asks once typing pauses for `ms`, and keeps only the
+ * answer for the words in the box now, so a slow reply to "star" never
+ * replaces the one for "star wars". `fetcher` should settle with a fallback
+ * rather than throw. Empty words clear the results; `found` keeps the last
+ * answer on screen while `searching` says a newer one is on its way.
+ */
+function useDebouncedSearch<T>(words: string, fetcher: (words: string) => Promise<T>, ms: number) {
+  const [got, setGot] = useState<{ words: string; found: T } | null>(null);
+  const fetchLatest = useRef(fetcher);
+  useEffect(() => { fetchLatest.current = fetcher; });
+  if (!words && got) setGot(null);
+  useEffect(() => {
+    if (!words) return;
+    let current = true;
+    const t = window.setTimeout(() => {
+      void fetchLatest.current(words).then((found) => { if (current) setGot({ words, found }); });
+    }, ms);
+    return () => { current = false; window.clearTimeout(t); };
+  }, [words, ms]);
+  return { found: words && got ? got.found : null, searching: !!words && got?.words !== words };
+}
+
 /* ============================================================ primitives */
 
 /**
@@ -1295,17 +1318,13 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
 /** Search Sonarr's shows or Radarr's films by title, to say which one it really is. */
 function ArrFinder({ app, onPick }: { app: "sonarr" | "radarr"; onPick: (item: ArrItem) => void }) {
   const [q, setQ] = useState("");
-  const [rows, setRows] = useState<ArrItem[] | null>(null);
-  useEffect(() => {
-    if (q.trim().length < 2) { setRows(null); return; }
-    const t = window.setTimeout(() => { void api.arrLibrary(app, q.trim()).then((x) => setRows(x.rows)).catch(() => setRows([])); }, 250);
-    return () => window.clearTimeout(t);
-  }, [app, q]);
+  const words = q.trim().length < 2 ? "" : q.trim();
+  const { found: rows, searching } = useDebouncedSearch(words, (w) => api.arrLibrary(app, w).then((x) => x.rows).catch((): ArrItem[] => []), 250);
   return (
     <div className="m-blocked__finder">
       <input className="m-select" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
         placeholder={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} aria-label={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} />
-      {rows ? (rows.length ? (
+      {searching ? <p className="muted">Searching…</p> : rows ? (rows.length ? (
         <ul>{rows.map((r) => <li key={r.id}><button type="button" className="btn btn--quiet m-btn" onClick={() => onPick(r)}>{r.title}{r.year ? ` (${r.year})` : ""}</button></li>)}</ul>
       ) : <p className="muted">Nothing in {app === "sonarr" ? "Sonarr" : "Radarr"} by that name.</p>) : null}
     </div>
@@ -2047,20 +2066,12 @@ function AllRequestsTab() {
     void api.adminAll("", true).then((h) => { setHistory(h); setShow("everything"); }).catch(() => undefined).finally(() => setLoadingAll(false));
   };
   const [q, setQ] = useState("");
-  const [found, setFound] = useState<AdminAllRequests | null>(null);
-  const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
 
   // Searching asks the bot (it reaches every request ever, not only the ones listed).
   const words = q.trim();
-  useEffect(() => {
-    if (!words) return;
-    const t = window.setTimeout(() => {
-      void api.adminAll(words).then(setFound).catch(() => setFound({ rows: [], counts: null, query: words })).finally(() => setSearching(false));
-    }, 300);
-    return () => window.clearTimeout(t);
-  }, [words]);
-  const typed = (value: string) => { setQ(value); setSearching(!!value.trim()); };
+  const { found, searching } = useDebouncedSearch(words,
+    (w) => api.adminAll(w).catch((): AdminAllRequests => ({ rows: [], counts: null, query: w })), 300);
 
   const recent = data.all;
   if (!recent) return failed.all ? null : <p className="muted">Loading…</p>;
@@ -2068,8 +2079,7 @@ function AllRequestsTab() {
   const counts = all.counts ?? { active: 0, stuck: 0, finished: 0 };
   const count = (id: Show) => id === "progress" ? counts.active : id === "stuck" ? counts.stuck : id === "waiting" ? counts.waiting ?? 0
     : id === "finished" ? counts.finished : id === "declined" ? counts.declined ?? 0 : all.rows.length;
-  const results = words ? found : null;
-  const shown = results ? results.rows : words ? [] : all.rows.filter((r) => showing(show, r));
+  const shown = found ? found.rows : words ? [] : all.rows.filter((r) => showing(show, r));
 
   return (
     <section className="section m-all">
@@ -2082,7 +2092,7 @@ function AllRequestsTab() {
         <label className="finder__field m-all__search">
           <Search size={18} aria-hidden />
           <span className="visually-hidden">Search every request</span>
-          <input type="search" value={q} onChange={(e) => typed(e.target.value)} placeholder="Search every request: a title, a name or a number"
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search every request: a title, a name or a number"
             autoComplete="off" enterKeyHint="search" />
         </label>
         {!words ? (
@@ -2093,7 +2103,7 @@ function AllRequestsTab() {
       </div>
       {words ? (
         <p className="muted m-all__count" role="status">
-          {searching || !results ? "Searching…" : `${results.rows.length === 0 ? "Nothing" : results.rows.length === 1 ? "1 request" : `${results.rows.length} requests`} found`}
+          {searching || !found ? "Searching…" : `${found.rows.length === 0 ? "Nothing" : found.rows.length === 1 ? "1 request" : `${found.rows.length} requests`} found`}
         </p>
       ) : null}
       {shown.length ? (
@@ -2155,6 +2165,31 @@ function ticketLine(t: AdminTicket) {
   return head + note + end;
 }
 
+/** The ways a request's search can be sent off again, and what the toast says for each. */
+type SearchHow = "again" | "episodes" | "name";
+const SEARCHING: Record<SearchHow, string> = { again: "Searching again", episodes: "Searching episode by episode", name: "Searching by name" };
+
+/** Ways to send a film or show's search off again: on a request, and on its ticket. `byName` makes "Search by name" the one to try. */
+function RequestFixes({ kind, busy, disabled, byName = false, onSearch }: {
+  kind: string; busy: string | null; disabled: boolean; byName?: boolean; onSearch: (how: SearchHow) => void;
+}) {
+  return (
+    <div className="m-reqsheet__fixes">
+      <button type="button" className="btn m-btn" disabled={disabled || !!busy} onClick={() => onSearch("again")}>
+        <RefreshCw size={16} aria-hidden className={busy === "again" ? "m-spin" : undefined} /> Search again
+      </button>
+      {kind === "tv" ? (
+        <button type="button" className="btn btn--quiet m-btn" disabled={disabled || !!busy} onClick={() => onSearch("episodes")}>
+          <ListOrdered size={16} aria-hidden /> Episode by episode
+        </button>
+      ) : null}
+      <button type="button" className={`btn m-btn${byName ? "" : " btn--quiet"}`} disabled={disabled || !!busy} onClick={() => onSearch("name")}>
+        <Search size={16} aria-hidden /> Search by name
+      </button>
+    </div>
+  );
+}
+
 /** One request in full, for an admin: where it is, who asked, its tickets, and the fixes. */
 function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const { refresh, toast, readOnly } = useManage();
@@ -2171,10 +2206,10 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   useEffect(() => { void load(); }, [load]);
 
   const after = () => { window.setTimeout(() => { void load(); void refresh("all"); void refresh("help"); }, 900); };
-  const search = async (how: "again" | "episodes" | "name") => {
+  const search = async (how: SearchHow) => {
     const out = await act(how, () => api.requestSearch(id, how), { failText: "Couldn’t search" });
     if (!out) return;
-    toast({ text: { again: "Searching again", episodes: "Searching episode by episode", name: "Searching by name" }[how], detail: out.message });
+    toast({ text: SEARCHING[how], detail: out.message });
     after();
   };
   const ticket = async () => {
@@ -2208,21 +2243,7 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
             {r.seerrId ? <><dt>Seerr</dt><dd>request #{r.seerrId}</dd></> : null}
           </dl>
 
-          {video ? (
-            <div className="m-reqsheet__fixes">
-              <button type="button" className="btn m-btn" disabled={readOnly || !!busy} onClick={() => void search("again")}>
-                <RefreshCw size={16} aria-hidden className={busy === "again" ? "m-spin" : undefined} /> Search again
-              </button>
-              {r.title.kind === "tv" ? (
-                <button type="button" className="btn btn--quiet m-btn" disabled={readOnly || !!busy} onClick={() => void search("episodes")}>
-                  <ListOrdered size={16} aria-hidden /> Episode by episode
-                </button>
-              ) : null}
-              <button type="button" className="btn btn--quiet m-btn" disabled={readOnly || !!busy} onClick={() => void search("name")}>
-                <Search size={16} aria-hidden /> Search by name
-              </button>
-            </div>
-          ) : null}
+          {video ? <RequestFixes kind={r.title.kind} busy={busy} disabled={readOnly} onSearch={(how) => void search(how)} /> : null}
 
           {openTicket ? (
             <div className="m-reqsheet__ticket">
@@ -2388,9 +2409,8 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
     if (!text.trim()) return;
     if (await run("send", () => api.ticketComment(id, kind, text.trim()), kind === "reply" ? "Sent" : "Note added")) setText("");
   };
-  const search = (how: "again" | "episodes" | "name") =>
-    run(how, () => ({ again: api.helpSearch, episodes: api.helpEpisodes, name: api.helpByName }[how])(id),
-      { again: "Searching again", episodes: "Searching episode by episode", name: "Searching by name" }[how]);
+  const search = (how: SearchHow) =>
+    run(how, () => ({ again: api.helpSearch, episodes: api.helpEpisodes, name: api.helpByName }[how])(id), SEARCHING[how]);
 
   if (gone) return <BottomSheet titleId={titleId} onClose={onClose} title="Ticket"><p className="field__error">Couldn’t load this ticket.</p></BottomSheet>;
   const state = t ? ticketState(t) : null;
@@ -2426,19 +2446,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
           {t.blocked && t.status === "open" ? <BlockedImport target={t.blocked} onDone={after} /> : null}
 
           {video && t.status === "open" ? (
-            <div className="m-reqsheet__fixes">
-              <button type="button" className="btn m-btn" disabled={readOnly || !!busy} onClick={() => void search("again")}>
-                <RefreshCw size={16} aria-hidden className={busy === "again" ? "m-spin" : undefined} /> Search again
-              </button>
-              {t.kind === "tv" ? (
-                <button type="button" className="btn btn--quiet m-btn" disabled={readOnly || !!busy} onClick={() => void search("episodes")}>
-                  <ListOrdered size={16} aria-hidden /> Episode by episode
-                </button>
-              ) : null}
-              <button type="button" className={`btn m-btn${t.offer === "name" ? "" : " btn--quiet"}`} disabled={readOnly || !!busy} onClick={() => void search("name")}>
-                <Search size={16} aria-hidden /> Search by name
-              </button>
-            </div>
+            <RequestFixes kind={t.kind} busy={busy} disabled={readOnly} byName={t.offer === "name"} onSearch={(how) => void search(how)} />
           ) : null}
 
           <ol className="m-thread" aria-label="Timeline">
