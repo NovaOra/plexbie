@@ -28,7 +28,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let message = res.statusText;
     try {
-      message = (await res.json()).error ?? message;
+      // Most refusals carry `error`; a refused admin action answers an Ack, whose line is `message`.
+      const body = await res.json();
+      message = body.error ?? body.message ?? message;
     } catch {
       /* not JSON; keep the status text */
     }

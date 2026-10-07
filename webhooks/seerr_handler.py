@@ -21,7 +21,7 @@ Plexbie sets the Seerr side up itself (core/webhook_connect.py) with PAYLOAD.
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from aiohttp import web
 
@@ -62,6 +62,16 @@ def remember_submission(media_type: str, tmdb_id: Any) -> None:
         _OWN[(media_type, int(tmdb_id))] = time.monotonic()
     except (TypeError, ValueError):
         pass
+
+
+#: Plex checks started by MEDIA_AVAILABLE, held until they finish.
+_tasks: Set[asyncio.Task] = set()
+
+
+def _checked(task: asyncio.Task) -> None:
+    _tasks.discard(task)
+    if not task.cancelled() and task.exception():
+        logger.warning(f"Checking Plex after Seerr's MEDIA_AVAILABLE failed: {task.exception()}")
 
 
 def _ours(media_type: str, tmdb_id: int) -> bool:
@@ -114,7 +124,9 @@ class SeerrEvents:
             # available" - which is why the sweep runs regardless.)
             arrivals = self.bot.get_cog("NewMediaAddedCog")
             if arrivals:
-                asyncio.create_task(arrivals.check_recently_added())
+                task = asyncio.create_task(arrivals.check_recently_added())
+                _tasks.add(task)
+                task.add_done_callback(_checked)
         req = data.get("request") or {}
         media = data.get("media") or {}
         rid, tmdb = _int(req.get("request_id")), _int(media.get("tmdbId"))
@@ -257,9 +269,9 @@ class SeerrEvents:
 async def apply_decision(bot, key: int, approved: bool, actor: str) -> bool:
     """A decision made in Seerr (or sent there from the website): record it and tell
     the requester. False when the request was already decided."""
-    from plugins.media_requests.cog import _DECISION_LOCKS
+    from plugins.media_requests.cog import _decision_lock
     # The same lock as the Discord buttons and the website: one decision per request.
-    async with _DECISION_LOCKS.setdefault(int(key), asyncio.Lock()):
+    async with _decision_lock(key):
         return await _apply_decision(bot, key, approved, actor)
 
 

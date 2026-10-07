@@ -228,6 +228,11 @@ who's watching from one place instead of five.
 **Media**
 
 - `/request` walks a user through requesting a TV show, film, audiobook or ebook.
+  Each request is decided once: an Approve or Decline in Discord for a request
+  already decided on the website (or in Seerr) just answers "Already approved"
+  or "Already declined" and takes the buttons off the card. A book approval
+  that finds nothing on the indexers (or with NZBHydra/SABnzbd not set up)
+  sends nothing and leaves the request open, so it can be approved again later.
 - New additions are announced from Plex webhooks, enriched with TMDB metadata,
   and episodes arriving in a batch are collapsed into a single updating message.
 - Unwatched media can be reported and, optionally, deleted after a configurable

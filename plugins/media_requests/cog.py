@@ -1,6 +1,7 @@
 # path: plugins/media_requests/cog.py
 """Media request system matching original JS bot workflow"""
 import asyncio
+import contextlib
 import json
 import re
 from datetime import datetime, timezone
@@ -218,6 +219,47 @@ def _who(user) -> str:
 
 
 _DECISION_LOCKS: Dict[int, asyncio.Lock] = {}
+_DECISION_USERS: Dict[int, int] = {}
+
+
+@contextlib.asynccontextmanager
+async def _decision_lock(message_id):
+    """One decision at a time per request, from the Discord buttons, the website
+    or Seerr alike. The lock goes once nobody holds or waits for it."""
+    key = int(message_id)
+    lock = _DECISION_LOCKS.setdefault(key, asyncio.Lock())
+    _DECISION_USERS[key] = _DECISION_USERS.get(key, 0) + 1
+    try:
+        async with lock:
+            yield
+    finally:
+        _DECISION_USERS[key] -= 1
+        if not _DECISION_USERS[key]:
+            del _DECISION_USERS[key]
+            _DECISION_LOCKS.pop(key, None)
+
+
+async def _still_pending(interaction: discord.Interaction) -> bool:
+    """For a Discord button, with the decision lock held: is the request still open?
+
+    If it was decided meanwhile (on the website, say), the admin is told so and the
+    buttons come off the card. Call it once the interaction has been answered.
+    """
+    record = await get_request(interaction.message.id)
+    status = (record or {}).get("status", "pending")
+    if status == "pending":
+        return True
+    await _edit_card(interaction.message, view=None)
+    await interaction.followup.send(f"Already {status}.", ephemeral=True)
+    return False
+
+
+async def _edit_card(message, **changes) -> None:
+    """Edit an admin card. A failure is logged: it must never stop a decision being recorded."""
+    try:
+        await message.edit(**changes)
+    except Exception as e:
+        logger.warning(f"Could not update admin card {getattr(message, 'id', '?')}: {e}")
 
 
 async def _close_admin_card(bot, services, message_id: int, *, approved: bool, by: str, note: str = "") -> None:
@@ -228,7 +270,7 @@ async def _close_admin_card(bot, services, message_id: int, *, approved: bool, b
         logger.warning(f"Could not update admin card {message_id}: {e}")
         return
     embed = message.embeds[0] if message.embeds else discord.Embed(description="Request")
-    await message.edit(embed=_stamp_decision(embed, approved=approved, by=by, note=note, where=" (on the website)"), view=None)
+    await _edit_card(message, embed=_stamp_decision(embed, approved=approved, by=by, note=note, where=" (on the website)"), view=None)
 
 
 def _stamp_decision(embed: discord.Embed, *, approved: bool, by: str, note: str = "", where: str = "") -> discord.Embed:
@@ -292,8 +334,7 @@ async def decide_request(bot, services, message_id: int, approve: bool, actor: s
     Refuses anything already decided, so a click in Discord and a click on the
     website can never both act. Returns {"ok": bool, "message": str}.
     """
-    lock = _DECISION_LOCKS.setdefault(int(message_id), asyncio.Lock())
-    async with lock:
+    async with _decision_lock(message_id):
         record = await get_request(message_id)
         if record is None:
             return {"ok": False, "message": "That request no longer exists."}
@@ -319,12 +360,14 @@ async def decide_request(bot, services, message_id: int, approve: bool, actor: s
             title = view.book.get('title', 'Unknown')
             if approve:
                 result = await view._approve_core()
-                await _close_admin_card(bot, services, message_id, approved=True, by=actor, note=result["note"])
+                if not result["download_success"]:
+                    return {"ok": False, "message": result["followup_message"]}
                 await _after_decision(bot, services, message_id, approved=True, actor=actor, user_id=view.user_id,
                                       title=title, what="book", user_message=result.get("user_message", ""))
+                await _close_admin_card(bot, services, message_id, approved=True, by=actor, note=result["note"])
                 return {"ok": True, "message": result["followup_message"]}
-            await _close_admin_card(bot, services, message_id, approved=False, by=actor)
             await _after_decision(bot, services, message_id, approved=False, actor=actor, user_id=view.user_id, title=title, what="book")
+            await _close_admin_card(bot, services, message_id, approved=False, by=actor)
             return {"ok": True, "message": f"Declined {title}."}
 
         view = AdminApprovalView()
@@ -335,13 +378,13 @@ async def decide_request(bot, services, message_id: int, approve: bool, actor: s
             result = await view._fulfill_request()
             if not result.get("success"):
                 return {"ok": False, "message": result.get("followup_message", "Approval failed.")}
-            await _close_admin_card(bot, services, message_id, approved=True, by=actor, note=result.get("admin_note", ""))
             await _after_decision(bot, services, message_id, approved=True, actor=actor, user_id=view.user_id,
                                   title=title, what="media", user_message=result.get("user_message", ""))
+            await _close_admin_card(bot, services, message_id, approved=True, by=actor, note=result.get("admin_note", ""))
             await view._register_with_tracking()
             return {"ok": True, "message": result["followup_message"]}
-        await _close_admin_card(bot, services, message_id, approved=False, by=actor)
         await _after_decision(bot, services, message_id, approved=False, actor=actor, user_id=view.user_id, title=title, what="media")
+        await _close_admin_card(bot, services, message_id, approved=False, by=actor)
         return {"ok": True, "message": f"Declined {title}."}
 
 
@@ -1000,10 +1043,9 @@ class BookAdminApprovalView(_RequestApprovalBase):
         if format_type == 'both':
             note = (f"📖 Ebook: {'✅ Sent to SABnzbd' if ebook_ok else '❌ Not available'}"
                     f"\n🎧 Audiobook: {'✅ Sent to SABnzbd' if audio_ok else '❌ Not available'}")
-        elif download_success:
-            note = "📥 Sent to SABnzbd for download"
         else:
-            note = "⚠️ Not available on indexers"
+            # Only read when something was sent; nothing sent leaves the card open.
+            note = "📥 Sent to SABnzbd for download"
 
         title = self.book.get('title', 'Unknown')
         if format_type == 'both':
@@ -1012,16 +1054,20 @@ class BookAdminApprovalView(_RequestApprovalBase):
             msg += "🎧 Audiobook: Sent for download" if audio_ok else "🎧 Audiobook: ⚠️ Not available on indexers"
         else:
             format_label = "📖 Ebook" if format_type == 'ebook' else "🎧 Audiobook"
-            if download_success:
-                msg = f"✅ **Good news!** Your {format_label.lower()} request for **{title}** has been approved and sent for download!"
-            else:
-                msg = f"✅ Your request for **{title}** has been approved, but ⚠️ no {format_type} version was found on indexers."
+            msg = f"✅ **Good news!** Your {format_label.lower()} request for **{title}** has been approved and sent for download!"
 
+        # Nothing sent: the callers leave the request open, so it can be approved again later.
+        if not download_success:
+            followup = "Nothing found on the indexers (or NZBHydra/SABnzbd isn't set up); try again later."
+        elif format_type == 'both' and not (ebook_ok and audio_ok):
+            followup = "Book request approved and sent to SABnzbd (some formats not available)!"
+        else:
+            followup = "Book request approved and sent to SABnzbd!"
         return {
             "download_success": download_success,
             "note": note,
             "user_message": msg,
-            "followup_message": f"Book request approved{' and sent to SABnzbd' if download_success else ' (some formats not available)'}!",
+            "followup_message": followup,
         }
 
     @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, custom_id="approve_book_request")
@@ -1034,25 +1080,36 @@ class BookAdminApprovalView(_RequestApprovalBase):
             child.disabled = True
         await interaction.response.edit_message(view=self)
 
+        # The same lock as the website and Seerr, then the stored status: one decision per request.
+        async with _decision_lock(interaction.message.id):
+            if not await _still_pending(interaction):
+                return
 
-        # Always load from saved to ensure we have data
-        # A view of its own for this click: after a restart one persistent view
-        # answers every card, so state kept on it would leak between requests.
-        req = type(self)()
-        if not await req._load_from_saved(interaction.message.id, interaction.client):
-            logger.error(f"Could not load book request data for message {interaction.message.id}")
-            await interaction.followup.send("❌ Could not find request data. Please re-submit.", ephemeral=True)
-            return
+            # Always load from saved to ensure we have data
+            # A view of its own for this click: after a restart one persistent view
+            # answers every card, so state kept on it would leak between requests.
+            req = type(self)()
+            if not await req._load_from_saved(interaction.message.id, interaction.client):
+                logger.error(f"Could not load book request data for message {interaction.message.id}")
+                await interaction.followup.send("❌ Could not find request data. Please re-submit.", ephemeral=True)
+                return
 
-        logger.info(f"Book data loaded: {req.book.get('title', '?')}, format: {req.book.get('request_format', '?')}")
+            logger.info(f"Book data loaded: {req.book.get('title', '?')}, format: {req.book.get('request_format', '?')}")
 
-        result = await req._approve_core()
+            result = await req._approve_core()
+            if not result["download_success"]:
+                # Nothing was sent: the buttons come back, so it can be approved once an indexer has it.
+                for child in self.children:
+                    child.disabled = False
+                await _edit_card(interaction.message, view=self)
+                await interaction.followup.send(f"❌ {result['followup_message']}", ephemeral=True)
+                return
 
-        embed = _stamp_decision(interaction.message.embeds[0], approved=True, by=interaction.user.mention, note=result['note'])
-        await interaction.message.edit(embed=embed, view=None)
-        await _after_decision(interaction.client, req.services, interaction.message.id, approved=True, actor=str(interaction.user),
-                              user_id=req.user_id, title=req.book.get('title', 'Unknown'), what="book",
-                              user_message=result.get("user_message", ""))
+            embed = _stamp_decision(interaction.message.embeds[0], approved=True, by=interaction.user.mention, note=result['note'])
+            await _edit_card(interaction.message, embed=embed, view=None)
+            await _after_decision(interaction.client, req.services, interaction.message.id, approved=True, actor=str(interaction.user),
+                                  user_id=req.user_id, title=req.book.get('title', 'Unknown'), what="book",
+                                  user_message=result.get("user_message", ""))
 
         await interaction.followup.send(result["followup_message"], ephemeral=True)
 
@@ -1250,18 +1307,23 @@ class BookAdminApprovalView(_RequestApprovalBase):
     @single_flight
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
         logger.info(f"Book decline button clicked by {interaction.user} for message {interaction.message.id}")
-        # Always load from saved
-        # A view of its own for this click: after a restart one persistent view
-        # answers every card, so state kept on it would leak between requests.
-        req = type(self)()
-        if not await req._load_from_saved(interaction.message.id, interaction.client):
-            await interaction.response.send_message("❌ Could not find request data.", ephemeral=True)
-            return
+        # Answered now: a website decision may hold the lock for longer than Discord waits.
+        await interaction.response.defer()
+        async with _decision_lock(interaction.message.id):
+            if not await _still_pending(interaction):
+                return
+            # Always load from saved
+            # A view of its own for this click: after a restart one persistent view
+            # answers every card, so state kept on it would leak between requests.
+            req = type(self)()
+            if not await req._load_from_saved(interaction.message.id, interaction.client):
+                await interaction.followup.send("❌ Could not find request data.", ephemeral=True)
+                return
 
-        embed = _stamp_decision(interaction.message.embeds[0], approved=False, by=interaction.user.mention)
-        await interaction.response.edit_message(embed=embed, view=None)
-        await _after_decision(interaction.client, req.services, interaction.message.id, approved=False, actor=str(interaction.user),
-                              user_id=req.user_id, title=req.book.get('title', 'Unknown'), what="book")
+            embed = _stamp_decision(interaction.message.embeds[0], approved=False, by=interaction.user.mention)
+            await _edit_card(interaction.message, embed=embed, view=None)
+            await _after_decision(interaction.client, req.services, interaction.message.id, approved=False, actor=str(interaction.user),
+                                  user_id=req.user_id, title=req.book.get('title', 'Unknown'), what="book")
 
 
 class ConfirmationView(_ConfirmRequestView):
@@ -1537,49 +1599,57 @@ class AdminApprovalView(_RequestApprovalBase):
             logger.error(f"Failed to defer media approval: {e}")
             return
 
-        # Always load from saved to ensure we have data
-        # A view of its own for this click: after a restart one persistent view
-        # answers every card, so state kept on it would leak between requests.
-        req = type(self)()
-        if not await req._load_from_saved(interaction.message.id, interaction.client):
-            logger.error(f"Could not load media request data for message {interaction.message.id}")
-            await interaction.followup.send("❌ Could not find request data. Please re-submit.", ephemeral=True)
-            return
+        # The same lock as the website and Seerr, then the stored status: one decision per request.
+        async with _decision_lock(interaction.message.id):
+            if not await _still_pending(interaction):
+                return
 
-        # Fulfill by restoring monitoring if the item already exists, otherwise submit to Seerr
-        result = await req._fulfill_request()
-        
-        if result.get("success"):
-            embed = _stamp_decision(interaction.message.embeds[0], approved=True, by=interaction.user.mention,
-                                    note=result.get('admin_note', ''))
-            await interaction.message.edit(embed=embed, view=None)
-            await _after_decision(interaction.client, req.services, interaction.message.id, approved=True, actor=str(interaction.user),
-                                  user_id=req.user_id, title=req._title(), what="media", user_message=result.get("user_message", ""))
+            # Always load from saved to ensure we have data
+            # A view of its own for this click: after a restart one persistent view
+            # answers every card, so state kept on it would leak between requests.
+            req = type(self)()
+            if not await req._load_from_saved(interaction.message.id, interaction.client):
+                logger.error(f"Could not load media request data for message {interaction.message.id}")
+                await interaction.followup.send("❌ Could not find request data. Please re-submit.", ephemeral=True)
+                return
 
-            # Register with media tracking system
-            await req._register_with_tracking()
+            # Fulfill by restoring monitoring if the item already exists, otherwise submit to Seerr
+            result = await req._fulfill_request()
 
-            await interaction.followup.send(result["followup_message"], ephemeral=True)
-        else:
-            await interaction.followup.send(result["followup_message"], ephemeral=True)
+            if result.get("success"):
+                embed = _stamp_decision(interaction.message.embeds[0], approved=True, by=interaction.user.mention,
+                                        note=result.get('admin_note', ''))
+                await _edit_card(interaction.message, embed=embed, view=None)
+                await _after_decision(interaction.client, req.services, interaction.message.id, approved=True, actor=str(interaction.user),
+                                      user_id=req.user_id, title=req._title(), what="media", user_message=result.get("user_message", ""))
+
+                # Register with media tracking system
+                await req._register_with_tracking()
+
+        await interaction.followup.send(result["followup_message"], ephemeral=True)
     
     @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.danger, custom_id="decline_request")
     @single_flight
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
         logger.info(f"Media decline button clicked by {interaction.user} for message {interaction.message.id}")
-        # Always load from saved
-        # A view of its own for this click: after a restart one persistent view
-        # answers every card, so state kept on it would leak between requests.
-        req = type(self)()
-        if not await req._load_from_saved(interaction.message.id, interaction.client):
-            await interaction.response.send_message("❌ Could not find request data.", ephemeral=True)
-            return
+        # Answered now: a website decision may hold the lock for longer than Discord waits.
+        await interaction.response.defer()
+        async with _decision_lock(interaction.message.id):
+            if not await _still_pending(interaction):
+                return
+            # Always load from saved
+            # A view of its own for this click: after a restart one persistent view
+            # answers every card, so state kept on it would leak between requests.
+            req = type(self)()
+            if not await req._load_from_saved(interaction.message.id, interaction.client):
+                await interaction.followup.send("❌ Could not find request data.", ephemeral=True)
+                return
 
-        embed = _stamp_decision(interaction.message.embeds[0], approved=False, by=interaction.user.mention)
-        await interaction.response.edit_message(embed=embed, view=None)
-        # Recorded, not removed: the daily Sonarr/Radarr monitoring reconciliation still reads it.
-        await _after_decision(interaction.client, req.services, interaction.message.id, approved=False, actor=str(interaction.user),
-                              user_id=req.user_id, title=req._title(), what="media")
+            embed = _stamp_decision(interaction.message.embeds[0], approved=False, by=interaction.user.mention)
+            await _edit_card(interaction.message, embed=embed, view=None)
+            # Recorded, not removed: the daily Sonarr/Radarr monitoring reconciliation still reads it.
+            await _after_decision(interaction.client, req.services, interaction.message.id, approved=False, actor=str(interaction.user),
+                                  user_id=req.user_id, title=req._title(), what="media")
     
     async def _register_with_tracking(self):
         """Register approved request with media tracking system"""

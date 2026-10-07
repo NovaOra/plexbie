@@ -79,6 +79,11 @@ describe("the client", () => {
       expect(err).toMatchObject({ status: 403, message: "Only admins can do that." });
     });
 
+    it("carry the line of a refused admin action", async () => {
+      serve(() => json({ ok: false, message: "Already approved." }, 409));
+      await expect(api.decide("requests", "r1", true)).rejects.toMatchObject({ status: 409, message: "Already approved." });
+    });
+
     it("fall back to the status text when the answer isn't JSON", async () => {
       serve(() => new Response("<html>Bad Gateway</html>", { status: 502, statusText: "Bad Gateway" }));
       await expect(api.status()).rejects.toMatchObject({ status: 502, message: "Bad Gateway" });
