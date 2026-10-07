@@ -8,9 +8,10 @@ distinct title ever requested.
 
 The records themselves are not disposable, which is why this migrates rather than
 prunes. media_cleanup reads them daily and, for each medium's *newest* request,
-either ensures Sonarr/Radarr is monitoring it (within REQUEST_EXPIRY_DAYS) or
-un-monitors it (beyond). A medium with no record is skipped entirely, so deleting
-one would leave an approved title un-monitored with nothing left to correct it.
+un-monitors it in Sonarr/Radarr once that is older than REQUEST_EXPIRY_DAYS, and
+monitors it again when a newer request arrives. A medium with no record is skipped
+entirely, so deleting one would leave a title it un-monitored with nothing left to
+correct it.
 
 One row per request means appending costs one small write, restoring a view costs
 one keyed read, and the daily reconciliation costs one query.

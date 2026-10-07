@@ -247,6 +247,16 @@ who's watching from one place instead of five.
   copies): while any copy is watched, exempt or in a skipped library, none is
   removed and no warning is sent for it, and a removal waits until every copy
   is due.
+- Request expiry, part of the same daily check: 90 days after a title's newest
+  request, Plexbie turns its monitoring off in Sonarr or Radarr (no new
+  episodes or upgrades; no files are touched), and turns it back on when someone
+  requests it again. A title exempt from cleanup or in a library cleanup skips,
+  or played by anyone in those 90 days, keeps its monitoring, and if Plex can't
+  be read nothing is turned off that day. Plexbie only turns back on what it
+  turned off itself, so a series you switch off (or back on) by hand stays that
+  way. (The first time it runs after an upgrade, it counts every title that is
+  already off and whose newest request is over 90 days old as one it turned
+  off.) In practice mode it only reports what it would change.
 - Audiobook and ebook downloads are watched, waited on until they stop changing,
   then renamed and filed into an Audiobookshelf-shaped library. A multi-disc
   release whose tracks share names (`CD1/01.mp3`, `CD2/01.mp3`) is filed as

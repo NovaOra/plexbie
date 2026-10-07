@@ -500,7 +500,50 @@ class MediaCleanupCog(commands.Cog):
     # would lose their notification. Nothing re-checks whether the request behind
     # one is still outstanding, so they accumulate (8 of 56 at the time of writing).
 
+    def _kept_from_expiry(self, cutoff: datetime) -> set:
+        """Blocking: what request expiry must leave monitored - titles exempt from
+        cleanup or in a library it skips, and titles anyone played since `cutoff` -
+        as ("movie" | "tv", "tmdb" | "tvdb" | "imdb", id). Read from Plex's own listing
+        with its guids, one request per library; raises if Plex can't be read."""
+        from portal.cleanup import everyones_views
+        server = self.services.plex_server
+        views = everyones_views(server, REQUEST_EXPIRY_DAYS)
+        exempt = self.config.get("exempt_items", {}) or {}
+        excluded = set(self.config.get("exclude_libraries", []) or [])
+        kept = set()
+        for sec in server.query("/library/sections").findall("Directory"):
+            stype = sec.get("type")
+            if stype not in ("movie", "show"):
+                continue
+            kind = "tv" if stype == "show" else "movie"
+            whole_library = sec.get("title") in excluded
+            root = server.query(f"/library/sections/{sec.get('key')}/all?includeGuids=1")
+            for el in root.findall("Video" if stype == "movie" else "Directory"):
+                rk = el.get("ratingKey")
+                played = views.get(rk)
+                if not whole_library and rk not in exempt and not (played and played >= cutoff):
+                    continue
+                for g in el.findall("Guid"):
+                    gid = g.get("id") or ""
+                    for scheme in ("tmdb", "tvdb"):
+                        number = guid_number(gid, scheme)
+                        if number:
+                            kept.add((kind, scheme, str(number)))
+                    if gid.startswith("imdb://") and len(gid) > len("imdb://"):
+                        kept.add((kind, "imdb", gid[len("imdb://"):]))
+        return kept
+
     async def enforce_request_monitor_cleanup(self) -> Dict[str, int]:
+        """Turn Sonarr/Radarr monitoring off for titles whose newest request is older
+        than REQUEST_EXPIRY_DAYS, and back on when a newer request (or an exemption,
+        or someone watching it) brings one back.
+
+        Only what Plexbie itself turned off is turned back on: those ids are kept in
+        the "expired_monitoring" record, so an admin who switches a title off by hand,
+        or back on after it expired, isn't overruled every day. Practice mode reports
+        what would change and changes nothing. Titles exempt from cleanup or in a
+        library it skips, or played by anyone within REQUEST_EXPIRY_DAYS, keep their
+        monitoring; if Plex can't be read, nothing is turned off that day."""
         # One query, not a 661 KB parse. Same shape as the file it replaces, so
         # _latest_requests_by_media is unchanged - and so is every decision it
         # drives about Sonarr/Radarr monitoring.
@@ -516,56 +559,114 @@ class MediaCleanupCog(commands.Cog):
         }
 
         try:
-            sonarr_by_tmdb = {}
-            if self.services.config.sonarr_url and self.services.config.sonarr_token:
-                sonarr_by_tmdb = {series.get("tmdbId"): series for series in await self.services.sonarr.series()}
-
-            for (media_type, tmdb_id), request in latest_requests.items():
-                if media_type != "tv":
-                    continue
-                series = sonarr_by_tmdb.get(tmdb_id)
-                if not series:
-                    continue
-
-                requested_seasons = request.get("seasons") if isinstance(request.get("seasons"), list) else None
-                is_active = request["timestamp"] >= cutoff
-                if is_active:
-                    if not series.get("monitored", False):
-                        await self.services.sonarr.set_series_monitored(series["id"], True)
-                        summary["tv_reenabled"] += 1
-                    await self.services.sonarr.set_episodes_monitored(series["id"], requested_seasons, True)
-                else:
-                    if series.get("monitored", False):
-                        await self.services.sonarr.set_series_monitored(series["id"], False)
-                        summary["tv_unmonitored"] += 1
-                    await self.services.sonarr.set_episodes_monitored(series["id"], None, False)
+            stored = await kv_get(CLEANUP_NAMESPACE, "expired_monitoring")
         except Exception as e:
-            logger.error(f"Error enforcing Sonarr request monitoring cleanup: {e}", exc_info=True)
-
-        try:
-            radarr_by_tmdb = {}
-            if self.services.config.radarr_url and self.services.config.radarr_token:
-                radarr_by_tmdb = {movie.get("tmdbId"): movie for movie in await self.services.radarr.movies()}
-
-            for (media_type, tmdb_id), request in latest_requests.items():
-                if media_type != "movie":
-                    continue
-                movie = radarr_by_tmdb.get(tmdb_id)
-                if not movie:
-                    continue
-
-                is_active = request["timestamp"] >= cutoff
-                if is_active and not movie.get("monitored", False):
-                    await self.services.radarr.set_movie_monitored(movie["id"], True)
-                    summary["movie_reenabled"] += 1
-                elif not is_active and movie.get("monitored", False):
-                    await self.services.radarr.set_movie_monitored(movie["id"], False)
-                    summary["movie_unmonitored"] += 1
-        except Exception as e:
-            logger.error(f"Error enforcing Radarr request monitoring cleanup: {e}", exc_info=True)
+            logger.warning(f"Request expiry skipped: couldn't read which titles it turned off ({e})")
+        else:
+            await self._expire_request_monitoring(latest_requests, cutoff, stored or {}, summary)
 
         summary["media_tracking_pruned"] = self._prune_media_tracking_cache(latest_requests, cutoff)
         return summary
+
+    async def _expire_request_monitoring(self, latest_requests: Dict[tuple, Dict[str, Any]], cutoff: datetime,
+                                         stored: Dict[str, list], summary: Dict[str, int]) -> None:
+        """The Sonarr/Radarr part of enforce_request_monitor_cleanup. `stored` is the
+        expired_monitoring record, {"tv": [Sonarr ids], "movie": [Radarr ids]}; a kind
+        it has no entry for yet is seeded from what is already switched off."""
+        practice = bool(self.config.get("dry_run"))
+        expired = {kind: set(stored.get(kind) or []) for kind in ("tv", "movie")}
+        saved = {kind: sorted(stored[kind]) for kind in ("tv", "movie") if kind in stored}
+        listed = set()
+
+        kept = None
+        if self.services.plex_server:
+            try:
+                kept = await run_blocking(self._kept_from_expiry, cutoff)
+            except Exception as e:
+                logger.warning(f"Request expiry: couldn't read Plex's exemptions and watch history ({e}); "
+                               "turning nothing off today")
+        else:
+            logger.warning("Request expiry: Plex isn't available; turning nothing off today")
+
+        def is_kept(kind: str, *ids) -> bool:
+            return kept is not None and any((kind, k, str(v)) in kept for k, v in ids if v)
+
+        arrs = []
+        if self.services.config.sonarr_url and self.services.config.sonarr_token:
+            arrs.append(("tv", "Sonarr", self.services.sonarr.series, lambda series: ("tvdb", series.get("tvdbId"))))
+        if self.services.config.radarr_url and self.services.config.radarr_token:
+            arrs.append(("movie", "Radarr", self.services.radarr.movies, lambda movie: ("imdb", movie.get("imdbId"))))
+
+        # Decide everything first: (kind, Sonarr/Radarr item, seasons, turn back on?).
+        plan = []
+        for kind, name, listing, other_id in arrs:
+            try:
+                items = await listing()
+            except Exception as e:
+                logger.error(f"Request expiry: couldn't read {name}: {e}", exc_info=True)
+                continue
+            listed.add(kind)
+            # Forget ids that are gone: a new title can be given a deleted one's id.
+            expired[kind] &= {item["id"] for item in items}
+            by_tmdb = {item.get("tmdbId"): item for item in items}
+
+            for (media_type, tmdb_id), request in latest_requests.items():
+                item = by_tmdb.get(tmdb_id) if media_type == kind else None
+                if not item:
+                    continue
+                is_active = request["timestamp"] >= cutoff
+                monitored = item.get("monitored", False)
+                if kind not in stored and not is_active and not monitored:
+                    # No record yet: before there was one, every title whose request
+                    # had expired was switched off and kept off daily, so a title in
+                    # that state is taken to be Plexbie's doing.
+                    expired[kind].add(item["id"])
+                keep = is_kept(kind, ("tmdb", tmdb_id), other_id(item))
+                if item["id"] in expired[kind]:
+                    if is_active or keep:
+                        seasons = request.get("seasons") if isinstance(request.get("seasons"), list) else None
+                        plan.append((kind, item, seasons, True))
+                elif not is_active and not keep and kept is not None and monitored:
+                    plan.append((kind, item, None, False))
+
+        async def save() -> bool:
+            nonlocal saved
+            record = {kind: sorted(ids) for kind, ids in expired.items() if kind in saved or kind in listed}
+            if practice or record == saved:
+                return True
+            try:
+                await kv_set(CLEANUP_NAMESPACE, "expired_monitoring", record)
+            except Exception as e:
+                logger.error(f"Couldn't record which titles request expiry turned off: {e}")
+                return False
+            saved = record
+            return True
+
+        # On record before anything is switched off, so nothing ends up off with
+        # nothing to turn it back on; if the record can't be saved, nothing is.
+        for kind, item, _, turn_on in plan:
+            if not turn_on:
+                expired[kind].add(item["id"])
+        if not await save():
+            plan = [step for step in plan if step[3]]
+
+        for kind, item, seasons, turn_on in plan:
+            try:
+                if not practice:
+                    if kind == "tv":
+                        if turn_on != item.get("monitored", False):
+                            await self.services.sonarr.set_series_monitored(item["id"], turn_on)
+                        await self.services.sonarr.set_episodes_monitored(item["id"], seasons, turn_on)
+                    elif turn_on != item.get("monitored", False):
+                        await self.services.radarr.set_movie_monitored(item["id"], turn_on)
+                if turn_on:
+                    expired[kind].discard(item["id"])
+                summary[f"{kind}_reenabled" if turn_on else f"{kind}_unmonitored"] += 1
+            except Exception as e:
+                logger.error(f"Request expiry couldn't turn monitoring {'on' if turn_on else 'off'} for "
+                             f"{item.get('title')}: {e}", exc_info=True)
+
+        await save()
 
     @tasks.loop(hours=1)
     async def daily_cleanup_check(self):
@@ -1345,6 +1446,7 @@ class MediaCleanupCog(commands.Cog):
                 f"TV off: {monitor_summary['tv_unmonitored']} | TV on: {monitor_summary['tv_reenabled']}\n"
                 f"Movies off: {monitor_summary['movie_unmonitored']} | Movies on: {monitor_summary['movie_reenabled']}\n"
                 f"Tracking pruned: {monitor_summary['media_tracking_pruned']}"
+                + ("\nPractice mode: what would change; Sonarr/Radarr were left as they are." if self.config["dry_run"] else "")
             ),
             inline=False
         )
