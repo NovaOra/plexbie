@@ -220,11 +220,13 @@ async def first_air(sonarr, series_id: int, seasons: Optional[Iterable[int]]) ->
 def follow_up_new_show(services, *, tmdb_id: int, seasons: Optional[List[int]], title: str,
                        on_nothing: Optional[Callable[[List[int]], Awaitable[None]]] = None,
                        wait_for_sonarr: float = 600, retries: int = 3,
-                       on_missing: Optional[Callable[[], Awaitable[None]]] = None) -> None:
+                       on_missing: Optional[Callable[[], Awaitable[None]]] = None,
+                       on_found: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None) -> None:
     """After Seerr adds a show to Sonarr: search it ourselves, with the
     episode-by-episode fallback. Sonarr's search-on-add skips episodes it thinks
     haven't aired; if they really haven't, try again a couple of hours after the
-    first one airs (up to `retries` times) instead of reporting it can't be found."""
+    first one airs (up to `retries` times) instead of reporting it can't be found.
+    on_found is called with the series once Sonarr has it, before the search."""
     sonarr = services.sonarr
 
     async def run():
@@ -243,6 +245,11 @@ def follow_up_new_show(services, *, tmdb_id: int, seasons: Optional[List[int]], 
             if on_missing:
                 await on_missing()
             return
+        if on_found:
+            try:
+                await on_found(series)
+            except Exception as e:
+                logger.warning(f"Setting up {title} in Sonarr failed: {e}")
         for attempt in range(retries + 1):
             asked = list(seasons) if seasons else sorted({int(e["seasonNumber"]) for e in await sonarr.episodes(series["id"])
                                                          if int(e.get("seasonNumber", 0)) > 0 and not e.get("hasFile")})

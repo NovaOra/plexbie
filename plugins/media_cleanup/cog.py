@@ -20,7 +20,7 @@ from utils.formatting import parse_utc
 from utils.views import reply_failure
 from utils.guids import element_guids, first_number, guid_number, item_guids, plex_ids
 from database.kv_store import kv_get, kv_set
-from database.request_store import all_requests
+from database.request_store import STATUS_APPROVED, all_requests
 
 logger = get_logger(__name__)
 
@@ -475,13 +475,19 @@ class MediaCleanupCog(commands.Cog):
             if not tmdb_id or not timestamp:
                 continue
             key = (media_type, int(tmdb_id))
+            # "Latest season + new episodes" on an approved request: the show is
+            # followed for good, whatever was asked for after it.
+            follows = bool(request.get("monitor")) and request.get("status") == STATUS_APPROVED
             if key not in latest or timestamp > latest[key]["timestamp"]:
                 latest[key] = {
                     "timestamp": timestamp,
                     "media": media,
                     "seasons": request.get("seasons"),
                     "monitor": request.get("monitor", False),
+                    "follows": follows or latest.get(key, {}).get("follows", False),
                 }
+            elif follows:
+                latest[key]["follows"] = True
         return latest
 
     def _prune_media_tracking_cache(self, latest_requests: Dict[tuple, Dict[str, Any]], cutoff: datetime) -> int:
@@ -566,7 +572,9 @@ class MediaCleanupCog(commands.Cog):
         or back on after it expired, isn't overruled every day. Practice mode reports
         what would change and changes nothing. Titles exempt from cleanup or in a
         library it skips, or played by anyone within REQUEST_EXPIRY_DAYS, keep their
-        monitoring; if Plex can't be read, nothing is turned off that day."""
+        monitoring, as do shows requested as "Latest season + new episodes" (which
+        Sonarr is also told to monitor new seasons of, once, if it isn't yet); if Plex
+        can't be read, nothing is turned off that day."""
         # One query, not a 661 KB parse. Same shape as the file it replaces, so
         # _latest_requests_by_media is unchanged - and so is every decision it
         # drives about Sonarr/Radarr monitoring.
@@ -578,6 +586,7 @@ class MediaCleanupCog(commands.Cog):
             "tv_reenabled": 0,
             "movie_unmonitored": 0,
             "movie_reenabled": 0,
+            "tv_following_new_seasons": 0,
             "media_tracking_pruned": 0,
         }
 
@@ -595,10 +604,13 @@ class MediaCleanupCog(commands.Cog):
                                          stored: Dict[str, list], summary: Dict[str, int]) -> None:
         """The Sonarr/Radarr part of enforce_request_monitor_cleanup. `stored` is the
         expired_monitoring record, {"tv": [Sonarr ids], "movie": [Radarr ids]}; a kind
-        it has no entry for yet is seeded from what is already switched off."""
+        it has no entry for yet is seeded from what is already switched off. Its
+        "following" entry lists the series already seen following new seasons, so one
+        an admin later changes by hand is left as they set it."""
         practice = bool(self.config.get("dry_run"))
         expired = {kind: set(stored.get(kind) or []) for kind in ("tv", "movie")}
-        saved = {kind: sorted(stored[kind]) for kind in ("tv", "movie") if kind in stored}
+        following = set(stored.get("following") or [])
+        saved = {kind: sorted(stored[kind]) for kind in ("tv", "movie", "following") if kind in stored}
         listed = set()
 
         kept = None
@@ -620,8 +632,9 @@ class MediaCleanupCog(commands.Cog):
         if self.services.config.radarr_url and self.services.config.radarr_token:
             arrs.append(("movie", "Radarr", self.services.radarr.movies, lambda movie: ("imdb", movie.get("imdbId"))))
 
-        # Decide everything first: (kind, Sonarr/Radarr item, seasons, turn back on?).
-        plan = []
+        # Decide everything first: (kind, Sonarr/Radarr item, seasons, turn back on?),
+        # and the followed shows Sonarr doesn't monitor new seasons of yet.
+        plan, follow = [], []
         for kind, name, listing, other_id in arrs:
             try:
                 items = await listing()
@@ -631,6 +644,8 @@ class MediaCleanupCog(commands.Cog):
             listed.add(kind)
             # Forget ids that are gone: a new title can be given a deleted one's id.
             expired[kind] &= {item["id"] for item in items}
+            if kind == "tv":
+                following &= {item["id"] for item in items}
             by_tmdb = {item.get("tmdbId"): item for item in items}
 
             for (media_type, tmdb_id), request in latest_requests.items():
@@ -644,17 +659,28 @@ class MediaCleanupCog(commands.Cog):
                     # had expired was switched off and kept off daily, so a title in
                     # that state is taken to be Plexbie's doing.
                     expired[kind].add(item["id"])
-                keep = is_kept(kind, ("tmdb", tmdb_id), other_id(item))
+                keep = is_kept(kind, ("tmdb", tmdb_id), other_id(item)) or (kind == "tv" and request.get("follows"))
                 if item["id"] in expired[kind]:
                     if is_active or keep:
                         seasons = request.get("seasons") if isinstance(request.get("seasons"), list) else None
                         plan.append((kind, item, seasons, True))
                 elif not is_active and not keep and kept is not None and monitored:
                     plan.append((kind, item, None, False))
+                # Approval sets this up; this catches a show Seerr added late, a call
+                # that failed, or a restart while it waited. Sonarr v3 has no such field,
+                # and a series switched off by hand stays off.
+                if (kind == "tv" and request.get("follows") and "monitorNewItems" in item
+                        and item["id"] not in following):
+                    if item["monitorNewItems"] == "all":
+                        following.add(item["id"])
+                    elif monitored or item["id"] in expired[kind]:
+                        follow.append(item)
 
         async def save() -> bool:
             nonlocal saved
             record = {kind: sorted(ids) for kind, ids in expired.items() if kind in saved or kind in listed}
+            if following or "following" in saved:
+                record["following"] = sorted(following)
             if practice or record == saved:
                 return True
             try:
@@ -688,6 +714,15 @@ class MediaCleanupCog(commands.Cog):
             except Exception as e:
                 logger.error(f"Request expiry couldn't turn monitoring {'on' if turn_on else 'off'} for "
                              f"{item.get('title')}: {e}", exc_info=True)
+
+        for item in follow:
+            try:
+                if not practice:
+                    await self.services.sonarr.follow_new_seasons(item["id"])
+                    following.add(item["id"])
+                summary["tv_following_new_seasons"] += 1
+            except Exception as e:
+                logger.warning(f"Request expiry couldn't have Sonarr monitor new seasons of {item.get('title')}: {e}")
 
         await save()
 

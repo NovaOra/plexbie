@@ -560,7 +560,7 @@ def test_a_season_search_that_finds_nothing_opens_a_help_request_from_either_fol
     def start(services, series_id, missing, title, on_nothing):
         handed["already in Sonarr"] = on_nothing
 
-    def follow_up_new_show(services, tmdb_id, seasons, title, on_nothing, on_missing):
+    def follow_up_new_show(services, tmdb_id, seasons, title, on_nothing, on_missing, on_found=None):
         handed["new to Sonarr"] = on_nothing
 
     class Sonarr:

@@ -252,6 +252,10 @@ who's watching from one place instead of five.
   are picked season by season, up to 25 seasons per menu (the newest 100 when
   a show has more), with **All Seasons** and, for a running show,
   **Latest + Monitor** as buttons; a show TMDB lists no seasons for yet says so.
+  **Latest + Monitor** (*Latest season + new episodes* on the website and in the
+  app) requests the newest season and, once approved, keeps the show monitored in
+  Sonarr with every season added later monitored too; older seasons stay as they
+  are (without Sonarr set up, only the newest season is requested).
   Film and TV search needs `TMDB_API_KEY`: without it, **TV & Movie** tells the
   member search needs a TMDB key instead of searching (book search uses Open
   Library and needs no key).
@@ -321,9 +325,11 @@ who's watching from one place instead of five.
   request, Plexbie turns its monitoring off in Sonarr or Radarr (no new
   episodes or upgrades; no files are touched), and turns it back on when someone
   requests it again. A title exempt from cleanup or in a library cleanup skips,
-  or played by anyone in those 90 days, keeps its monitoring, and if Plex can't
-  be read nothing is turned off that day. Plexbie only turns back on what it
-  turned off itself, so a series you switch off (or back on) by hand stays that
+  or played by anyone in those 90 days, keeps its monitoring, and so does a show
+  approved as **Latest + Monitor** (one Plexbie had already turned off is turned
+  back on, and if Sonarr isn't monitoring its new seasons yet, the daily check
+  sets that once); if Plex can't be read nothing is turned off that day. Plexbie
+  only turns back on what it turned off itself, so a series you switch off (or back on) by hand stays that
   way. (The first time it runs after an upgrade, it counts every title that is
   already off and whose newest request is over 90 days old as one it turned
   off.) In practice mode it only reports what it would change.

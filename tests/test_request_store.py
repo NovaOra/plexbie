@@ -409,7 +409,8 @@ def test_the_newest_request_per_medium_still_wins():
 
 
 def test_resolving_a_request_does_not_change_the_monitoring_decision():
-    """Recording an outcome is additive; it must not alter what cleanup decides."""
+    """Recording an outcome is additive; it must not alter what cleanup decides,
+    except that an approved "Latest season + new episodes" request now follows the show."""
     from plugins.media_cleanup.cog import MediaCleanupCog
 
     path = _tmp_db()
@@ -430,7 +431,9 @@ def test_resolving_a_request_does_not_change_the_monitoring_decision():
     before, after = asyncio.run(scenario())
     assert set(before) == set(after)
     for key in before:
-        assert before[key] == after[key], f"{key} changed after being resolved"
+        assert {**before[key], "follows": None} == {**after[key], "follows": None}, f"{key} changed after being resolved"
+    assert not any(r["follows"] for r in before.values())
+    assert [key for key, r in after.items() if r["follows"]] == [("tv", 500)]
 
 
 # ===================================================================

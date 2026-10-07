@@ -1488,6 +1488,15 @@ class AdminApprovalView(_RequestApprovalBase):
         logger.info(f"Started Sonarr search for {self._title()} season(s) {missing}")
         return missing
 
+    async def _follow_new_seasons(self, series: Dict[str, Any]) -> None:
+        """For "Latest season + new episodes": keep the show monitored in Sonarr and have it
+        monitor every season added from now on. The older seasons stay as they are."""
+        try:
+            if await self.services.sonarr.follow_new_seasons(series["id"]):
+                logger.info(f"Sonarr now monitors new seasons of {self._title()}")
+        except Exception as e:
+            logger.warning(f"Couldn't have Sonarr monitor new seasons of {self._title()}: {e}")
+
     def _not_found_callback(self):
         """A season search's on_nothing for this request: opens the "Can't be found"
         help request for the seasons it found nothing for."""
@@ -1590,6 +1599,8 @@ class AdminApprovalView(_RequestApprovalBase):
                 await self.services.sonarr.set_series_monitored(match["id"], True)
 
             searched = await self._monitor_and_search_seasons(match, requested_seasons, existing_episodes)
+            if self.monitor:
+                await self._follow_new_seasons(match)
             search_note = f" Search started for season {', '.join(str(n) for n in searched)}." if searched else ""
 
             restored_any = needs_series_enable or had_unmonitored_targets
@@ -1612,6 +1623,11 @@ class AdminApprovalView(_RequestApprovalBase):
         return None
 
     async def _fulfill_request(self) -> Dict[str, Any]:
+        follow = self.monitor and self.media.get("media_type") != "movie"
+        if follow and not self.services.sonarr.configured:
+            logger.info(f"Sonarr isn't set up: requesting the latest season of {self._title()}, "
+                        "but new seasons won't be monitored")
+            follow = False
         try:
             restored = await self._restore_existing_request_monitoring()
             if restored:
@@ -1642,7 +1658,8 @@ class AdminApprovalView(_RequestApprovalBase):
             season_search.follow_up_new_show(self.services, tmdb_id=int(self.media["id"]),
                                              seasons=self._requested_seasons_list(), title=title,
                                              on_nothing=self._not_found_callback(),
-                                             on_missing=self._never_reached("Sonarr"))
+                                             on_missing=self._never_reached("Sonarr"),
+                                             on_found=self._follow_new_seasons if follow else None)
         if submitted:
             if self._seerr_noop_reason:
                 return {
@@ -1805,13 +1822,6 @@ class AdminApprovalView(_RequestApprovalBase):
                 else:
                     # Default to all seasons if none specified
                     payload["seasons"] = "all"
-
-                # Add monitoring if requested
-                if self.monitor:
-                    payload["is4k"] = False  # Assuming non-4K for now
-                    # Note: Seerr doesn't have a direct "monitor" flag
-                    # Monitoring is typically handled by Sonarr/Radarr after the request
-                    # We're just requesting the specific season(s)
 
             if media_type == "tv" and await no_tvdb_entry(self.services, self.media.get('id')):
                 # Sonarr only knows shows by their TheTVDB ID. Seerr would accept this one,

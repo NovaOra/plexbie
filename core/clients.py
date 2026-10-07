@@ -230,6 +230,17 @@ class Arr(_Client):
     async def set_series_monitored(self, series_id: int, monitored: bool) -> Any:
         return await self.put("series/editor", {"seriesIds": [series_id], "monitored": monitored})
 
+    async def follow_new_seasons(self, series_id: int) -> bool:
+        """Keep the series monitored and monitor the seasons Sonarr adds to it from
+        now on (monitorNewItems), leaving the seasons it has as they are. The whole
+        series goes back: Sonarr resets whatever a PUT leaves out. True if anything changed."""
+        full = await self.get(f"series/{series_id}")
+        if full.get("monitored") and full.get("monitorNewItems") == "all":
+            return False
+        full["monitored"], full["monitorNewItems"] = True, "all"
+        await self.put(f"series/{series_id}", full)
+        return True
+
     async def set_episodes_monitored(self, series_id: int, seasons: Optional[Iterable[int]], monitored: bool,
                                      episodes: Optional[List[Dict[str, Any]]] = None) -> Any:
         """Monitor (or not) every episode of the show, or only those in `seasons`."""
