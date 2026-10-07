@@ -60,6 +60,10 @@
   --r: 6px;
   --r-strap: 2px;
   --gutter: 16px;
+  /* The page's side padding: the gutter, or more where a phone held sideways
+     puts the notch or rounded corners. */
+  --pad-l: max(var(--gutter), env(safe-area-inset-left));
+  --pad-r: max(var(--gutter), env(safe-area-inset-right));
   --tabbar: 64px;
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -180,7 +184,7 @@ p { margin: 0; text-wrap: pretty; }
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-  padding: 0 var(--gutter);
+  padding: 0 var(--pad-r) 0 var(--pad-l);
 }
 
 .page {
@@ -260,7 +264,7 @@ html, body { overflow-x: clip; }
 }
 
 .account-menu {
-  position: absolute; right: var(--gutter); top: 56px;
+  position: absolute; right: var(--pad-r); top: 56px;
   min-width: 220px; padding: 6px;
   background: var(--panel-raised); border: 1px solid var(--rule); border-radius: var(--r);
   box-shadow: var(--shadow);
@@ -285,7 +289,7 @@ html, body { overflow-x: clip; }
 .tabbar {
   position: fixed; inset: auto 0 0 0; z-index: 20;
   height: calc(var(--tabbar) + env(safe-area-inset-bottom));
-  padding-bottom: env(safe-area-inset-bottom);
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   background: var(--field-deep);
   border-top: 1px solid var(--rule);
   /* One column per tab: five for members, six with Manage for admins. */
@@ -467,7 +471,7 @@ html, body { overflow-x: clip; }
   box-shadow: var(--shadow);
 }
 .poster__art img { width: 100%; height: 100%; object-fit: cover; transition: transform 400ms var(--ease-out); }
-@media (hover: hover) { a.poster:hover .poster__art img { transform: scale(1.03); } }
+@media (hover: hover) and (pointer: fine) { a.poster:hover .poster__art img { transform: scale(1.03); } }
 .poster__badge { position: absolute; left: 6px; bottom: 6px; }
 .poster__title { font-weight: 680; font-size: 0.92rem; line-height: 1.25; }
 .poster__meta { font-size: 0.8rem; color: var(--slate-ink); }
@@ -628,7 +632,7 @@ html, body { overflow-x: clip; }
 @media (prefers-reduced-motion: reduce) { @starting-style { .field__error { transform: none; } } }
 
 .sample-switch {
-  position: fixed; right: 12px; bottom: calc(var(--tabbar) + 12px + env(safe-area-inset-bottom)); z-index: 30;
+  position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: calc(var(--tabbar) + 12px + env(safe-area-inset-bottom)); z-index: 30;
   display: flex; gap: 2px; padding: 3px; border-radius: 8px;
   background: var(--field-deep); border: 1px dashed var(--slate);
   font-size: 0.72rem;
@@ -743,7 +747,7 @@ html, body { overflow-x: clip; }
 .stage__channels {
   display: grid; grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); gap: 10px;
   overflow-x: auto; scrollbar-width: none;
-  margin: 0 calc(var(--gutter) * -1); padding: 0 var(--gutter);
+  margin: 0 calc(var(--pad-r) * -1) 0 calc(var(--pad-l) * -1); padding: 0 var(--pad-r) 0 var(--pad-l);
 }
 @media (min-width: 960px) { .stage__channels { margin: 0; padding: 0; overflow: visible; } }
 .channel {
@@ -854,7 +858,7 @@ html, body { overflow-x: clip; }
 .journey__step.is-now .journey__label { color: var(--ink); }
 
 /* ------------------------------------------------------------ poster card */
-@media (hover: hover) {
+@media (hover: hover) and (pointer: fine) {
   .poster-card .poster:hover .poster__art { box-shadow: 0 26px 50px -18px rgb(3 6 18 / 0.85), 0 0 0 1px rgb(255 209 228 / 0.25); }
 }
 
@@ -883,7 +887,7 @@ html, body { overflow-x: clip; }
 .tab__pill, .m-seg__pill { position: absolute; inset: 0; z-index: -1; border-radius: 999px; background: var(--screen); }
 
 .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
-.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--gutter) * -1); padding: 6px var(--gutter); }
+.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 calc(var(--pad-r) * -1) 0 calc(var(--pad-l) * -1); padding: 6px var(--pad-r) 6px var(--pad-l); }
 @media (min-width: 720px) { .chips { margin: 0; padding: 4px 0; flex-wrap: wrap; } }
 .select {
   min-height: 44px; padding: 0 34px 0 14px; border-radius: 999px;
@@ -974,7 +978,7 @@ html, body { overflow-x: clip; }
 .footer__credit { font-size: 0.8rem; max-width: 72ch; }
 /* Every install credits the project: small, quiet, always there. */
 .footer__powered a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-weight: 600; color: var(--slate-ink); text-decoration: none; }
-.footer__powered a:hover { color: var(--screen); }
+@media (hover: hover) and (pointer: fine) { .footer__powered a:hover { color: var(--screen); } }
 .footer__powered img { border-radius: 5px; }
 
 /* ------------------------------------------------------------ project page */
@@ -1337,7 +1341,7 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 @keyframes m-pulse { 0% { box-shadow: 0 0 0 0 rgb(255 92 147 / 0.55); } 100% { box-shadow: 0 0 0 10px rgb(255 92 147 / 0); } }
 
 /* tabs: one row that scrolls sideways on phones, pinned under the masthead */
-.m-tabbar { position: sticky; top: 60px; z-index: 10; margin-inline: calc(var(--gutter) * -1); padding: 8px var(--gutter); background: var(--field); scroll-margin-top: 60px; }
+.m-tabbar { position: sticky; top: 60px; z-index: 10; margin-inline: calc(var(--pad-l) * -1) calc(var(--pad-r) * -1); padding: 8px var(--pad-r) 8px var(--pad-l); background: var(--field); scroll-margin-top: 60px; }
 .m-tabs { display: flex; width: max-content; max-width: 100%; overflow-x: auto; scrollbar-width: none; border-radius: 999px; }
 .m-tabs .tab { flex: none; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .m-badge { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; font-size: 0.72rem; font-weight: 800; background: var(--screen); color: var(--on-screen); }
@@ -1678,7 +1682,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .popular__note { margin: -6px 0 0; font-size: 0.9rem; }
 .popular__row { display: grid; gap: 10px; }
 .popular__kind { margin: 0; font-size: 0.82rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--slate-ink); }
-.popular__list { list-style: none; margin: 0 calc(var(--gutter) * -1); padding: 4px var(--gutter) 10px; display: grid; grid-auto-flow: column; grid-auto-columns: 42%; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.popular__list { list-style: none; margin: 0 calc(var(--pad-r) * -1) 0 calc(var(--pad-l) * -1); padding: 4px var(--pad-r) 10px var(--pad-l); display: grid; grid-auto-flow: column; grid-auto-columns: 42%; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
 @media (min-width: 560px) { .popular__list { grid-auto-columns: 28%; } }
 @media (min-width: 900px) { .popular__list { grid-auto-columns: calc((100% - 6 * 14px) / 6.4); margin: 0; padding: 4px 0 10px; } }
 .popular__rowhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -1833,7 +1837,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-all__line { font-size: 0.88rem; }
 .m-blocked { display: grid; gap: 10px; padding: 14px; border-radius: 12px; border: 1px solid rgb(255 92 147 / 0.35); background: rgb(255 92 147 / 0.07); }
 .m-blocked__head { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 700; color: var(--tally); }
-.m-blocked__why { margin: 0; font-style: italic; color: var(--muted); overflow-wrap: anywhere; }
+.m-blocked__why { margin: 0; font-style: italic; color: var(--slate-ink); overflow-wrap: anywhere; }
 .m-blocked__advice { margin: 0; }
 .m-blocked__warnings { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; color: var(--tally); font-weight: 600; font-size: 0.9rem; }
 .m-blocked__warnings li { display: flex; gap: 6px; align-items: flex-start; } .m-blocked__warnings svg { flex: none; margin-top: 3px; }
@@ -1850,12 +1854,14 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-blocked__owner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .m-blocked__edit { display: grid; gap: 8px; margin-top: 6px; }
 .m-blocked__field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.9rem; }
-.m-blocked__field > span:first-child { min-width: 72px; color: var(--muted); }
+.m-blocked__field > span:first-child { min-width: 72px; color: var(--slate-ink); }
 .m-blocked__field .m-select { flex: 1 1 200px; min-width: 0; }
+/* 16px, as every field: smaller and iOS zooms the page when one is focused. */
+.m-blocked__field .m-select, .m-blocked__finder .m-select { font-size: 1rem; }
 .m-blocked__more { justify-self: start; }
-.m-blocked__details summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; padding: 4px 0; }
+.m-blocked__details summary { cursor: pointer; color: var(--slate-ink); font-size: 0.88rem; padding: 4px 0; }
 .m-blocked__details[open] { display: grid; gap: 8px; }
-.m-blocked__skip { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--muted); margin-top: 4px; }
+.m-blocked__skip { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--slate-ink); margin-top: 4px; }
 .m-blocked__finder { flex-basis: 100%; display: grid; gap: 6px; }
 .m-blocked__finder ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .m-blocked__finder .m-btn { width: 100%; justify-content: flex-start; }
