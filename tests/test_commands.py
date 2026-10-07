@@ -33,6 +33,7 @@ ROOT = pathlib.Path(conftest.PROJECT_ROOT)
 MEMBER_FACING = {
     "join-plex",          # request Plex access
     "request",            # request media
+    "my-requests",        # your own requests
     "watchparty-stats",   # your own stats
 }
 

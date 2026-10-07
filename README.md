@@ -140,7 +140,7 @@ without touching anything else.
 |---|---|
 | `user_invites` | `/join-plex` and the approval flow |
 | `user_mgmt` | Account linking, inactivity tracking, removal |
-| `media_requests` | `/request` for TV, film, audiobook and ebook |
+| `media_requests` | `/request` for TV, film, audiobook and ebook, and `/my-requests` |
 | `media_cleanup` | Report and optionally delete unwatched media |
 | `new_media_added` | Announce additions from Plex webhooks |
 | `watch_tracking` | Now watching, leaderboard and streaks |
@@ -252,6 +252,17 @@ who's watching from one place instead of five.
   are picked season by season, up to 25 seasons per menu (the newest 100 when
   a show has more), with **All Seasons** and, for a running show,
   **Latest + Monitor** as buttons; a show TMDB lists no seasons for yet says so.
+  While the website is running, a request from Discord passes the same checks as
+  one from the website before the admins see it: at most 20 requests an hour per
+  member (both counted together), nothing they already asked for and is still
+  open, no title an admin has blocked in Seerr, no film already on Plex or
+  requested, and no show whose chosen seasons are all on Plex or requested
+  already. Without Seerr set up, or when it can't be reached, the request still
+  goes to the admins, without the Seerr checks.
+- `/my-requests` shows a member their own requests, newest 10 first, with each
+  one's number and stage (and its seasons, download progress or any problem), as
+  My requests on the website lists them; the website has the rest, with live
+  progress and tickets. It needs the website running.
 - New additions are announced from Plex webhooks, enriched with TMDB metadata,
   and episodes arriving in a batch are collapsed into a single updating message.
   Whoever requested a title is told once it's on Plex (a DM, or a phone alert
@@ -560,9 +571,9 @@ This setting is now INACTIVE.
 
 ## Commands
 
-12 commands are live with the default plugin set (`/cleanup` is one of them, with
+13 commands are live with the default plugin set (`/cleanup` is one of them, with
 five subcommands). **9 are for administrators and hidden from ordinary members**
-by Discord itself, so a regular user sees 3. Every command is guild-only and every
+by Discord itself, so a regular user sees 4. Every command is guild-only and every
 reply is ephemeral unless stated otherwise.
 
 ### Everyone
@@ -571,6 +582,7 @@ reply is ephemeral unless stated otherwise.
 |---|---|---|
 | `/join-plex` | | Request access to the Plex server |
 | `/request` | | Request a TV show, film, audiobook or ebook |
+| `/my-requests` | | Your own requests and where each one stands, newest 10 first |
 | `/watchparty-stats` | | Your own watch party credit |
 
 ### Administrators
@@ -922,7 +934,7 @@ to load and the log names the command.
 |---|---|
 | `user_invites` | `/join-plex` and the approval flow |
 | `user_mgmt` | Account linking, inactivity tracking, removal |
-| `media_requests` | `/request` for TV, film, audiobook, ebook |
+| `media_requests` | `/request` for TV, film, audiobook, ebook; `/my-requests` |
 | `media_cleanup` | Report and optionally delete unwatched media |
 | `new_media_added` | Announce additions from Plex webhooks, with TMDB metadata |
 | `watch_tracking` | Now Watching, leaderboard and streak displays |

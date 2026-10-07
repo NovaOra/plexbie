@@ -191,32 +191,56 @@ class Actions:
             return chosen, False
         return ("all" if sorted(open_) == sorted(aired) else open_), False
 
+    async def vet_request(self, user: dict, kind: str, tid: str, seasons: Any = None,
+                          seerr_optional: bool = False) -> None:
+        """The checks a request passes before the admins see it, from the website and
+        Discord's /request alike: the per-person limit, not asked for already, and a
+        film or show not blocked in Seerr (nor a film on Plex or requested already).
+        A show is checked season by season: the website then picks what's missing
+        (pick_seasons); Discord passes its `seasons` ("all" or a list), which must not
+        all be there already. With `seerr_optional` (Discord), the Seerr checks are
+        left out when Seerr isn't set up. Raises the refusal, with what to tell them
+        as its text."""
+        who = user.get("discordId") or f"plex:{user.get('plexAccountId')}"
+        self.limit(who, "request")
+        if kind != "tv":   # TV is checked season by season, so more seasons can be asked for later
+            mine = await self.data.my_requests(int(user["discordId"]) if user.get("discordId") else None, user.get("plexAccountId"))
+            same = (kind,) if kind == "movie" else ("audiobook", "ebook")   # TMDB numbers films and shows apart
+            if any(m["title"]["id"] == tid and m["title"].get("kind") in same and m["stage"] not in ("declined", "available")
+                   for m in mine):
+                raise web.HTTPConflict(text='{"error":"You already asked for this one."}', content_type="application/json")
+        if kind not in ("movie", "tv"):
+            return
+        if not tid.isdigit():
+            raise web.HTTPBadRequest(text='{"error":"Unknown title."}', content_type="application/json")
+        if seerr_optional and not self.services.seerr.configured:
+            return
+        _, detail = await self._video_media(kind, tid)
+        status = (detail.get("mediaInfo") or {}).get("status")
+        if status == 6:                 # on Seerr's blocklist
+            raise web.HTTPConflict(text='{"error":"An admin has blocked this title, so it can\'t be requested."}',
+                                   content_type="application/json")
+        if kind == "movie" and status in (2, 3, 4, 5):
+            raise web.HTTPConflict(text='{"error":"It\'s already on Plex or already requested."}', content_type="application/json")
+        if kind == "tv" and (seasons == "all" or isinstance(seasons, list)):
+            have = {s["n"]: s["status"] for s in await self.data.tv_seasons(tid, detail)}
+            asked = list(have) if seasons == "all" else seasons    # one not aired yet still counts as missing
+            if asked and all(have.get(n) in ("available", "requested") for n in asked):
+                words = "Every season is" if seasons == "all" else "Those seasons are"
+                raise web.HTTPConflict(text=f'{{"error":"{words} already on Plex or requested."}}', content_type="application/json")
+
     async def create_request(self, user: dict, body: dict) -> dict:
         from plugins.media_requests.cog import AdminChannelUnavailable, post_book_request, post_media_request
 
         kind, tid = body.get("kind"), str(body.get("id") or "")
-        who = user.get("discordId") or f"plex:{user.get('plexAccountId')}"
-        self.limit(who, "request")
+        await self.vet_request(user, kind, tid)
         requester = await self._discord_user(user.get("discordId")) or _WebRequester(user["user"]["name"])
         extra = None if user.get("discordId") else {
             "plex_account_id": user.get("plexAccountId"), "requester_name": user["user"]["name"], "via": "website"}
 
-        if kind != "tv":   # TV is checked season by season below, so more seasons can be asked for later
-            mine = await self.data.my_requests(int(user["discordId"]) if user.get("discordId") else None, user.get("plexAccountId"))
-            if any(m["title"]["id"] == tid and m["stage"] not in ("declined", "available") for m in mine):
-                raise web.HTTPConflict(text='{"error":"You already asked for this one."}', content_type="application/json")
-
         try:
             if kind in ("movie", "tv"):
-                if not tid.isdigit():
-                    raise web.HTTPBadRequest(text='{"error":"Unknown title."}', content_type="application/json")
-                media, detail = await self._video_media(kind, tid)
-                status = (detail.get("mediaInfo") or {}).get("status")
-                if status == 6:                 # on Seerr's blocklist
-                    raise web.HTTPConflict(text='{"error":"An admin has blocked this title, so it can\'t be requested."}',
-                                           content_type="application/json")
-                if kind == "movie" and status in (2, 3, 4, 5):
-                    raise web.HTTPConflict(text='{"error":"It\'s already on Plex or already requested."}', content_type="application/json")
+                media, detail = await self._video_media(kind, tid)     # Seerr's answer is cached since vet_request
                 seasons, monitor = None, False
                 if kind == "tv":
                     seasons, monitor = self.pick_seasons(await self.data.tv_seasons(tid, detail), body.get("seasons", "all"))

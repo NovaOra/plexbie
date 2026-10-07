@@ -242,7 +242,7 @@ function Features() {
 const PLUGINS: [string, string][] = [
   ["user_invites", "/join-plex and the approval flow"],
   ["user_mgmt", "Account linking, inactivity tracking, removal"],
-  ["media_requests", "/request for TV, film, audiobook and ebook"],
+  ["media_requests", "/request for TV, film, audiobook and ebook, and /my-requests"],
   ["media_cleanup", "Report and optionally delete unwatched media"],
   ["new_media_added", "Announce additions from Plex webhooks"],
   ["watch_tracking", "Now watching, leaderboard and streaks"],

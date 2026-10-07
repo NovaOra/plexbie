@@ -7,6 +7,7 @@
     "dependencies": [],
     "commands": [
         "/request - Request a TV show, movie, audiobook or ebook",
+        "/my-requests - Your own requests and where each one stands",
         "/requests - List requests still awaiting a decision"
     ]
 }

@@ -13,6 +13,11 @@ information..." with no error.
 
 The film/TV and book search boxes submit through one body, and a request's
 seasons are worded by one helper from the menu to the admin card.
+
+A request from Discord skipped the website's checks: no per-member limit, no
+"you already asked for this one", and a title blocked in Seerr or already on
+Plex went to the admins anyway. Members also had no way to list their own
+requests in Discord, only on the website.
 """
 import asyncio
 import pathlib
@@ -42,13 +47,19 @@ class _Response:
         self._done = True
         self.screen.notes.append(content)
 
+    async def defer(self, ephemeral=False, thinking=False):
+        self._done = True
+
 
 class _Followup:
     def __init__(self, screen):
         self.screen = screen
 
-    async def send(self, content, ephemeral=False):
-        self.screen.notes.append(content)
+    async def send(self, content=None, ephemeral=False, embed=None):
+        if content is not None:
+            self.screen.notes.append(content)
+        if embed is not None:
+            self.screen.embed = embed
 
 
 class _Screen:
@@ -401,3 +412,199 @@ def test_all_seasons_and_latest_with_monitor_read_the_same_on_the_admin_card():
     said = _run(scenario, channel)
     assert said == ["**Requesting:** All Seasons", "**Selected:** Season 5 + Monitor for new episodes 🔔"], said
     assert [_seasons_field(card) for card in channel.cards] == ["All Seasons", "S5 🔔 (Monitor enabled)"]
+
+
+# ------------------------------------------- checked like a request from the website
+
+class _Known:
+    """What the website knows: this member's requests, and Seerr's word on the title."""
+
+    def __init__(self, mine=(), seerr=None, seasons=(), seerr_down=False):
+        self.mine, self.seerr, self.seasons, self.seerr_down = list(mine), seerr or {}, list(seasons), seerr_down
+        self.asked_for, self.seerr_asked = [], 0
+
+    async def my_requests(self, user_id, plex_account_id=None):
+        self.asked_for.append((user_id, plex_account_id))
+        return list(self.mine)
+
+    async def _seerr(self, path, ttl):
+        self.seerr_asked += 1
+        if self.seerr_down:
+            raise RuntimeError("Seerr is down")
+        return dict(self.seerr)
+
+    async def tv_seasons(self, tid, detail):
+        return list(self.seasons)
+
+
+def _website(seerr_set_up=True, **known):
+    from portal.actions import Actions
+    services = SimpleNamespace(config=_SERVICES.config, seerr=SimpleNamespace(configured=seerr_set_up))
+    known.setdefault("seerr_down", not seerr_set_up)    # as the real client: asking an unset Seerr fails
+    return Actions(None, services, _Known(**known), "")
+
+
+def _confirm(view, website, channel):
+    """Press ✅ Yes on `view` with the website running; what the member was told."""
+    async def scenario():
+        interaction = _Interaction(bot=SimpleNamespace(services=_SERVICES, portal_actions=website))
+        await view.confirm.callback(interaction)
+        return interaction.screen.last
+    return _run(scenario, channel)
+
+
+def _film_view():
+    from plugins.media_requests.cog import ConfirmationView
+    return ConfirmationView(dict(_FILM), 7, _SERVICES)
+
+
+def _show_view(seasons, monitor=False):
+    from plugins.media_requests.cog import ConfirmationView
+    return ConfirmationView({"id": 456, "media_type": "tv", "name": "The Show"}, 7, _SERVICES, seasons, monitor=monitor)
+
+
+def test_a_film_asked_for_already_is_refused_on_discord_as_on_the_website():
+    channel = _Channel()
+    website = _website(mine=[{"title": {"kind": "movie", "id": "603"}, "stage": "requested"}])
+    said = _confirm(_film_view(), website, channel)
+    assert said == "❌ You already asked for this one.", said
+    assert channel.cards == [], "the admins were asked twice"
+    assert website.data.asked_for == [(7, None)]
+
+
+def test_an_open_show_doesnt_stop_a_film_with_the_same_tmdb_number():
+    """TMDB numbers films and shows separately: show 603 is not film 603."""
+    channel = _Channel()
+    said = _confirm(_film_view(), _website(mine=[{"title": {"kind": "tv", "id": "603"}, "stage": "requested"}]), channel)
+    assert "Request submitted" in said and len(channel.cards) == 1, said
+
+
+def test_a_declined_film_can_be_asked_for_again():
+    channel = _Channel()
+    said = _confirm(_film_view(), _website(mine=[{"title": {"kind": "movie", "id": "603"}, "stage": "declined"}]), channel)
+    assert "Request submitted" in said and len(channel.cards) == 1, said
+
+
+def test_discord_requests_count_towards_the_websites_limit():
+    channel = _Channel()
+    website = _website()
+    for _ in range(20):
+        website.limit("7", "request")      # twenty asked for already, on either side
+    said = _confirm(_film_view(), website, channel)
+    assert said == "❌ That's a lot at once. Try again later.", said
+    assert channel.cards == []
+
+
+def test_a_film_blocked_in_seerr_or_on_plex_already_is_refused_on_discord():
+    for status, words in ((6, "blocked"), (5, "already on Plex")):
+        channel = _Channel()
+        said = _confirm(_film_view(), _website(seerr={"mediaInfo": {"status": status}}), channel)
+        assert said.startswith("❌") and words in said, said
+        assert channel.cards == []
+
+
+def test_a_show_is_refused_only_when_nothing_asked_for_is_still_missing():
+    have = [{"n": 1, "status": "available"}, {"n": 2, "status": "requested"}, {"n": 3, "status": "upcoming"}]
+    for seasons, monitor, refused in (("all", False, "Every season is already on Plex or requested."),
+                                      ([2], False, "Those seasons are already on Plex or requested."),
+                                      ([1, 2], False, "Those seasons are already on Plex or requested.")):
+        channel = _Channel()
+        said = _confirm(_show_view(seasons, monitor), _website(seasons=have if seasons != "all" else have[:2]), channel)
+        assert said == f"❌ {refused}", (seasons, said)
+        assert channel.cards == []
+    # Something still to get: a missing season, or one not aired yet (by hand, with All
+    # Seasons or followed with Latest + Monitor alike).
+    for seasons, monitor, known in (("all", False, have + [{"n": 4, "status": "none"}]),
+                                    ("all", False, have),
+                                    ([3], False, have),
+                                    ([2, 4], False, have + [{"n": 4, "status": "partial"}]),
+                                    ([3], True, have)):
+        channel = _Channel()
+        said = _confirm(_show_view(seasons, monitor), _website(seasons=known), channel)
+        assert "Request submitted" in said and len(channel.cards) == 1, (seasons, said)
+
+
+def test_a_book_asked_for_already_is_refused_on_discord():
+    from plugins.media_requests.cog import BookConfirmationView
+    book = {"title": "The Book", "author": "A. Writer", "open_library_key": "/works/OL1W", "request_format": "both"}
+    channel = _Channel()
+    said = _confirm(BookConfirmationView(dict(book), 7, _SERVICES),
+                    _website(mine=[{"title": {"kind": "audiobook", "id": "OL1W"}, "stage": "approved"}]), channel)
+    assert said == "❌ You already asked for this one.", said
+    assert channel.cards == []
+
+
+def test_a_discord_request_still_goes_when_seerr_cant_say():
+    """Seerr is optional for Discord's /request: without its word, the admins decide."""
+    channel = _Channel()
+    said = _confirm(_film_view(), _website(seerr_down=True), channel)
+    assert "Request submitted" in said and len(channel.cards) == 1, said
+
+
+def test_without_seerr_set_up_a_discord_request_goes_quietly_after_the_other_checks():
+    """No Seerr is a normal setup, not an outage: no Seerr call and no warning."""
+    import logging
+    from plugins.media_requests import cog
+    warned = []
+    handler = logging.Handler(logging.WARNING)
+    handler.emit = warned.append
+    logging.getLogger(cog.__name__).addHandler(handler)
+    try:
+        channel = _Channel()
+        website = _website(seerr_set_up=False)
+        said = _confirm(_film_view(), website, channel)
+    finally:
+        logging.getLogger(cog.__name__).removeHandler(handler)
+    assert "Request submitted" in said and len(channel.cards) == 1, said
+    assert website.data.seerr_asked == 0 and website.data.asked_for == [(7, None)]
+    assert not warned, [r.getMessage() for r in warned]
+    said = _confirm(_film_view(), _website(seerr_set_up=False, mine=[{"title": {"kind": "movie", "id": "603"}, "stage": "requested"}]),
+                    _Channel())
+    assert said == "❌ You already asked for this one.", said
+
+
+# ------------------------------------------------------------ /my-requests
+
+def _my_requests(bot):
+    from plugins.media_requests.cog import MediaRequestsCog
+    cog = MediaRequestsCog(bot, _SERVICES)
+    interaction = _Interaction(bot=bot)
+    asyncio.run(cog.list_my_requests.callback(cog, interaction))
+    return interaction.screen
+
+
+def test_members_can_list_their_own_requests_on_discord():
+    rows = [{"slot": 12, "stage": "downloading", "seasons": [1, 2], "progress": {"percent": 40},
+             "title": {"kind": "tv", "id": "456", "title": "The Show", "year": "2019"}},
+            {"slot": 7, "stage": "available", "seasons": None, "progress": None,
+             "title": {"kind": "ebook", "id": "OL1W", "title": "The Book", "year": ""}},
+            {"slot": 3, "stage": "requested", "seasons": None, "progress": {"detail": "Older request; its outcome wasn't recorded"},
+             "title": {"kind": "movie", "id": "603", "title": "The Film", "year": "1999"}}]
+    known = _Known(mine=rows)
+    bot = SimpleNamespace(portal_actions=SimpleNamespace(data=known, public_url="https://plexbie.example.com/"))
+    screen = _my_requests(bot)
+    assert known.asked_for == [(7, None)], "only their own requests, by their Discord id"
+    embed = screen.embed
+    assert embed is not None, screen.notes
+    names = [f.name for f in embed.fields]
+    assert names == ["No. 0012 · The Show (2019)", "No. 0007 · The Book", "No. 0003 · The Film (1999)"], names
+    values = [f.value for f in embed.fields]
+    assert "Downloading" in values[0] and "40%" in values[0] and "S1, S2" in values[0], values[0]
+    assert "On Audiobookshelf" in values[1], values[1]
+    assert "Requested" in values[2] and "outcome wasn't recorded" in values[2], values[2]
+    assert "https://plexbie.example.com/schedule" in (embed.description or ""), embed.description
+
+
+def test_my_requests_shows_the_newest_ten_and_says_how_many_more():
+    rows = [{"slot": n, "stage": "requested", "seasons": None, "progress": None,
+             "title": {"kind": "movie", "id": str(n), "title": f"Film {n}", "year": ""}} for n in range(14, 0, -1)]
+    screen = _my_requests(SimpleNamespace(portal_actions=SimpleNamespace(data=_Known(mine=rows), public_url="")))
+    assert len(screen.embed.fields) == 10 and screen.embed.fields[0].name == "No. 0014 · Film 14"
+    assert "10 of 14" in screen.embed.footer.text, screen.embed.footer.text
+
+
+def test_my_requests_with_nothing_asked_for_or_no_website():
+    screen = _my_requests(SimpleNamespace(portal_actions=SimpleNamespace(data=_Known(), public_url="")))
+    assert screen.embed is None and "/request" in screen.notes[-1], screen.notes
+    screen = _my_requests(SimpleNamespace(portal_actions=None))
+    assert screen.embed is None and "website" in screen.notes[-1], screen.notes

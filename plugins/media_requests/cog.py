@@ -31,6 +31,13 @@ logger = get_logger(__name__)
 
 #: Discord allows 25 embed fields; keep well under it so the footer survives.
 MAX_LISTED_REQUESTS = 15
+#: How many of their own requests /my-requests lists; the website's My requests has them all.
+MAX_MY_REQUESTS = 10
+#: A request's stage, in the website's words (My requests).
+STAGE_LABELS = {
+    "requested": "Requested", "approved": "Approved", "upcoming": "Upcoming", "searching": "Searching",
+    "downloading": "Downloading", "unpacking": "Unpacking", "declined": "Declined", "closed": "Closed",
+}
 
 
 
@@ -99,6 +106,30 @@ def seasons_label(seasons, long: bool = False) -> str:
     if seasons == "all":
         return "All Seasons"
     return ", ".join(f"Season {s}" if long else f"S{s}" for s in sorted(seasons))
+
+
+def my_request_field(row: dict) -> tuple:
+    """(name, value) of one of a member's requests in /my-requests: its number and
+    title, then its stage with the seasons, progress and any problem, as the website's
+    My requests words them (portal.data.request_row)."""
+    title = row.get("title") or {}
+    name = f"No. {int(row.get('slot') or 0):04d} · {title.get('title') or 'Untitled'}"
+    if title.get("year"):
+        name += f" ({title['year']})"
+    home = "Audiobookshelf" if title.get("kind") in ("audiobook", "ebook") else "Plex"
+    stage = row.get("stage") or "requested"
+    progress = row.get("progress") or {}
+    label = {"available": f"On {home}", "importing": f"Adding to {home}"}.get(stage) or STAGE_LABELS.get(stage, stage.capitalize())
+    parts = [f"**{label}**"]
+    if stage in ("downloading", "unpacking") and progress.get("percent") is not None:
+        parts.append(f"{progress['percent']}%")
+    seasons = row.get("seasons")
+    if seasons == "latest":
+        parts.append("Latest season + new episodes")
+    elif seasons == "all" or isinstance(seasons, list):
+        parts.append(seasons_label(seasons))
+    note = progress.get("problem") or progress.get("detail")
+    return name, " · ".join(parts) + (f"\n{note}" if note else "")
 
 
 async def post_media_request(bot, services, user, media: dict, seasons=None, monitor: bool = False, extra: Optional[Dict[str, Any]] = None) -> int:
@@ -964,6 +995,28 @@ class BookFormatView(RequesterOnlyView):
 REQUEST_NOT_SENT = "❌ Couldn't send your request. Please ask an admin."
 
 
+async def request_refusal(interaction: discord.Interaction, kind: str, tid: str, seasons=None) -> Optional[str]:
+    """Why the website would refuse this request, in its words (asked too often, asked
+    for already, blocked in Seerr or already on Plex); None when it may go to the
+    admins. The checks are the website's own (portal.actions), so the limit counts
+    requests from both. Without the website running there's nothing to check against,
+    and when Seerr isn't set up or can't say, the admins decide."""
+    from aiohttp import web
+    actions = getattr(interaction.client, "portal_actions", None)
+    if actions is None:
+        return None
+    try:
+        await actions.vet_request({"discordId": str(interaction.user.id)}, kind, tid, seasons, seerr_optional=True)
+    except web.HTTPException as e:
+        try:
+            return json.loads(e.text).get("error") or "That can't be requested."
+        except (TypeError, ValueError):
+            return "That can't be requested."
+    except Exception as e:
+        logger.warning(f"Couldn't check a /request for {kind} {tid}, so it goes to the admins unchecked: {e}")
+    return None
+
+
 class _ConfirmRequestView(RequesterOnlyView):
     """"✅ Yes / ❌ No" before a request goes to the admins. Only the person asking
     can answer; each kind of request says how it's posted (_post)."""
@@ -974,6 +1027,10 @@ class _ConfirmRequestView(RequesterOnlyView):
         self.services = services
 
     async def _post(self, interaction: discord.Interaction) -> None:
+        raise NotImplementedError
+
+    def _checked_as(self) -> tuple:
+        """(kind, id, seasons): the request as the website's checks take it."""
         raise NotImplementedError
 
     @discord.ui.button(label="✅ Yes", style=discord.ButtonStyle.success)
@@ -989,6 +1046,9 @@ class _ConfirmRequestView(RequesterOnlyView):
     async def _send_to_admins(self, interaction: discord.Interaction) -> str:
         """Send the request to the admin channel for approval. Returns what to tell
         the member: it's only "submitted" once the card is up and the request saved."""
+        refusal = await request_refusal(interaction, *self._checked_as())
+        if refusal:
+            return f"❌ {refusal}"
         try:
             await self._post(interaction)
         except AdminChannelUnavailable as e:
@@ -1008,6 +1068,10 @@ class BookConfirmationView(_ConfirmRequestView):
     def __init__(self, book: dict, user_id: int, services: BotServices):
         super().__init__(user_id, services)
         self.book = book
+
+    def _checked_as(self) -> tuple:
+        kind = "audiobook" if self.book.get('request_format') == "audiobook" else "ebook"
+        return kind, (self.book.get('open_library_key') or "").rsplit("/", 1)[-1], None
 
     async def _post(self, interaction: discord.Interaction) -> None:
         await post_book_request(interaction.client, self.services, interaction.user, self.book)
@@ -1403,6 +1467,10 @@ class ConfirmationView(_ConfirmRequestView):
         self.media = media
         self.seasons = seasons
         self.monitor = monitor
+
+    def _checked_as(self) -> tuple:
+        kind = "tv" if self.media.get('media_type') == "tv" else "movie"
+        return kind, str(self.media.get('id') or ""), self.seasons if kind == "tv" else None
 
     async def _post(self, interaction: discord.Interaction) -> None:
         await post_media_request(
@@ -1970,6 +2038,43 @@ class MediaRequestsCog(commands.Cog):
             ephemeral=True
         )
     
+    @app_commands.command(name="my-requests", description="Your requests and where each one stands")
+    @app_commands.guild_only()
+    async def list_my_requests(self, interaction: discord.Interaction):
+        """A member's own requests, newest first, as the website's My requests lists them."""
+        actions = getattr(self.bot, "portal_actions", None)
+        if actions is None:
+            await interaction.response.send_message(
+                "Your requests are listed on the website, and it isn't running. Ask an admin.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            mine = await actions.data.my_requests(interaction.user.id, None)
+            if not mine:
+                await interaction.followup.send(
+                    "You haven't asked for anything yet. Use `/request` to ask for a show, film or book.", ephemeral=True)
+                return
+            page = f"{actions.public_url.rstrip('/')}/schedule" if actions.public_url else ""
+            embed = discord.Embed(
+                title="📥 Your requests",
+                description=(f"Live progress and tickets: [My requests on the website]({page})" if page
+                             else "Live progress and tickets: My requests on the website"),
+                color=discord.Color.blurple(),
+            )
+            for row in mine[:MAX_MY_REQUESTS]:
+                name, value = my_request_field(row)
+                embed.add_field(name=truncate_field(name, limit=256), value=truncate_field(value), inline=False)
+            if len(mine) > MAX_MY_REQUESTS:
+                embed.set_footer(text=f"Showing your newest {MAX_MY_REQUESTS} of {len(mine)}")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error listing {interaction.user.id}'s requests: {e}", exc_info=True)
+            await interaction.followup.send(
+                "❌ Couldn't list your requests right now. Try again in a moment, or use My requests on the website.",
+                ephemeral=True)
+
     async def _search_open_library(self, query: str) -> List[dict]:
         """Search Open Library for books"""
         try:
