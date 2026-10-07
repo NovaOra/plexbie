@@ -69,7 +69,8 @@ export function DragCrawl<T>({
       onPointerEnter={(e) => { if (e.pointerType === "mouse") st.current.hold = true; }}
       onPointerLeave={() => { st.current.hold = false; wake(); }}
       onFocus={(e) => {
-        st.current.focus = true;
+        // Keyboard focus only: a tapped or clicked item takes focus too, and it should drift on.
+        st.current.focus = (e.target as HTMLElement).matches(":focus-visible");
         // Bring the focused item into view: the row may have drifted it off screen.
         const cell = (e.target as HTMLElement).closest<HTMLElement>(".dcrawl__cell");
         const box = root.current?.getBoundingClientRect();

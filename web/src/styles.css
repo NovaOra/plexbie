@@ -790,7 +790,7 @@ html, body { overflow-x: clip; }
   mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent);
 }
 .ticker__run { display: flex; width: max-content; animation: crawl linear infinite; }
-.ticker:focus-within .ticker__run, .ticker.is-paused .ticker__run { animation-play-state: paused; }
+.ticker.is-paused .ticker__run { animation-play-state: paused; }
 @media (hover: hover) and (pointer: fine) { .ticker:hover .ticker__run { animation-play-state: paused; } }
 .ticker--still .ticker__item::after { display: none; }
 .ticker__pause {

@@ -111,9 +111,10 @@ export function PosterCard({ title, meta, link = true }: { title: Title; meta?: 
 
 /* --------------------------------------------------------------- ticker */
 
-/** The broadcast crawl. Pauses on hover and focus; holds still under reduced motion. */
+/** The broadcast crawl. Pauses on hover and keyboard focus; holds still under reduced motion. */
 export function Ticker({ items, label = "Latest" }: { items: string[]; label?: string }) {
   const [paused, setPaused] = useState(false);
+  const [held, setHeld] = useState(false); // keyboard focus inside the crawl
   if (!items.length) return null;
   // One item doesn't crawl ("3 watching ◆ 3 watching"): it just sits there.
   if (items.length < 2) {
@@ -126,14 +127,18 @@ export function Ticker({ items, label = "Latest" }: { items: string[]; label?: s
   }
   const run = [...items, ...items];
   return (
-    <div className={`ticker${paused ? " is-paused" : ""}`} role="marquee" aria-label={`${label}: ${items.join(". ")}`}>
+    <div className={`ticker${paused || held ? " is-paused" : ""}`} role="marquee" aria-label={`${label}: ${items.join(". ")}`}
+      // Keyboard focus only: a tap or click also focuses the button, and "Play" would then do nothing.
+      onFocus={(e) => setHeld(e.target.matches(":focus-visible"))}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setHeld(false); }}>
       <span className="ticker__tab caps">{label}</span>
       <div className="ticker__track" aria-hidden>
         <div className="ticker__run" style={{ animationDuration: `${Math.max(24, items.length * 7)}s` }}>
           {run.map((t, i) => <span key={i} className="ticker__item">{t}</span>)}
         </div>
       </div>
-      <button type="button" className="ticker__pause" aria-pressed={paused} onClick={() => setPaused((p) => !p)}
+      <button type="button" className="ticker__pause" aria-pressed={paused}
+        onClick={() => { setPaused((p) => !p); setHeld(false); }}
         aria-label={paused ? "Play the crawl" : "Pause the crawl"}>
         {paused ? <Play size={14} aria-hidden /> : <Pause size={14} aria-hidden />}
       </button>
@@ -156,7 +161,7 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
   const bare = withArt.length === 0;
   const items = bare ? arrivals.slice(0, 5) : withArt;
   const hidden = usePageHidden();
-  const [held, setHeld] = useState(false);       // pointer or keyboard focus inside the stage
+  const [held, setHeld] = useState(false);       // mouse or keyboard focus inside the stage
   const [stopped, setStopped] = useState(false); // the viewer took over: it stays where they put it
   const [loaded, setLoaded] = useState<string | null>(null);
   const reduced = useReducedMotion();
@@ -166,7 +171,9 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
   const current = items[i];
   return (
     <section className={`stage${bare ? " stage--compact stage--bare" : ""}`} aria-roledescription="carousel" aria-label="Just arrived on Plex"
-      onFocus={() => setHeld(true)} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setHeld(false); }}>
+      // Keyboard focus only: a tap or click also focuses the button it lands on,
+      // and that would hold the channel after "Play" until the next tap elsewhere.
+      onFocus={(e) => setHeld(e.target.matches(":focus-visible"))} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setHeld(false); }}>
       <div className="stage__media" aria-hidden>
         <AnimatePresence>
           {current && !bare ? (
@@ -207,7 +214,9 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
               </div>
               {items.length > 1 && !reduced ? (
                 <button type="button" className="stage__pause" aria-pressed={stopped}
-                  aria-label={stopped ? "Play the channel" : "Pause the channel"} onClick={() => setStopped((s) => !s)}>
+                  aria-label={stopped ? "Play the channel" : "Pause the channel"}
+                  // Pressing it settles the matter, keyboard focus or not.
+                  onClick={() => { setStopped((s) => !s); setHeld(false); }}>
                   {stopped ? <Play size={16} aria-hidden /> : <Pause size={16} aria-hidden />}
                 </button>
               ) : null}
@@ -220,7 +229,8 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
         ) : null}
 
         {items.length > 1 ? (
-          <div className="stage__channels" onMouseEnter={() => setHeld(true)} onMouseLeave={() => setHeld(false)}>
+          <div className="stage__channels" onPointerEnter={(e) => { if (e.pointerType === "mouse") setHeld(true); }}
+            onPointerLeave={(e) => { if (e.pointerType === "mouse") setHeld(false); }}>
             {items.map((a, n) => (
               <button
                 key={a.title.id}
