@@ -16,8 +16,9 @@ export function AlertsPanel({ compact = false }: { compact?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const viaDiscord = session?.user.via === "discord";
+  const who = session?.user.id ?? "";
 
-  useEffect(() => { alertState().then(setState, () => setState("unsupported")); }, []);
+  useEffect(() => { alertState(who).then(setState, () => setState("unsupported")); }, [who]);
 
   const run = async (fn: () => Promise<AlertState | string>) => {
     setBusy(true);
@@ -59,7 +60,7 @@ export function AlertsPanel({ compact = false }: { compact?: boolean }) {
         {state === "off" || state === "on" ? (
           <div className="alerts__actions">
             {state === "off" ? (
-              <button type="button" className="btn btn--primary m-btn" disabled={busy || !!session?.preview} onClick={() => run(turnOn)}>
+              <button type="button" className="btn btn--primary m-btn" disabled={busy || !!session?.preview} onClick={() => run(() => turnOn(who))}>
                 <Bell size={18} aria-hidden /> {busy ? "Turning on…" : "Turn on alerts"}
               </button>
             ) : (

@@ -570,6 +570,12 @@ with any Plexbie: members type your address when they sign in.
   Safari with the site on the Home Screen), which your install sends itself. The
   app's own alerts go through the Plexbie project's Expo account, so they're off
   unless you set `APP_PUSH=expo`. The app then points members to the website.
+  Logging out of the website turns off that browser's alerts, so a shared computer
+  doesn't keep showing the last member's. A browser left signed in until its session ran
+  out keeps its alerts for the member who turned them on; anyone else who signs in there
+  sees alerts as off, and turning on their own moves that browser's alerts to them.
+  Alerts a member turned on with an older Plexbie keep arriving but show as off there
+  until they turn them on again.
 - **Links** to your Plexbie open the website, not the app. Signing in returns to the
   app on its own.
 

@@ -1,10 +1,11 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigationType } from "react-router-dom";
 import { Bell, CalendarClock, House, Library, LogOut, Radio, Search, Settings } from "./icons";
 import { api, DEMO, SAMPLE } from "../api/client";
+import { forgetThisBrowser } from "../api/alerts";
 import type { ServerStatus, Session } from "../api/types";
 import { PROJECT_SITE, SITE } from "../site";
-import { useLoad } from "./ui";
+import { OffAir, useLoad } from "./ui";
 import { useBackToClose } from "./overlay";
 
 /* ---------------------------------------------------------------- session */
@@ -35,6 +36,9 @@ function initials(name: string) {
 
 function Account({ session }: { session: Session }) {
   const [open, setOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  // A logout that didn't go through; "alerts" when this browser's alerts were already turned off.
+  const [failed, setFailed] = useState<"" | "plain" | "alerts">("");
   const ref = useRef<HTMLDivElement>(null);
   const location = useLocation();
   useEffect(() => setOpen(false), [location.pathname]);
@@ -59,7 +63,7 @@ function Account({ session }: { session: Session }) {
   const { user } = session;
   return (
     <div ref={ref}>
-      <button className="menu-button" aria-expanded={open} aria-controls="account-menu" onClick={() => setOpen((o) => !o)}>
+      <button className="menu-button" aria-expanded={open} aria-controls="account-menu" onClick={() => { setOpen((o) => !o); setFailed(""); }}>
         <span className="avatar">
           {user.avatar ? <img src={user.avatar} alt="" /> : initials(user.name)}
         </span>
@@ -81,13 +85,30 @@ function Account({ session }: { session: Session }) {
         ) : null}
         <button
           type="button"
+          disabled={leaving}
           onClick={async () => {
-            await api.logout();
+            setFailed("");
+            setLeaving(true);
+            // This browser's alerts are the member's: they stop here too.
+            const hadAlerts = await forgetThisBrowser();
+            try {
+              await api.logout();
+            } catch {
+              setFailed(hadAlerts ? "alerts" : "plain");
+              setLeaving(false);
+              return;
+            }
             window.location.assign(SAMPLE ? "/?as=guest" : "/");
           }}
         >
-          <LogOut size={18} aria-hidden /> Log out
+          <LogOut size={18} aria-hidden /> {leaving ? "Logging out…" : "Log out"}
         </button>
+        {failed ? (
+          <p className="field__error" role="alert" style={{ margin: "4px 12px 8px", maxWidth: 220 }}>
+            Couldn’t log you out just now. Try again.
+            {failed === "alerts" ? " Alerts in this browser are off; turn them back on from Alerts." : null}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -142,12 +163,24 @@ function usePageFocus() {
   }, [pathname]);
 }
 
+/** Moving to another page opens it at the top, as a full page load would. Back and
+ *  Forward keep the browser's own scroll restoration. */
+function useScrollToTop() {
+  const { pathname } = useLocation();
+  const navType = useNavigationType();
+  useLayoutEffect(() => {
+    if (navType !== "POP") window.scrollTo(0, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+}
+
 /** Pages anyone may read without signing in; everything else is the household's own. */
 const OPEN_PAGES = ["/privacy", "/terms", "/invite"];
 
 export function Layout({ children }: { children?: ReactNode }) {
   const session = useLoad(() => api.session());
   usePageFocus();
+  useScrollToTop();
   const status = useLoad(() => (session.data?.member ? api.status() : Promise.resolve(undefined)), [session.data?.member]);
   const s = session.data ?? null;
   // Only the member home opens on a stage; the sign-in and join pages show nothing
@@ -156,6 +189,9 @@ export function Layout({ children }: { children?: ReactNode }) {
   const { pathname } = useLocation();
   const inApp = !OPEN_PAGES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
   const member = inApp && !!s?.member;
+  // Only a 401 means signed out (api.session); anything else is Plexbie not answering,
+  // which isn't a reason to show a member the sign-in page.
+  const unreachable = inApp && !!session.error;
 
   // The household's pages need to know who's signed in before they can show anything;
   // the open pages don't, so they draw at once (the account corner fills in after).
@@ -201,7 +237,9 @@ export function Layout({ children }: { children?: ReactNode }) {
         </div>
       </header>
 
-      <main id="main" tabIndex={-1}>{children ?? <Outlet />}</main>
+      <main id="main" tabIndex={-1}>
+        {unreachable ? <div className="shell page"><OffAir onRetry={session.reload} /></div> : children ?? <Outlet />}
+      </main>
 
       <footer className="shell footer">
         <nav className="footer__links" aria-label="Site information">
