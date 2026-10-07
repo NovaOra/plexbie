@@ -38,6 +38,16 @@ def test_quality_ranks_follow_the_profile_and_skip_what_it_doesnt_allow():
     assert 1 not in ranks and ranks[3] == ranks[15] < ranks[7] < ranks[19]
 
 
+def test_a_release_ranks_by_quality_then_score_then_size_if_the_profile_allows_it():
+    ranks = vs.quality_ranks(PROFILE)
+    info = lambda quality: {"quality": {"quality": {"id": quality}}}
+    assert vs._rank_key({"customFormatScore": 50}, info(19), {"size": 9}, ranks, 0) == (ranks[19], 50, 9)
+    assert vs._rank_key({}, info(3), {}, ranks, 0) == (ranks[3], 0, 0)
+    assert vs._rank_key({"customFormatScore": 50}, info(1), {"size": 9}, ranks, 0) is None, "SDTV isn't allowed"
+    assert vs._rank_key({"customFormatScore": -5}, info(19), {"size": 9}, ranks, 0) is None, "under the profile's floor"
+    assert vs._rank_key({}, {}, {"size": 9}, ranks, -10) is None, "no quality parsed"
+
+
 class FakeRadarr:
     def __init__(self, releases=(), queue=(), parse=None, takes=lambda title: True):
         self._releases, self._queue, self._parse, self.takes = list(releases), list(queue), parse or {}, takes

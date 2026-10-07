@@ -341,15 +341,8 @@ class Data:
         # of Seerr's pages make one of ours then.
         per = (2 if key == "trending" else 1) * (3 if langs else 1)
         if key == "trending":
-            titles, more = [], True
-            for p in range(page * per - per + 1, page * per + 1):
-                data = await self._seerr(f"discover/trending?page={p}", ttl=self.DISCOVER_TTL)
-                titles += self._titles(data.get("results"), kind, langs=langs)
-                more = p < (data.get("totalPages") or 0)
-                if not more:
-                    break
-            return {"titles": titles, "more": more}
-        if key.startswith("genre-") and key[6:].isdigit():
+            path = "discover/trending"
+        elif key.startswith("genre-") and key[6:].isdigit():
             path = f"discover/{'movies' if kind == 'movie' else 'tv'}/genre/{int(key[6:])}"
         else:
             path = next((p for k, _, p in self.SHELVES[kind] if k == key and p), None)

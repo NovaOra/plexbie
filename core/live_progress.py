@@ -15,7 +15,7 @@ was offline can get them late and out of order, and the app can ignore one older
 the last it applied, so a late "show" can't bring back one that has ended.
 """
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from core.logging import get_logger
 from database.kv_store import kv_delete_many, kv_get_all, kv_set_many
@@ -37,8 +37,8 @@ STEP = 5
 STALL = timedelta(hours=2)
 #: Requests older than this aren't followed.
 WATCH_DAYS = 60
-
-_shelf_cache: Dict[str, Any] = {}
+#: How long the bookshelf's titles are kept before the folders are scanned again.
+SHELF_TTL = 900
 
 
 def _owner(rec: dict) -> Tuple[Optional[str], Optional[str]]:
@@ -88,15 +88,15 @@ async def _live_apps() -> Dict[str, List[tuple]]:
     return out
 
 
-async def _shelf_titles(config) -> List[str]:
+async def _shelf_titles(config, cache) -> List[str]:
+    """The bookshelf's titles, kept in progress's cache (a failed rescan keeps the last)."""
     from portal import books as shelf
     from core.blocking import run_blocking
-    now = datetime.now(timezone.utc)
-    if _shelf_cache.get("at") and now - _shelf_cache["at"] < timedelta(minutes=15):
-        return _shelf_cache["titles"]
-    found = await run_blocking(shelf.scan, config.bookshelf_audiobook_library, config.bookshelf_ebook_library)
-    _shelf_cache.update(at=now, titles=shelf.shelf_titles(found))
-    return _shelf_cache["titles"]
+
+    async def load() -> List[str]:
+        found = await run_blocking(shelf.scan, config.bookshelf_audiobook_library, config.bookshelf_ebook_library)
+        return shelf.shelf_titles(found)
+    return await cache.get("shelf:titles", SHELF_TTL, load)
 
 
 async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
@@ -161,7 +161,7 @@ async def tick(services, progress, *, now: Optional[datetime] = None) -> int:
         media = rec.get("media") or {}
         try:
             if rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media:
-                live = await progress.book(media, await _shelf_titles(services.config))
+                live = await progress.book(media, await _shelf_titles(services.config, progress.cache))
             else:
                 live = await progress.video(media, rec.get("seasons"))
         except Exception as e:

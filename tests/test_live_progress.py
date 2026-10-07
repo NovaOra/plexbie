@@ -20,12 +20,14 @@ class Progress:
     """Stands in for portal.progress: what each title is doing right now."""
 
     def __init__(self):
-        self.now = {}
+        from portal.cache import TTLCache
+        self.now, self.cache, self.shelves = {}, TTLCache(), []
 
     async def video(self, media, seasons):
         return dict(self.now.get(media["title"], {"stage": "searching"}))
 
     async def book(self, media, titles):
+        self.shelves.append(titles)
         return dict(self.now.get(media["title"], {"stage": "searching"}))
 
 
@@ -161,3 +163,40 @@ def test_every_update_carries_when_it_was_sent():
     assert sorted((d["op"], d["id"], d.get("ts")) for d in sent) == [
         ("end", "100", start + 60_000), ("end", "200", start + 60_000),
         ("show", "100", start), ("show", "200", start)]
+
+
+def test_the_bookshelf_is_read_through_progress_cache_and_a_failed_rescan_keeps_the_last():
+    """Whether a book is on the shelf: the folders are scanned at most every 15 minutes,
+    cached with the rest of what progress knows, and a rescan that fails keeps the
+    last good list rather than skipping the book."""
+    import portal.books as books
+    import portal.cache as cache
+    scans = []
+
+    def scan(audiobooks, ebooks):
+        scans.append(1)
+        if len(scans) > 2:
+            raise OSError("shelf unmounted")
+        return {"b1": {"title": "The Hobbit"}}
+    saved = books.scan, cache.time
+    books.scan = scan
+    try:
+        async def steps(p, tick):
+            from database.kv_store import kv_set
+            from database.request_store import REQUESTS_NAMESPACE
+            await kv_set(REQUESTS_NAMESPACE, "100", {"user_id": 42, "status": "approved", "timestamp": T0.isoformat(),
+                                                     "media_type": "audiobook",
+                                                     "media": {"title": "The Hobbit", "open_library_key": "OL1W"}})
+            await tick(T0)
+            await tick(T0 + timedelta(minutes=1))
+            assert len(scans) == 1 and p.shelves == [["the hobbit"], ["the hobbit"]], "one scan in 15 minutes"
+            other = Progress()                                          # another cache: its own scan
+            await live_progress.tick(Services, other, now=T0 + timedelta(minutes=2))
+            assert len(scans) == 2 and other.shelves == [["the hobbit"]]
+            real = cache.time.monotonic
+            cache.time = type("Later", (), {"monotonic": staticmethod(lambda: real() + 901)})
+            await tick(T0 + timedelta(minutes=17))
+            assert len(scans) == 3 and p.shelves == [["the hobbit"]] * 3, "the failed rescan serves the last list"
+        _run(steps)
+    finally:
+        books.scan, cache.time = saved

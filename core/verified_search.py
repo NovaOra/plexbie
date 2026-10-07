@@ -78,6 +78,18 @@ def quality_ranks(profile: Dict[str, Any]) -> Dict[int, int]:
     return ranks
 
 
+def _rank_key(parsed: Dict[str, Any], info: Dict[str, Any], release: Dict[str, Any],
+              ranks: Dict[int, int], floor: int) -> Optional[tuple]:
+    """How good a parsed release is, to sort best first: (quality rank, custom format
+    score, size). None when the profile doesn't allow its quality or it scores under
+    the profile's floor."""
+    quality = ((info.get("quality") or {}).get("quality") or {}).get("id")
+    score = parsed.get("customFormatScore") or 0
+    if quality not in ranks or score < floor:
+        return None
+    return ranks[quality], score, release.get("size") or 0
+
+
 def _iso(date: Optional[str]) -> Optional[str]:
     try:
         return parsedate_to_datetime(date).isoformat() if date else None
@@ -196,10 +208,9 @@ async def movie_by_name(radarr, hydra, movie: Dict[str, Any]) -> Dict[str, Any]:
                 if not is_own_title(info.get("movieTitles") or [], movie) or (years and info.get("year") not in years):
                     continue
                 matching += 1
-                quality = ((info.get("quality") or {}).get("quality") or {}).get("id")
-                score = parsed.get("customFormatScore") or 0
-                if quality in ranks and score >= floor:
-                    candidates.append((ranks[quality], score, release.get("size") or 0, release))
+                rank = _rank_key(parsed, info, release, ranks, floor)
+                if rank:
+                    candidates.append((*rank, release))
         candidates.sort(key=lambda c: c[:3], reverse=True)
         for *_, release in candidates[:PUSH_LIMIT]:
             verdict = await radarr.push(_push_body(release, **ids))
@@ -245,11 +256,9 @@ async def show_by_name(sonarr, hydra, series: Dict[str, Any], seasons: Iterable[
             if not info.get("fullSeason") and not episodes & missing:
                 continue
             matching += 1
-            quality = ((info.get("quality") or {}).get("quality") or {}).get("id")
-            score = parsed.get("customFormatScore") or 0
-            if quality in ranks and score >= floor:
-                entry = (ranks[quality], score, release.get("size") or 0, release, episodes)
-                (packs if info.get("fullSeason") else singles).append(entry)
+            rank = _rank_key(parsed, info, release, ranks, floor)
+            if rank:
+                (packs if info.get("fullSeason") else singles).append((*rank, release, episodes))
         for group in (packs, singles):
             group.sort(key=lambda c: c[:3], reverse=True)
         got = None
