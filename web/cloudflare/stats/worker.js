@@ -58,7 +58,10 @@ async function load(env, days, site) {
                        SUM(CASE WHEN event='outbound' AND label LIKE 'demo.plexbie.com%' THEN 1 ELSE 0 END) AS demo,
                        COUNT(DISTINCT CASE WHEN event='pageview' AND path='/' THEN day || visitor END) AS home
                 FROM events WHERE ${W}`, since, site),
-      one(env, `SELECT AVG(value) AS seconds, COUNT(*) AS n FROM events WHERE ${W} AND event='engage'`, since, site),
+      // The site sends time and depth each time a page is left or hidden, so a visitor's rows
+      // for a page that day are added up (time) or the deepest kept (depth), and counted once.
+      one(env, `SELECT AVG(s) AS seconds, COUNT(*) AS n FROM
+                (SELECT SUM(value) AS s FROM events WHERE ${W} AND event='engage' GROUP BY day, visitor, path)`, since, site),
       // Plays before the films carried a label were all the tour.
       all(env, `SELECT COALESCE(label, 'Full tour') AS film, CAST(value AS INTEGER) AS q, COUNT(*) AS n FROM events WHERE ${W} AND event='video' GROUP BY film, q ORDER BY film, q`, since, site),
       all(env, `SELECT day, SUM(event='pageview') AS views, COUNT(DISTINCT CASE WHEN event='pageview' THEN visitor END) AS visitors
@@ -73,7 +76,9 @@ async function load(env, days, site) {
       all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='click' AND label <> '' GROUP BY k ORDER BY n DESC LIMIT 20`, since, site),
       all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='outbound' GROUP BY k ORDER BY n DESC LIMIT 20`, since, site),
       all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='channel' GROUP BY k ORDER BY n DESC`, since, site),
-      all(env, `SELECT label AS k, COUNT(*) AS n FROM events WHERE ${W} AND event='engage' GROUP BY k ORDER BY k`, since, site),
+      all(env, `SELECT 'scroll:' || deepest AS k, COUNT(*) AS n FROM
+                (SELECT MAX(CAST(SUBSTR(label, 8) AS INTEGER)) AS deepest FROM events WHERE ${W} AND event='engage' AND label LIKE 'scroll:%' GROUP BY day, visitor, path)
+                GROUP BY deepest ORDER BY deepest`, since, site),
       all(env, `SELECT ts, event, path, label, value, referrer, country, device, browser FROM events WHERE COALESCE(site, 'plexbie.com') = ?1 ORDER BY ts DESC LIMIT 40`, site),
       all(env, `SELECT ts FROM events WHERE ${W} AND event='pageview' LIMIT 50000`, since, site),
       all(env, `SELECT label AS k, COUNT(DISTINCT day || visitor) AS n FROM events WHERE ${W} AND event='seen' GROUP BY k`, since, site),
@@ -173,9 +178,21 @@ async function imagePulls(owner, name) {
   throw new Error(`${name} package page not found`);
 }
 
-/** One collection: today's snapshot of each repo, and GitHub's last 14 days of traffic. */
+/** One collection, and when it stops part way (D1 refusing a write, say) a note saying why,
+ *  so the dashboard shows more than a "Last checked" time that stops moving. */
 async function collectGithub(env) {
   await ensure(env);
+  try {
+    await collect(env);
+  } catch (err) {
+    await env.STATS.prepare("INSERT OR REPLACE INTO gh_runs (ts, ok, note) VALUES (?, 0, ?)")
+      .bind(Date.now(), `The collection stopped: ${String(err?.message || err).slice(0, 300)}`).run().catch(() => undefined);
+    throw err;
+  }
+}
+
+/** Today's snapshot of each repo, and GitHub's last 14 days of traffic. */
+async function collect(env) {
   const db = env.STATS;
   if (!env.GITHUB_TOKEN) {
     await db.prepare("INSERT OR REPLACE INTO gh_runs (ts, ok, note) VALUES (?, 0, ?)").bind(Date.now(), "No GITHUB_TOKEN secret yet.").run();
@@ -259,7 +276,7 @@ async function loadGithub(env, since) {
     one(env, `SELECT SUM(views) AS views, SUM(view_uniques) AS uniques, SUM(clones) AS clones, SUM(clone_uniques) AS cloners FROM gh_traffic WHERE day >= ?`, since),
     all(env, `SELECT repo, kind, k, title, n FROM gh_popular t WHERE ${latestOf("gh_popular")} ORDER BY n DESC`),
     all(env, `SELECT repo, tag, asset, n FROM gh_downloads t WHERE ${latestOf("gh_downloads")} ORDER BY n DESC`),
-    one(env, `SELECT SUM(n) AS n FROM gh_downloads t WHERE day = (SELECT MIN(day) FROM gh_downloads x WHERE x.repo = t.repo AND day >= ?)`, since),
+    one(env, `SELECT SUM(n) AS n FROM gh_downloads t WHERE day = (SELECT MIN(day) FROM gh_downloads x WHERE x.repo = t.repo AND day >= ?) AND asset NOT LIKE '%.json'`, since),
     all(env, "SELECT repo, kind, login, at FROM gh_people ORDER BY at DESC LIMIT 20"),
     one(env, "SELECT ts, ok, note FROM gh_runs ORDER BY ts DESC LIMIT 1"),
     one(env, "SELECT login, followers, public_repos FROM gh_account ORDER BY day DESC LIMIT 1"),
@@ -322,12 +339,16 @@ function columns(title, rows, since, days, { key, blank, tip, head, cells }) {
     const day = new Date(Date.parse(since) + i * 86400000).toISOString().slice(0, 10);
     list.push(byDay.get(day) || { day, ...blank });
   }
-  const W = 960, H = 220, pad = 28, gap = 2;
+  // Each day gets an equal share of the width, so a year's bars still fit: thinner, with
+  // the gap shrinking too once the bars get narrow.
+  const W = 960, H = 220, pad = 28;
   const max = Math.max(1, ...list.map((d) => d[key]));
-  const bw = Math.max(2, (W - pad) / list.length - gap);
+  const step = (W - pad) / list.length;
+  const gap = Math.min(2, step / 3);
+  const bw = step - gap;
   const bars = list.map((d, i) => {
     const h = (d[key] / max) * (H - 30);
-    const x = pad + i * (bw + gap);
+    const x = pad + i * step;
     return `<rect x="${x.toFixed(1)}" y="${(H - 18 - h).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, d[key] ? 2 : 0).toFixed(1)}" rx="${Math.min(4, bw / 2).toFixed(1)}">
       <title>${e(d.day)}: ${e(tip(d))}</title></rect>
       <rect class="hit" x="${x.toFixed(1)}" y="0" width="${(bw + gap).toFixed(1)}" height="${H}"><title>${e(d.day)}: ${e(tip(d))}</title></rect>`;
@@ -345,7 +366,8 @@ function columns(title, rows, since, days, { key, blank, tip, head, cells }) {
 function hoursChart(hours) {
   const max = Math.max(1, ...hours);
   return `<section class="card"><h2>Time of day <small>(Chicago)</small></h2><div class="hours">${hours.map((n, h) =>
-    `<span title="${h}:00 to ${h}:59: ${n} page views" style="--h:${(n / max * 100).toFixed(1)}%"><i></i><b>${h % 6 === 0 ? h : ""}</b></span>`).join("")}</div></section>`;
+    `<span title="${h}:00 to ${h}:59: ${n} page views" style="--h:${(n / max * 100).toFixed(1)}%"><i></i><b>${h % 6 === 0 ? h : ""}</b></span>`).join("")}</div>
+    <p class="muted small">Chicago hours over UTC days: each day here, "Today" included, starts at 7pm Chicago time (6pm in winter).</p></section>`;
 }
 
 /** plexbie.com's TV: channel 01 plays the teaser, 02 the three-minute tour. The names match
@@ -493,11 +515,11 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
 </style></head><body><main>
 <header><h1><img src="https://plexbie.com/brand/plexbie-64.png" alt="" width="34" height="34"> Plexbie stats</h1>
   <div class="navs"><nav aria-label="Site">${siteNav}</nav><nav aria-label="Range">${nav}</nav></div></header>
-<div class="section"><h2>${name}</h2><p class="muted">This browser isn't counted on plexbie.com or the demo, and neither is home.</p><a href="#github">GitHub numbers ↓</a></div>
+<div class="section"><h2>${name}</h2><p class="muted">This browser isn't counted on plexbie.com or the demo, and neither is home. Days are UTC days: each starts at 7pm Chicago time (6pm in winter).</p><a href="#github">GitHub numbers ↓</a></div>
 <div class="tiles">
-  ${tile("Visitors", num(t.visitors), "one per person per day")}
+  ${tile("Visitors", num(t.visitors), "one per person per UTC day")}
   ${tile("Page views", num(t.views))}
-  ${tile("Time on a page", secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`, "average, while on screen")}
+  ${tile("Time on a page", secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`, "a visitor's time on a page in a day, averaged; only while on screen")}
   ${demo ? "" : tile("Video plays", num(plays), `teaser ${num(playsOf(d.video, "Teaser", 0))} · tour ${num(playsOf(d.video, "Full tour", 0))}${plays ? ` · ${Math.round((done / plays) * 100)}% to the end` : ""}`)}
   ${demo ? "" : tile("Went to the demo", num(t.demo), "from plexbie.com")}
   ${tile("GitHub clicks", num(t.github))}
@@ -513,7 +535,7 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
   ${demo ? "" : reached(d.seen, t.home || 0)}
   ${ranked("Links to other sites", d.outbound)}
   ${ranked("Buttons and links on the page", d.clicks)}
-  ${ranked("How far down they read", scrollRows)}
+  ${ranked("How far down they read", scrollRows).replace("</h2>", " <small>(the deepest, once per visitor and page a day)</small></h2>")}
   ${hoursChart(d.hours)}
   ${ranked("Devices", d.devices)}
   ${ranked("Browsers", d.browsers)}
@@ -521,7 +543,7 @@ button:hover { border-color:var(--screen); } code { color:var(--screen); }
   ${recentTable(d.recent)}
 </div>
 ${githubSection(d.github, d.since, days)}
-<footer>plexbie.com's and the demo's own counts: no cookies, no IP addresses kept, and browsers sending Do Not Track or Global Privacy Control aren't counted. Visitors are counted once per day each. Raw events are kept about 13 months.</footer>
+<footer>plexbie.com's and the demo's own counts: no cookies, no IP addresses kept, and browsers sending Do Not Track or Global Privacy Control aren't counted. Visitors are counted once per UTC day each. Raw events are kept about 13 months.</footer>
 </main></body></html>`;
 }
 
@@ -543,7 +565,8 @@ export default {
     if (url.pathname === "/stats/github/refresh") {
       if (request.method !== "POST") return new Response("Use the button.", { status: 405, headers: { Allow: "POST" } });
       const last = await ensure(env).then(() => one(env, "SELECT ts FROM gh_runs ORDER BY ts DESC LIMIT 1"));
-      if (!(Date.now() - (last.ts || 0) < 60000)) await collectGithub(env);
+      // A failed collection is noted on the page this goes back to.
+      if (!(Date.now() - (last.ts || 0) < 60000)) await collectGithub(env).catch(() => undefined);
       return new Response(null, { status: 303, headers: { Location: "/stats#github", "Set-Cookie": ME_COOKIE } });
     }
     const asked = url.searchParams.get("days");
