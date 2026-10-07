@@ -1758,6 +1758,15 @@ class UserMgmtCog(commands.Cog):
             return []
 
 
+async def _linked_users() -> list[PlexUser]:
+    """Everyone linked to a Discord account, as View Links and Unlink User list them."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(PlexUser).where(PlexUser.discord_id.isnot(None))
+        )
+        return list(result.scalars().all())
+
+
 class UserLinkControlPanel(AdminOnlyView):
     """Main control panel for user link management"""
 
@@ -1772,11 +1781,7 @@ class UserLinkControlPanel(AdminOnlyView):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            async with get_session() as session:
-                result = await session.execute(
-                    select(PlexUser).where(PlexUser.discord_id.isnot(None))
-                )
-                linked_users = result.scalars().all()
+            linked_users = await _linked_users()
 
             if not linked_users:
                 await interaction.followup.send("No linked users found.", ephemeral=True)
@@ -1865,11 +1870,7 @@ class UserLinkControlPanel(AdminOnlyView):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            async with get_session() as session:
-                result = await session.execute(
-                    select(PlexUser).where(PlexUser.discord_id.isnot(None))
-                )
-                linked_users = result.scalars().all()
+            linked_users = await _linked_users()
 
             if not linked_users:
                 await interaction.followup.send("No linked users to unlink.", ephemeral=True)
