@@ -111,7 +111,8 @@ async def post_media_request(bot, services, user, media: dict, seasons=None, mon
 
     Shared by /request and the website, so the admin sees one kind of request
     whichever way it arrived. Returns the approval message id, which is the
-    request's key in the store. Raises AdminChannelUnavailable when it cannot post.
+    request's key in the store. Raises AdminChannelUnavailable when it cannot post,
+    and whatever stopped the post or the save otherwise.
     """
     admin_channel = _admin_channel(bot, services)
 
@@ -154,7 +155,7 @@ async def post_media_request(bot, services, user, media: dict, seasons=None, mon
 
     view = AdminApprovalView(media, user.id, services, seasons, monitor)
     message = await admin_channel.send(embed=embed, view=view)
-    await save_request(message.id, user_id=user.id, media=media, seasons=seasons, monitor=monitor, extra=extra)
+    await _record_card(message, user_id=user.id, media=media, seasons=seasons, monitor=monitor, extra=extra)
     what = f"{title} ({media_type.title() if media_type != 'tv' else 'TV'}"
     what += f", {season_text.split(' 🔔')[0]})" if media_type == 'tv' and seasons else ")"
     notify.alert_admins_soon(bot, services.config, title=f"{_who(user)} asked for {title}", body=f"{what}. Approve or decline it.",
@@ -166,7 +167,8 @@ async def post_book_request(bot, services, user, book: dict, extra: Optional[Dic
     """Post the Approve/Decline card for a book request and record it.
 
     Shared by /request and the website. Returns the approval message id.
-    Raises AdminChannelUnavailable when it cannot post.
+    Raises AdminChannelUnavailable when it cannot post, and whatever stopped the
+    post or the save otherwise.
     """
     admin_channel = _admin_channel(bot, services)
 
@@ -207,11 +209,25 @@ async def post_book_request(bot, services, user, book: dict, extra: Optional[Dic
     message = await admin_channel.send(embed=embed, view=view)
 
     # One keyed write, not a rewrite of every request ever made.
-    await save_request(message.id, user_id=user.id, media=book, media_type=format_type, extra=extra)
+    await _record_card(message, user_id=user.id, media=book, media_type=format_type, extra=extra)
     kind = {"ebook": "ebook", "audiobook": "audiobook", "both": "ebook and audiobook"}.get(format_type, format_type)
     notify.alert_admins_soon(bot, services.config, title=f"{_who(user)} asked for {title}", body=f"{title} by {author} ({kind}). Approve or decline it.",
                              url="/manage?tab=requests", tag=f"request-{message.id}")
     return message.id
+
+
+async def _record_card(message, **fields) -> None:
+    """Save the request a card was just posted for, keyed by the card. If the save
+    fails the card comes down again (its buttons would find no request) and the
+    error is raised, so the requester hears it didn't go through."""
+    try:
+        await save_request(message.id, **fields)
+    except Exception:
+        try:
+            await message.delete()
+        except Exception as e:
+            logger.warning(f"Could not take down admin card {message.id} after a failed save: {e}")
+        raise
 
 
 def _who(user) -> str:
@@ -498,22 +514,39 @@ class MediaSelectView(RequesterOnlyView):
                 view=None
             )
 
-            # Fetch TV show details from TMDB
-            tv_details = await self._fetch_tv_details(self.selected_media.get('id'))
+            try:
+                # Fetch TV show details from TMDB
+                tv_details = await self._fetch_tv_details(self.selected_media.get('id'))
 
-            if tv_details:
-                self.selected_media.update(tv_details)
-                embed = self._create_media_embed(self.selected_media)
-                view = SeasonSelectionView(self.selected_media, self.user_id, self.services)
+                if tv_details and not _regular_seasons(tv_details):
+                    self.selected_media.update(tv_details)
+                    await interaction.edit_original_response(
+                        content="TMDB lists no seasons for this show yet, so there's nothing to request. "
+                                "Try again once a season is announced.",
+                        embed=self._create_media_embed(self.selected_media),
+                        view=None
+                    )
+                elif tv_details:
+                    self.selected_media.update(tv_details)
+                    embed = self._create_media_embed(self.selected_media)
+                    view = SeasonSelectionView(self.selected_media, self.user_id, self.services)
 
+                    await interaction.edit_original_response(
+                        content="**Select which seasons you want:**",
+                        embed=embed,
+                        view=view
+                    )
+                else:
+                    await interaction.edit_original_response(
+                        content="❌ Failed to fetch season info. Please try again.",
+                        view=None
+                    )
+            except Exception as e:
+                # Never leave the member on "Fetching season information..."
+                logger.error(f"Could not show the seasons of TMDB {self.selected_media.get('id')}: {e}", exc_info=True)
                 await interaction.edit_original_response(
-                    content="**Select which seasons you want:**",
-                    embed=embed,
-                    view=view
-                )
-            else:
-                await interaction.edit_original_response(
-                    content="❌ Failed to fetch season info. Please try again.",
+                    content="❌ Couldn't show the seasons. Please try again later.",
+                    embed=None,
                     view=None
                 )
         else:
@@ -572,7 +605,7 @@ class MediaSelectView(RequesterOnlyView):
         # For TV shows, add season information
         if media_type == 'tv' and media.get('seasons'):
             # Filter out Season 0 (specials) for display
-            regular_seasons = [s for s in media['seasons'] if s.get('season_number', 0) > 0]
+            regular_seasons = _regular_seasons(media)
             if regular_seasons:
                 latest_season = max(regular_seasons, key=lambda s: s.get('season_number', 0))
                 embed.add_field(
@@ -603,6 +636,17 @@ class MediaSelectView(RequesterOnlyView):
         return embed
 
 
+def _regular_seasons(media: dict) -> List[dict]:
+    """A show's seasons from TMDB, without Season 0 (specials)."""
+    return [s for s in (media.get('seasons') or []) if (s.get('season_number') or 0) > 0]
+
+
+#: Discord caps a select at 25 options and a message at 5 rows: up to 4 rows of
+#: seasons, and the buttons on the row after them.
+SEASONS_PER_SELECT = 25
+MAX_SEASON_SELECTS = 4
+
+
 class SeasonSelectionView(RequesterOnlyView):
     """Season selection for TV shows"""
     def __init__(self, media: dict, user_id: int, services: BotServices):
@@ -611,52 +655,60 @@ class SeasonSelectionView(RequesterOnlyView):
         self.user_id = user_id
         self.services = services
         self.selected_seasons = None
+        self._picked: Dict[int, List[int]] = {}     # each select's choice, by row
 
         # Get regular seasons (exclude Season 0/specials)
-        regular_seasons = [s for s in media.get('seasons', []) if s.get('season_number', 0) > 0]
+        regular_seasons = _regular_seasons(media)
+
+        # One select per 25 seasons. A show with more than the selects hold lists its
+        # newest seasons; "All Seasons" still covers the rest.
+        listed = regular_seasons[-SEASONS_PER_SELECT * MAX_SEASON_SELECTS:]
+        chunks = [listed[i:i + SEASONS_PER_SELECT] for i in range(0, len(listed), SEASONS_PER_SELECT)]
+        for row, chunk in enumerate(chunks):
+            options = [discord.SelectOption(
+                label=f"Season {season.get('season_number')}",
+                description=f"{season.get('episode_count', '?')} episodes",
+                value=str(season.get('season_number'))
+            ) for season in chunk]
+            placeholder = "Choose season(s)..." if len(chunks) == 1 else \
+                f"Seasons {chunk[0].get('season_number')}–{chunk[-1].get('season_number')}..."
+            season_select = discord.ui.Select(
+                placeholder=placeholder,
+                options=options,
+                min_values=0,
+                max_values=len(options),
+                row=row
+            )
+            season_select.callback = self._season_select_callback(row, season_select)
+            self.add_item(season_select)
+
+        button_row = len(chunks)
+        self.latest_season_num = None
+        is_ongoing = False
 
         if regular_seasons:
-            # Build dropdown options for each season
-            options = []
-            for season in regular_seasons:
-                season_num = season.get('season_number')
-                episode_count = season.get('episode_count', '?')
-                options.append(discord.SelectOption(
-                    label=f"Season {season_num}",
-                    description=f"{episode_count} episodes",
-                    value=str(season_num)
-                ))
-
-            # Add "All Seasons" option
-            options.insert(0, discord.SelectOption(
+            all_button = discord.ui.Button(
                 label="All Seasons",
-                description=f"All {len(regular_seasons)} seasons",
-                value="all",
-                emoji="📺"
-            ))
-
-            self.season_select = discord.ui.Select(
-                placeholder="Choose season(s)...",
-                options=options,
-                min_values=1,
-                max_values=len(options)
+                style=discord.ButtonStyle.secondary,
+                emoji="📺",
+                row=button_row
             )
-            self.season_select.callback = self.season_select_callback
-            self.add_item(self.season_select)
+            all_button.callback = self.all_seasons_callback
+            self.add_item(all_button)
 
-        # Add "Latest Season + Monitor" button for ongoing shows
-        latest_season = max(regular_seasons, key=lambda s: s.get('season_number', 0))
-        self.latest_season_num = latest_season.get('season_number')
+            # Add "Latest Season + Monitor" button for ongoing shows
+            latest_season = max(regular_seasons, key=lambda s: s.get('season_number') or 0)
+            self.latest_season_num = latest_season.get('season_number')
 
-        # Check if show is ongoing
-        is_ongoing = media.get('status') in ['Returning Series', 'In Production']
+            # Check if show is ongoing
+            is_ongoing = media.get('status') in ['Returning Series', 'In Production']
 
         if is_ongoing:
             monitor_button = discord.ui.Button(
                 label=f"Latest (S{self.latest_season_num}) + Monitor",
                 style=discord.ButtonStyle.success,
                 emoji="🔔",
-                row=1
+                row=button_row
             )
             monitor_button.callback = self.latest_with_monitor_callback
             self.add_item(monitor_button)
@@ -667,31 +719,40 @@ class SeasonSelectionView(RequesterOnlyView):
             style=discord.ButtonStyle.primary,
             emoji="✅",
             disabled=True,
-            row=1 if not is_ongoing else 2
+            row=button_row
         )
         self.submit_button.callback = self.submit_callback
         self.add_item(self.submit_button)
 
-    async def season_select_callback(self, interaction: discord.Interaction):
-        """Handle season selection from dropdown"""
-        selected_values = self.season_select.values
+    def _season_select_callback(self, row: int, season_select: discord.ui.Select):
+        async def callback(interaction: discord.Interaction):
+            await self.season_select_callback(interaction, row, season_select)
+        return callback
 
-        # Check if "all" is selected
-        if "all" in selected_values:
-            self.selected_seasons = "all"
-            seasons_text = "All Seasons"
-        else:
-            self.selected_seasons = [int(v) for v in selected_values]
-            seasons_text = ", ".join([f"S{s}" for s in sorted(self.selected_seasons)])
+    async def season_select_callback(self, interaction: discord.Interaction, row: int, season_select: discord.ui.Select):
+        """Handle season selection from one of the dropdowns; picks across them add up"""
+        selected_values = season_select.values
+        self._picked[row] = [int(v) for v in selected_values]
+        for option in season_select.options:     # keep this menu's picks showing
+            option.default = option.value in selected_values
 
-        # Enable submit button now that user has made a selection
-        self.submit_button.disabled = False
+        picked = sorted({s for seasons in self._picked.values() for s in seasons})
+        self.selected_seasons = picked or None
+        seasons_text = ", ".join([f"S{s}" for s in picked]) if picked else "No seasons yet"
+
+        # Enable submit button once the member has picked something
+        self.submit_button.disabled = not picked
 
         # Update message to show selection
         await interaction.response.edit_message(
             content=f"**Selected:** {seasons_text}\n\nClick **Submit Request** to continue, or select different seasons.",
             view=self
         )
+
+    async def all_seasons_callback(self, interaction: discord.Interaction):
+        """Handle the All Seasons button: straight to the confirmation"""
+        self.selected_seasons = "all"
+        await self.submit_callback(interaction)
 
     async def submit_callback(self, interaction: discord.Interaction):
         """Handle submit button after season selection"""
@@ -913,6 +974,10 @@ class BookFormatView(RequesterOnlyView):
         )
 
 
+#: What a member sees when their request couldn't be posted or saved.
+REQUEST_NOT_SENT = "❌ Couldn't send your request. Please ask an admin."
+
+
 class _ConfirmRequestView(RequesterOnlyView):
     """"✅ Yes / ❌ No" before a request goes to the admins. Only the person asking
     can answer; each kind of request says how it's posted (_post)."""
@@ -927,23 +992,28 @@ class _ConfirmRequestView(RequesterOnlyView):
 
     @discord.ui.button(label="✅ Yes", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(
-            content="✅ Request submitted! Waiting for admin approval...", embed=None, view=None)
-        await self._send_to_admins(interaction)
+        await interaction.response.edit_message(content="⏳ Sending your request…", embed=None, view=None)
+        await interaction.edit_original_response(content=await self._send_to_admins(interaction))
 
     @discord.ui.button(label="❌ No", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.edit_message(
             content="Request cancelled. Use `/request` to try again.", embed=None, view=None)
 
-    async def _send_to_admins(self, interaction: discord.Interaction):
-        """Send the request to the admin channel for approval."""
+    async def _send_to_admins(self, interaction: discord.Interaction) -> str:
+        """Send the request to the admin channel for approval. Returns what to tell
+        the member: it's only "submitted" once the card is up and the request saved."""
         try:
             await self._post(interaction)
         except AdminChannelUnavailable as e:
             logger.error(str(e))
             if not self.services.config.admin_channel_id:
-                await interaction.followup.send("❌ Admin channel not configured. Please contact an administrator.", ephemeral=True)
+                return "❌ Admin channel not configured. Please contact an administrator."
+            return REQUEST_NOT_SENT
+        except Exception as e:
+            logger.error(f"Could not send a request to the admin channel: {e}", exc_info=True)
+            return REQUEST_NOT_SENT
+        return "✅ Request submitted! Waiting for admin approval..."
 
 
 class BookConfirmationView(_ConfirmRequestView):

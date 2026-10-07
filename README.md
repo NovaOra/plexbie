@@ -233,6 +233,13 @@ who's watching from one place instead of five.
   or "Already declined" and takes the buttons off the card. A book approval
   that finds nothing on the indexers (or with NZBHydra/SABnzbd not set up)
   sends nothing and leaves the request open, so it can be approved again later.
+  A member is told their request was submitted only once its card is in the
+  admin channel and the request is saved; if the channel can't be posted to
+  (check `ADMIN_CHANNEL_ID` and the bot's permission to send there) or the save
+  fails, they're told it didn't go through and no card is left behind. Shows
+  are picked season by season, up to 25 seasons per menu (the newest 100 when
+  a show has more), with **All Seasons** and, for a running show,
+  **Latest + Monitor** as buttons; a show TMDB lists no seasons for yet says so.
 - New additions are announced from Plex webhooks, enriched with TMDB metadata,
   and episodes arriving in a batch are collapsed into a single updating message.
 - Unwatched media can be reported and, optionally, deleted after a configurable
