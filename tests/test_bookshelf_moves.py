@@ -1293,3 +1293,135 @@ def test_series_index_is_escaped_in_metadata_opf():
     values = [m.get("content") for m in tree.iter("{http://www.idpf.org/2007/opf}meta")
               if m.get("name") == "calibre:series_index"]
     assert values == ['1"/><x a="']
+
+
+# --- telling people: the requester first, each message on its own ------------
+
+class _FailingChannel(_Channel):
+    async def send(self, **kwargs):
+        raise RuntimeError("403 Forbidden (error code: 50013): Missing Permissions")
+
+
+def test_a_failed_channel_post_still_tells_the_requester():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        bot = _FakeBot()
+        bot.channel = _FailingChannel()
+        with _recorded_dms() as dms, _logged() as records:
+            assert _process(source, lib, bot) is True
+        assert dms == ["42"], "the member who asked is told even when the announcement fails"
+        assert not hint.exists()
+        assert any("Missing Permissions" in r.getMessage() or r.exc_info for r in records)
+
+
+def test_a_failed_requester_notice_still_posts_to_the_channel():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        bot = _FakeBot()
+        original = shelf.dm_user_id
+
+        async def broken_dm(*args, **kwargs):
+            raise RuntimeError("DMs are closed")
+
+        shelf.dm_user_id = broken_dm
+        try:
+            assert _process(source, lib, bot) is True
+        finally:
+            shelf.dm_user_id = original
+        assert len(bot.channel.sent) == 1
+
+
+def test_the_requester_is_told_before_the_channel_post():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        bot = _FakeBot()
+        order = []
+        real_send = bot.channel.send
+
+        async def send(**kwargs):
+            order.append("channel")
+            await real_send(**kwargs)
+
+        bot.channel.send = send
+        original = shelf.dm_user_id
+
+        async def fake_dm(bot_, services, user_id, **kwargs):
+            order.append("dm")
+            return True
+
+        shelf.dm_user_id = fake_dm
+        try:
+            assert _process(source, lib, bot) is True
+        finally:
+            shelf.dm_user_id = original
+        assert order == ["dm", "channel"], order
+
+
+def _process_with_cover(tmp, size, filesize_limit):
+    source, hint, lib = _setup(tmp)
+    (source / "folder.jpg").write_bytes(b"\xff\xd8\xff" + b"x" * (size - 3))
+    bot = _FakeBot()
+    bot.channel.guild = SimpleNamespace(filesize_limit=filesize_limit)
+    with _recorded_dms() as dms:
+        assert _process(source, lib, bot) is True
+    assert dms == ["42"] and len(bot.channel.sent) == 1
+    post = bot.channel.sent[0]
+    if post.get("file") is not None:
+        post["file"].close()
+    return post
+
+
+def test_a_cover_over_the_servers_upload_limit_is_left_off_the_post():
+    with tempfile.TemporaryDirectory() as tmp:
+        post = _process_with_cover(tmp, 9000, filesize_limit=8000)
+    assert post.get("file") is None, "Discord would refuse the whole post"
+    assert post["embed"].thumbnail.url is None, "no thumbnail pointing at a missing attachment"
+
+
+def test_a_cover_within_the_servers_upload_limit_is_attached():
+    with tempfile.TemporaryDirectory() as tmp:
+        post = _process_with_cover(tmp, 9000, filesize_limit=10_000)
+    assert post["file"].filename == "cover.jpg"
+    assert post["embed"].thumbnail.url == "attachment://cover.jpg"
+
+
+# --- folder names ------------------------------------------------------------
+
+def test_a_slash_in_a_name_becomes_a_space():
+    assert shelf.sanitize_dirname("Either/Or") == "Either Or"
+    assert shelf.sanitize_dirname("AC/DC: Live") == "AC DC Live"
+
+
+def test_nul_and_control_characters_never_reach_a_folder_name():
+    name = shelf.sanitize_dirname("Ann Author\x00Bob Writer\x07\x1f")
+    assert name == "Ann Author Bob Writer", repr(name)
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = shelf.build_destination(Path(tmp), {"author": "Ann\x00Bob", "title": "The\nBook"})
+        dest.mkdir(parents=True)
+        assert dest.relative_to(tmp).parts == ("Ann Bob", "The Book")
+
+
+def test_long_names_are_capped_without_splitting_a_character():
+    for title in ("T" * 300, "é" * 150, "Saga " + "日本語" * 40):
+        name = shelf.sanitize_dirname(title)
+        assert len(name.encode("utf-8")) <= 200, len(name.encode("utf-8"))
+        assert name and title.startswith(name), "a clean prefix of the title"
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = shelf.build_destination(Path(tmp), {"author": "A" * 300, "title": "é" * 300, "series": "S" * 300})
+        dest.mkdir(parents=True)
+        assert dest.is_dir()
+
+
+def test_an_mp3_with_two_authors_reads_as_a_list():
+    from mutagen.id3 import ID3, TALB, TIT2, TPE1
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "01.mp3"
+        tags = ID3()
+        tags.add(TIT2(encoding=3, text=["Either", "Or"]))
+        tags.add(TPE1(encoding=3, text=["Ann Author", "Bob Writer"]))
+        tags.add(TALB(encoding=3, text=["The Saga"]))
+        tags.save(str(path))
+        meta = shelf.extract_embedded_metadata(path)
+    assert meta["author"] == "Ann Author, Bob Writer", repr(meta["author"])
+    assert meta["title"] == "Either, Or" and meta["series"] == "The Saga"

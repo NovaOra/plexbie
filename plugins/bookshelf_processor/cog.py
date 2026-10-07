@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import socket
+import unicodedata
 import hashlib
 import zipfile
 from dataclasses import dataclass, field
@@ -118,6 +119,14 @@ COVER_MAX_BYTES = 15 * 1024 * 1024
 
 #: Redirects followed for one cover. Every hop is checked like the first URL.
 COVER_MAX_REDIRECTS = 5
+
+#: Longest author, series or title folder name, in UTF-8 bytes. Filesystems
+#: refuse a name over 255 bytes; this leaves room for a " (2)" suffix.
+DIRNAME_MAX_BYTES = 200
+
+#: Discord's upload limit for a server without boosts, used when the channel
+#: does not say its own. A larger cover is left off the announcement.
+DISCORD_UPLOAD_LIMIT = 10 * 1024 * 1024
 
 
 # ─── Name Parsing ────────────────────────────────────────────────────────────
@@ -405,6 +414,17 @@ def _extract_m4b_metadata(file_path: Path) -> dict | None:
     return None
 
 
+def isbn_valid(isbn: str) -> bool:
+    """Whether `isbn` (digits only, an ISBN-10 may end in X) has the right check digit."""
+    if re.fullmatch(r"\d{9}[\dX]", isbn):
+        total = sum((10 - i) * (10 if c == "X" else int(c)) for i, c in enumerate(isbn))
+        return total % 11 == 0
+    if re.fullmatch(r"\d{13}", isbn):
+        total = sum(int(c) * (3 if i % 2 else 1) for i, c in enumerate(isbn))
+        return total % 10 == 0
+    return False
+
+
 def _extract_epub_metadata(file_path: Path) -> dict | None:
     """Extract metadata from EPUB files (ZIP with OPF inside)."""
     try:
@@ -432,21 +452,25 @@ def _extract_epub_metadata(file_path: Path) -> dict | None:
             if creator_match:
                 meta["author"] = creator_match.group(1).strip()
 
-            # ISBN - look in dc:identifier tags
+            # ISBN - look in dc:identifier tags. Those marked opf:scheme="ISBN"
+            # come first: calibre and others add ids of their own (a uuid, a
+            # calibre number) that can have as many digits as an ISBN, so a
+            # value is only taken when its check digit is right.
             identifiers = re.findall(
-                r"<dc:identifier[^>]*>([^<]+)</dc:identifier>", content
+                r"<dc:identifier([^>]*)>([^<]+)</dc:identifier>", content
             )
-            for ident in identifiers:
+            identifiers.sort(key=lambda found: not re.search(r"scheme\s*=\s*[\"']isbn[\"']", found[0], re.I))
+            for _, ident in identifiers:
                 ident = ident.strip()
                 # Check for ISBN-13 or ISBN-10 pattern
                 isbn_clean = re.sub(r"[^0-9X]", "", ident.upper())
-                if len(isbn_clean) in {10, 13} and isbn_clean.isdigit():
+                if isbn_valid(isbn_clean):
                     meta["isbn"] = isbn_clean
                     break
                 # Also check for "urn:isbn:..." format
-                isbn_match = re.search(r"(?:isbn[:\s]*)(\d{10,13})", ident, re.I)
-                if isbn_match:
-                    meta["isbn"] = isbn_match.group(1)
+                isbn_match = re.search(r"isbn[:\s]*(\d{13}|\d{9}[\dX])(?![\dX])", ident, re.I)
+                if isbn_match and isbn_valid(isbn_match.group(1).upper()):
+                    meta["isbn"] = isbn_match.group(1).upper()
                     break
 
             # Date/Year
@@ -497,15 +521,20 @@ def _extract_mp3_metadata(file_path: Path) -> dict | None:
         tags = ID3(str(file_path))
         meta = {}
 
+        def text(frame) -> str:
+            # str() of a frame with several values (two authors) joins them
+            # with NUL, which no folder name can hold.
+            return ", ".join(str(value) for value in tags[frame].text)
+
         # Title
         if "TIT2" in tags:
-            meta["title"] = str(tags["TIT2"])
+            meta["title"] = text("TIT2")
         # Artist/Author
         if "TPE1" in tags:
-            meta["author"] = str(tags["TPE1"])
+            meta["author"] = text("TPE1")
         # Album (series)
         if "TALB" in tags:
-            album = str(tags["TALB"])
+            album = text("TALB")
             if meta.get("title") and album.lower() != meta["title"].lower():
                 meta["series"] = album
         # Year
@@ -720,7 +749,12 @@ async def _try_open_library(author: str, title: str) -> dict | None:
     if not data.get("docs"):
         return None
 
-    doc = _best_match(data["docs"], author, title) or data["docs"][0]
+    # Only a result whose title matches: the first hit can be a study guide or
+    # another book entirely, and Google Books may still know the right one.
+    doc = _best_match(data["docs"], author, title)
+    if not doc:
+        logger.debug(f"Open Library has no match for '{author}' - '{title}'")
+        return None
     cover_id = doc.get("cover_i")
     series = _series_from_subjects(doc.get("subject"))
     meta = {
@@ -749,7 +783,12 @@ async def _try_google_books(author: str, title: str) -> dict | None:
     if not items:
         return None
 
-    vol = items[0].get("volumeInfo", {})
+    # Matched like an Open Library result, not simply the first one.
+    volumes = [item.get("volumeInfo", {}) for item in items]
+    vol = _best_match([{**v, "author_name": v.get("authors") or []} for v in volumes], author, title)
+    if not vol:
+        logger.debug(f"Google Books has no match for '{author}' - '{title}'")
+        return None
     meta = {
         "title": vol.get("title", title),
         "author": (vol.get("authors") or [author])[0],
@@ -769,14 +808,29 @@ async def _try_google_books(author: str, title: str) -> dict | None:
     return meta
 
 
+def _match_key(text: str) -> str:
+    """Fold a title or name for comparing: case and accents dropped, "&" read
+    as "and", and anything but letters, digits and spaces removed, so a
+    release name's "Sorcerers Stone" meets "Sorcerer's Stone"."""
+    text = unicodedata.normalize("NFKD", text.casefold().replace("&", " and "))
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = re.sub(r"[^\w\s]|_", "", text)
+    return " ".join(text.split())
+
+
 def _best_match(docs: list, author: str, title: str) -> dict | None:
-    """Pick the best matching document from search results."""
-    author_lower = author.lower()
-    title_lower = title.lower()
+    """Pick the best matching document from search results, or None when no
+    title matches (an empty title matches nothing)."""
+    author_lower = _match_key(author)
+    title_lower = _match_key(title)
+    if not title_lower:
+        return None
 
     for doc in docs:
-        doc_title = doc.get("title", "").lower()
-        doc_authors = [a.lower() for a in doc.get("author_name", [])]
+        doc_title = _match_key(doc.get("title") or "")
+        doc_authors = [_match_key(a) for a in doc.get("author_name", [])]
+        if not doc_title:
+            continue
 
         title_match = title_lower in doc_title or doc_title in title_lower
         author_match = any(author_lower in a or a in author_lower for a in doc_authors)
@@ -786,8 +840,8 @@ def _best_match(docs: list, author: str, title: str) -> dict | None:
 
     # Fallback: just title match
     for doc in docs:
-        doc_title = doc.get("title", "").lower()
-        if title_lower in doc_title or doc_title in title_lower:
+        doc_title = _match_key(doc.get("title") or "")
+        if doc_title and (title_lower in doc_title or doc_title in title_lower):
             return doc
 
     return None
@@ -1022,9 +1076,14 @@ def generate_opf(meta: dict, output_path: Path):
 
 
 def sanitize_dirname(name: str) -> str:
-    """Remove filesystem-unsafe characters from a directory name."""
-    name = re.sub(r'[<>:"/\\|?*]', "", name)
+    """Make a name safe as one directory name: filesystem-unsafe characters
+    ("Either/Or" included) and control characters such as NUL become spaces,
+    and the result is capped at DIRNAME_MAX_BYTES of UTF-8."""
+    name = re.sub(r'[<>:"/\\|?*]', " ", name)
+    name = re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", name)
     name = re.sub(r"\s+", " ", name)
+    # Cut on the bytes, then drop a character the cut split in two.
+    name = name.encode("utf-8")[:DIRNAME_MAX_BYTES].decode("utf-8", errors="ignore")
     name = name.strip(". ")
     return name or "Unknown"
 
@@ -1808,6 +1867,19 @@ def _read_hint(path: Path) -> dict | None:
 # ─── Main Processing Pipeline ────────────────────────────────────────────────
 
 
+def _cover_attachment(path: Path, limit: int):
+    """Blocking: the filed cover as a discord.File, or None when there is none
+    or it is larger than `limit` bytes (the announcement then goes without it)."""
+    try:
+        size = path.stat().st_size
+        if size > limit:
+            logger.info(f"Cover is {size} bytes, over the channel's {limit}-byte upload limit; announcing without it")
+            return None
+        return discord.File(str(path), filename="cover.jpg")
+    except OSError:
+        return None
+
+
 async def process_item(
     source_path: Path,
     media_type: str,
@@ -2125,54 +2197,18 @@ async def process_item(
     logger.info(f"Complete: {final['author']} / {final['title']} -> {dest}")
 
     # ── Send Discord notifications ──
+    # The requester is told first, and each message is sent on its own: the
+    # hint is gone by now, so a channel post that fails (a missing permission,
+    # a Discord error) must not also cost the member who asked their notice.
     if bot:
-        try:
-            # 1. Send "New Book Added" embed to updates channel
-            updates_channel_id = getattr(getattr(getattr(bot, "services", None), "config", None), "updates_channel_id", None)
-            if updates_channel_id:
-                channel = bot.get_channel(updates_channel_id)
-                if channel:
-                    from datetime import timezone as _tz
-                    format_emoji = "📖" if media_type == "ebook" else "🎧"
-                    format_label = "Ebook" if media_type == "ebook" else "Audiobook"
+        services = getattr(bot, "services", None)
 
-                    embed = discord.Embed(
-                        title=f"{format_emoji} New {format_label} Added to Library!",
-                        description=f"**{final['title']}** by {final['author']}",
-                        color=discord.Color.blue(),
-                        timestamp=datetime.now(_tz.utc),
-                    )
-                    embed.add_field(name="Author", value=final['author'], inline=True)
-                    embed.add_field(name="Format", value=f"{format_emoji} {format_label}", inline=True)
-                    if final.get('year'):
-                        embed.add_field(name="Year", value=str(final['year']), inline=True)
-                    if final.get('series'):
-                        series_text = final['series']
-                        if final.get('series_index'):
-                            series_text += f" #{final['series_index']}"
-                        embed.add_field(name="Series", value=series_text, inline=True)
-                    embed.set_footer(text="Added to Audiobookshelf")
-
-                    # Attach cover image if available. Opening it is disk
-                    # access too, so the File is made off the loop.
-                    try:
-                        file = await run_blocking(discord.File, str(dest / "cover.jpg"), filename="cover.jpg")
-                    except OSError:
-                        file = None
-                    if file is not None:
-                        embed.set_thumbnail(url="attachment://cover.jpg")
-                        await channel.send(embed=embed, file=file)
-                    else:
-                        await channel.send(embed=embed)
-
-                    logger.info(f"Sent notification to updates channel for: {final['title']}")
-
-            # 2. DM the requester if hint file had a user ID. (This used `services`
-            # without defining it: the NameError was swallowed below, so requesters
-            # were never told their book had arrived.)
-            services = getattr(bot, "services", None)
-            if hint_used and hint is not None and not hint.get("requested_by") and (
-                    hint.get("requested_by_plex_id") or hint.get("requested_by_plex_name")):
+        # 1. Tell the requester. (This used `services` without defining it: the
+        # NameError was swallowed, so requesters were never told their book had
+        # arrived.)
+        if hint_used and hint is not None and not hint.get("requested_by") and (
+                hint.get("requested_by_plex_id") or hint.get("requested_by_plex_name")):
+            try:
                 from core.notify import notify_member
                 label = "ebook" if media_type == "ebook" else "audiobook"
                 await notify_member(
@@ -2181,9 +2217,12 @@ async def process_item(
                          f"Ready to {'read' if media_type == 'ebook' else 'listen'}.",
                     url="/app/schedule", plex_account_id=hint.get("requested_by_plex_id"),
                     plex_name=hint.get("requested_by_plex_name"), context=f"bookshelf item ready for {final['title']}")
-            if hint_used and hint is not None:
-                requester_id = hint.get("requested_by")
-                if requester_id:
+            except Exception as e:
+                logger.error(f"Error telling the requester about {final['title']}: {e}", exc_info=True)
+        if hint_used and hint is not None:
+            requester_id = hint.get("requested_by")
+            if requester_id:
+                try:
                     from datetime import timezone as _tz
                     format_emoji = "📖" if media_type == "ebook" else "🎧"
                     format_label = "ebook" if media_type == "ebook" else "audiobook"
@@ -2204,9 +2243,50 @@ async def process_item(
 
                     if await dm_user_id(bot, services, requester_id, context=f"bookshelf item ready for {final['title']}", embed=dm_embed):
                         logger.info(f"Sent DM to user {requester_id} about {final['title']}")
+                except Exception as e:
+                    logger.error(f"Error sending the requester's DM about {final['title']}: {e}", exc_info=True)
 
-        except Exception as e:
-            logger.error(f"Error sending notifications: {e}", exc_info=True)
+        # 2. Send "New Book Added" embed to updates channel
+        updates_channel_id = getattr(getattr(services, "config", None), "updates_channel_id", None)
+        channel = bot.get_channel(updates_channel_id) if updates_channel_id else None
+        if channel:
+            try:
+                from datetime import timezone as _tz
+                format_emoji = "📖" if media_type == "ebook" else "🎧"
+                format_label = "Ebook" if media_type == "ebook" else "Audiobook"
+
+                embed = discord.Embed(
+                    title=f"{format_emoji} New {format_label} Added to Library!",
+                    description=f"**{final['title']}** by {final['author']}",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(_tz.utc),
+                )
+                embed.add_field(name="Author", value=final['author'], inline=True)
+                embed.add_field(name="Format", value=f"{format_emoji} {format_label}", inline=True)
+                if final.get('year'):
+                    embed.add_field(name="Year", value=str(final['year']), inline=True)
+                if final.get('series'):
+                    series_text = final['series']
+                    if final.get('series_index'):
+                        series_text += f" #{final['series_index']}"
+                    embed.add_field(name="Series", value=series_text, inline=True)
+                embed.set_footer(text="Added to Audiobookshelf")
+
+                # Attach cover image if available and small enough for the
+                # server: Discord refuses the whole post over a file above its
+                # upload limit. Opening it is disk access too, so the File is
+                # made off the loop.
+                limit = getattr(getattr(channel, "guild", None), "filesize_limit", None) or DISCORD_UPLOAD_LIMIT
+                file = await run_blocking(_cover_attachment, dest / "cover.jpg", limit)
+                if file is not None:
+                    embed.set_thumbnail(url="attachment://cover.jpg")
+                    await channel.send(embed=embed, file=file)
+                else:
+                    await channel.send(embed=embed)
+
+                logger.info(f"Sent notification to updates channel for: {final['title']}")
+            except Exception as e:
+                logger.error(f"Error announcing {final['title']} in the updates channel: {e}", exc_info=True)
 
     return True
 

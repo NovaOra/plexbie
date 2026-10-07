@@ -375,6 +375,21 @@ who's watching from one place instead of five.
   fetched only from public http(s) hosts, never from an address on your network
   (redirects included), and only a JPEG, PNG or WebP image of up to 15 MB is
   saved as `cover.jpg` or cached.
+  Details missing from the files are looked up on Open Library, then Google
+  Books: by ISBN when an ebook carries one whose check digit is right (an
+  identifier marked as an ISBN is preferred over calibre's own ids), otherwise
+  by title and author, taking only a result whose title matches (case,
+  accents and punctuation aside, so "Sorcerers Stone" finds "Sorcerer's
+  Stone"). When nothing matches, the book is filed under what the files and
+  the download name say.
+  Author, series and title folders are named with characters a path can't
+  hold (`/`, `:`, `?` and the like) and control characters turned into
+  spaces, and at most 200 bytes each. Several authors tagged in an MP3 are
+  joined with commas.
+  When a book is filed, the member who asked is told first; the announcement
+  in the updates channel follows on its own, so one failing doesn't stop the
+  other. The cover is attached to the announcement only when it fits the
+  server's upload limit; a larger one is left off.
 
 **Housekeeping**
 

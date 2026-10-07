@@ -616,3 +616,125 @@ def test_book_lookups_read_each_source_the_same_way_as_before():
     assert google["cover_url"] == "https://s", "the largest image wins, over https"
     assert (google["series"], google["series_index"], google["year"]) == ("Dune", 1, "1965")
     assert google_isbn["title"] == "Dune" and google_isbn["isbn"] == "9780000000003"
+
+
+def _lookups_answering(answers):
+    """Run book lookups against canned API answers, keyed by URL."""
+    from plugins.bookshelf_processor import cog as shelf
+
+    async def fake_get_json(url, params=None):
+        if url not in answers:
+            raise RuntimeError("404")
+        return answers[url]
+
+    def run(coro_fn, *args):
+        saved = shelf._get_json
+        shelf._get_json = fake_get_json
+        try:
+            return asyncio.run(coro_fn(*args))
+        finally:
+            shelf._get_json = saved
+    return run
+
+
+def test_a_search_with_no_matching_title_finds_nothing():
+    """The first hit is not used when its title has nothing to do with the book."""
+    from plugins.bookshelf_processor import cog as shelf
+
+    run = _lookups_answering({
+        "https://openlibrary.org/search.json": {"docs": [
+            {"title": "Study Guide: Leviathan", "author_name": ["SuperSummary"], "cover_i": 7},
+            {"title": "", "author_name": ["Nobody"], "cover_i": 8}]},
+        "https://www.googleapis.com/books/v1/volumes": {"items": [
+            {"volumeInfo": {"title": "The Spice Must Flow", "authors": ["Quick Reads"],
+                            "imageLinks": {"thumbnail": "http://books.google.com/x?id=2"}}},
+            {"volumeInfo": {"authors": ["Untitled"]}}]},
+    })
+    assert run(shelf._try_open_library, "James S. A. Corey", "Leviathan Wakes") is None
+    assert run(shelf._try_google_books, "Frank Herbert", "Dune") is None
+    assert run(shelf.fetch_metadata, "Frank Herbert", "Dune") == {}
+
+
+def test_google_books_takes_the_result_that_matches_not_the_first():
+    from plugins.bookshelf_processor import cog as shelf
+
+    run = _lookups_answering({
+        "https://www.googleapis.com/books/v1/volumes": {"items": [
+            {"volumeInfo": {"title": "Frank Herbert: A Life", "authors": ["Quick Reads"]}},
+            {"volumeInfo": {"title": "Dune", "authors": ["Frank Herbert"], "publishedDate": "1965"}}]},
+    })
+    google = run(shelf._try_google_books, "Frank Herbert", "Dune")
+    assert (google["title"], google["author"], google["year"]) == ("Dune", "Frank Herbert", "1965")
+
+
+def test_titles_match_without_their_punctuation_and_accents():
+    """Release names drop apostrophes and accents; the right book still matches."""
+    from plugins.bookshelf_processor.cog import _best_match
+
+    stone = {"title": "Harry Potter and the Sorcerer's Stone", "author_name": ["J.K. Rowling"]}
+    guide = {"title": "Study Guide: Harry Potter", "author_name": ["SuperSummary"]}
+    assert _best_match([guide, stone], "J.K. Rowling", "Harry Potter and the Sorcerers Stone") is stone
+    miserables = {"title": "Les Misérables", "author_name": ["Victor Hugo"]}
+    assert _best_match([miserables], "Victor Hugo", "Les Miserables") is miserables
+    tales = {"title": "Tales of Mystery and Imagination", "author_name": ["Edgar Allan Poe"]}
+    assert _best_match([tales], "Edgar Allan Poe", "Tales of Mystery & Imagination") is tales
+    assert _best_match([guide], "James S. A. Corey", "Leviathan Wakes") is None
+    assert _best_match([stone], "Ann Author", "?!") is None
+
+
+# --- ISBNs read from an EPUB ---
+
+def _epub_with_identifiers(*identifiers):
+    import zipfile
+
+    path = _tmpdir() / "book.epub"
+    idents = "".join(f"<dc:identifier {attrs}>{value}</dc:identifier>" for attrs, value in identifiers)
+    opf = (
+        '<package xmlns:opf="http://www.idpf.org/2007/opf"><metadata>'
+        "<dc:title>The Book</dc:title><dc:creator>Ann Author</dc:creator>"
+        f"{idents}</metadata></package>"
+    )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("OEBPS/content.opf", opf)
+    return path
+
+
+def test_isbn_check_digits_are_validated():
+    from plugins.bookshelf_processor.cog import isbn_valid
+
+    for good in ("9780306406157", "0306406152", "080442957X", "9780000000002"):
+        assert isbn_valid(good), good
+    for bad in ("9780306406158", "0306406153", "0804429571", "X804429570", "978030640615", "", "97803064061577"):
+        assert not isbn_valid(bad), bad
+
+
+def test_an_epub_identifier_that_is_not_an_isbn_is_ignored():
+    """A calibre id or a uuid with the right number of digits is not an ISBN."""
+    from plugins.bookshelf_processor.cog import extract_embedded_metadata
+
+    meta = extract_embedded_metadata(_epub_with_identifiers(
+        ('opf:scheme="calibre"', "1234567890123"),
+        ('opf:scheme="uuid"', "urn:uuid:12345678-0000-0000-0000-000000000000"),
+    ))
+    assert meta["title"] == "The Book" and meta.get("isbn") is None, meta.get("isbn")
+
+
+def test_an_epub_isbn_marked_as_such_wins_and_may_end_in_x():
+    from plugins.bookshelf_processor.cog import extract_embedded_metadata
+
+    meta = extract_embedded_metadata(_epub_with_identifiers(
+        ('opf:scheme="calibre"', "9780306406157"),
+        ('opf:scheme="ISBN"', "0-8044-2957-X"),
+    ))
+    assert meta["isbn"] == "080442957X", meta.get("isbn")
+
+
+def test_an_epub_urn_isbn_is_read_and_checked():
+    from plugins.bookshelf_processor.cog import extract_embedded_metadata
+
+    good = extract_embedded_metadata(_epub_with_identifiers(('id="pub-id"', "urn:isbn:9780306406157")))
+    assert good["isbn"] == "9780306406157"
+    bad = extract_embedded_metadata(_epub_with_identifiers(('id="pub-id"', "urn:isbn:9780306406158")))
+    assert bad.get("isbn") is None
+    longer = extract_embedded_metadata(_epub_with_identifiers(('id="pub-id"', "urn:isbn:97803064061571234")))
+    assert longer.get("isbn") is None, "not the first 13 digits of a longer number"
