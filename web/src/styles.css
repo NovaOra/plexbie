@@ -1339,7 +1339,8 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 .m-tile.is-hot .m-tile__top { color: var(--tally); }
 @keyframes m-pulse { 0% { box-shadow: 0 0 0 0 rgb(255 92 147 / 0.55); } 100% { box-shadow: 0 0 0 10px rgb(255 92 147 / 0); } }
 
-/* the sections: ☰ beside the title opens a panel under it; on phones, a sheet from the right */
+/* the sections: ☰ beside the title opens a panel under it; on phones, a drawer from the right
+   that pushes the whole screen (every child of #root, the tab bar too) left by its width */
 .m-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .m-section { margin: 0; font-size: 1.25rem; font-stretch: 88%; letter-spacing: -0.01em; scroll-margin-top: 16px; }
 .m-section:focus { outline: none; }
@@ -1383,22 +1384,32 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 @media (hover: hover) and (pointer: fine) { .m-menu__item:hover { background: var(--panel); } }
 .m-menu__item:focus-visible { outline: 2px solid var(--screen); outline-offset: -2px; }
 @media (max-width: 719px) {
-  .m-menu__scrim { z-index: 80; background: rgb(3 6 18 / 0.6); transition: opacity 200ms ease, display 200ms allow-discrete; }
+  :root { --menu-w: min(80vw, 320px); }
+  /* Over the moved page: dims the strip of it still in sight, and a tap there closes. */
+  .m-menu__scrim { z-index: 80; background: rgb(3 6 18 / 0.6); transition: opacity 240ms var(--ease-out), display 240ms allow-discrete; }
   .m-menu__scrim[hidden] { opacity: 0; }
   @starting-style { .m-menu__scrim { opacity: 0; } }
   .m-menu__panel {
-    position: fixed; z-index: 81; inset: 0 0 0 auto; width: min(320px, 86vw); max-height: none;
+    position: fixed; z-index: 81; inset: 0 0 0 auto; width: var(--menu-w); max-height: none;
     padding: calc(14px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) 10px;
-    border-width: 0 0 0 1px; border-radius: 22px 0 0 22px; box-shadow: -20px 0 50px -20px rgb(3 6 18 / 0.9);
-    transition: transform 260ms var(--ease-out), display 260ms allow-discrete;
+    border-width: 0 0 0 1px; border-radius: 0; box-shadow: -20px 0 50px -20px rgb(3 6 18 / 0.9);
+    transition: transform 240ms var(--ease-out), display 240ms allow-discrete;
   }
-  .m-menu__panel[hidden] { opacity: 1; transform: translateX(100%); transition-duration: 200ms; }
+  .m-menu__panel[hidden] { opacity: 1; transform: translateX(100%); transition-duration: 240ms; }
   @starting-style { .m-menu__panel { opacity: 1; transform: translateX(100%); } }
+  /* The page goes the same way at the same pace; "menu-push" outlasts "has-menu" by the slide back.
+     `translate`, not `transform`, so nothing's own transform is overridden. */
+  html.menu-push #root > * { transition: translate 240ms var(--ease-out); }
+  html.has-menu #root > * { translate: calc(-1 * var(--menu-w)) 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .m-menu__panel { transition: opacity 160ms ease, display 160ms allow-discrete; }
   .m-menu__panel[hidden] { opacity: 0; transform: none; }
   @starting-style { .m-menu__panel { opacity: 0; transform: none; } }
+}
+/* Reduced motion on a phone: the drawer and the moved page are just there, no slide. */
+@media (max-width: 719px) and (prefers-reduced-motion: reduce) {
+  .m-menu__panel, html.menu-push #root > * { transition: none; }
 }
 
 /* decision cards */

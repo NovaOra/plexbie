@@ -2853,19 +2853,38 @@ function Overview({ go, failed }: { go: (t: Section) => void; failed: Partial<Re
   );
 }
 
+/** Phone widths, where ☰ opens a drawer that pushes the page aside (styles.css). */
+const PHONE = "(max-width: 719px)";
+/** How long the drawer and the page take to slide (styles.css). */
+const PUSH_MS = 240;
+
+function usePhone() {
+  const [phone, setPhone] = useState(() => window.matchMedia(PHONE).matches);
+  useEffect(() => {
+    const q = window.matchMedia(PHONE);
+    const on = () => setPhone(q.matches);
+    on();
+    q.addEventListener("change", on);
+    return () => q.removeEventListener("change", on);
+  }, []);
+  return phone;
+}
+
 /**
  * The sections, behind ☰ at the top right: a panel under the button on wide
- * screens, a sheet from the right on phones (styles.css). Opening puts focus on
- * the open section; the arrow keys move between sections and Tab stays inside.
- * Escape, Back, a tap outside or ☰ again closes it and hands focus back to ☰.
- * On a phone the sheet is modal: the page behind is out of reach and stays put.
- * A dot on ☰ says another section has something waiting, pink when it's hot.
+ * screens; on phones a drawer from the right that pushes the whole screen (top
+ * bar, page and tab bar) left with it, like an app's navigation drawer
+ * (styles.css). Opening puts focus on the open section; the arrow keys move
+ * between sections and Tab stays inside. Escape, Back, a tap outside or ☰ again
+ * closes it and hands focus back to ☰. On a phone the drawer is modal: the page
+ * behind is out of reach and doesn't scroll. A dot on ☰ says another section has
+ * something waiting, pink when it's hot.
  */
 function SectionMenu({ items, onPick }: { items: MenuItem<Section>[]; onPick: (t: Section) => void }) {
   const [open, setOpen] = useState(false);
+  const phone = usePhone();
   const button = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const scrim = useRef<HTMLDivElement>(null);
   const id = useId();
   // Focus goes back to ☰ once it's closed, after the page behind is reachable again.
   const refocus = useRef(false);
@@ -2874,6 +2893,31 @@ function SectionMenu({ items, onPick }: { items: MenuItem<Section>[]; onPick: (t
     setOpen(false);
   }, []);
   useBackToClose(open, close);
+  // A phone's drawer pushes the screen aside: the page (all of #root; toasts and
+  // sheets live outside it) slides left in the same frame the drawer starts in,
+  // is inert (the backdrop still takes the tap that closes it) and doesn't scroll.
+  // "menu-push" stays on until the slide back is over.
+  const settle = useRef(0);
+  useLayoutEffect(() => {
+    const sheet = panel.current;
+    if (!open || !phone || !sheet) return;
+    const html = document.documentElement;
+    const root = document.getElementById("root");
+    window.clearTimeout(settle.current);
+    sheet.setAttribute("aria-modal", "true");
+    root?.setAttribute("inert", "");
+    html.classList.add("has-menu", "menu-push");
+    return () => {
+      sheet.removeAttribute("aria-modal");
+      root?.removeAttribute("inert");
+      html.classList.remove("has-menu");
+      settle.current = window.setTimeout(() => html.classList.remove("menu-push"), PUSH_MS);
+    };
+  }, [open, phone]);
+  useEffect(() => () => {
+    window.clearTimeout(settle.current);
+    document.documentElement.classList.remove("menu-push");
+  }, []);
   useEffect(() => {
     if (!open) {
       if (refocus.current) button.current?.focus({ preventScroll: true });
@@ -2883,28 +2927,8 @@ function SectionMenu({ items, onPick }: { items: MenuItem<Section>[]; onPick: (t
     (panel.current?.querySelector<HTMLElement>("[aria-current]") ?? panel.current?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     document.addEventListener("keydown", onKey);
-    // A phone's sheet covers the page: everything else in it is inert (the backdrop
-    // still takes the tap that closes it) and the page doesn't scroll behind.
-    const shut: Element[] = [];
-    const sheet = panel.current;
-    if (sheet && window.matchMedia("(max-width: 719px)").matches) {
-      sheet.setAttribute("aria-modal", "true");
-      document.documentElement.classList.add("has-menu");
-      for (let el: Element = sheet; el.parentElement && el.id !== "root"; el = el.parentElement) {
-        for (const other of el.parentElement.children) {
-          if (other === el || other === scrim.current || other.hasAttribute("inert")) continue;
-          other.setAttribute("inert", "");
-          shut.push(other);
-        }
-      }
-    }
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      shut.forEach((el) => el.removeAttribute("inert"));
-      sheet?.removeAttribute("aria-modal");
-      document.documentElement.classList.remove("has-menu");
-    };
-  }, [open, close]);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, close, phone]);
   const move = (e: ReactKeyboardEvent) => {
     const all = [...(panel.current?.querySelectorAll<HTMLButtonElement>(".m-menu__item") ?? [])];
     // -1 when focus is on the panel itself (a click between the items): Tab goes to the first.
@@ -2917,15 +2941,11 @@ function SectionMenu({ items, onPick }: { items: MenuItem<Section>[]; onPick: (t
     all[(to + all.length) % all.length].focus();
   };
   const elsewhere = waitingElsewhere(items);
-  return (
-    <div className="m-menu">
-      <button ref={button} type="button" className="m-menu__open" aria-label={menuLabel(items)}
-        aria-haspopup="dialog" aria-expanded={open} aria-controls={id} onClick={() => (open ? close() : setOpen(true))}>
-        <Menu size={22} aria-hidden />
-        {elsewhere.length ? <span className={`m-menu__dot${elsewhere.some((i) => i.hot) ? " is-hot" : ""}`} aria-hidden /> : null}
-      </button>
-      {/* Always there, hidden when closed, so closing can slide and fade out. */}
-      <div ref={scrim} className="m-menu__scrim" hidden={!open} aria-hidden onClick={close} />
+  // Always there, hidden when closed, so closing can slide and fade out. On a
+  // phone it lives outside #root, so it stays put while the page moves.
+  const sheet = (
+    <>
+      <div className="m-menu__scrim" hidden={!open} aria-hidden onClick={close} />
       <div ref={panel} id={id} className="m-menu__panel" role="dialog" aria-label="Sections" hidden={!open} tabIndex={-1} onKeyDown={move}>
         <p className="m-menu__title" aria-hidden>Sections</p>
         <ul className="m-menu__list">
@@ -2940,6 +2960,16 @@ function SectionMenu({ items, onPick }: { items: MenuItem<Section>[]; onPick: (t
           ))}
         </ul>
       </div>
+    </>
+  );
+  return (
+    <div className="m-menu">
+      <button ref={button} type="button" className="m-menu__open" aria-label={menuLabel(items)}
+        aria-haspopup="dialog" aria-expanded={open} aria-controls={id} onClick={() => (open ? close() : setOpen(true))}>
+        <Menu size={22} aria-hidden />
+        {elsewhere.length ? <span className={`m-menu__dot${elsewhere.some((i) => i.hot) ? " is-hot" : ""}`} aria-hidden /> : null}
+      </button>
+      {phone ? createPortal(sheet, document.body) : sheet}
     </div>
   );
 }
