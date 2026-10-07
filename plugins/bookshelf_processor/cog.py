@@ -43,8 +43,36 @@ JUNK_EXTENSIONS = {
     ".log", ".sfv", ".nzb", ".par2", ".jpg_original", ".png_original",
 }
 
-EBOOK_EXTENSIONS = {".epub", ".azw3", ".mobi", ".pdf", ".cbz", ".cbr"}
-AUDIOBOOK_EXTENSIONS = {".mp3", ".m4a", ".m4b", ".ogg", ".flac", ".wma", ".aac"}
+# Release clutter that is never part of a book: unextracted archives and their
+# parts, scene check files, programs and shortcuts, Windows folder files. Like
+# junk it goes with the download rather than being filed beside the book.
+CLUTTER_EXTENSIONS = {
+    ".rar", ".zip", ".7z", ".srr", ".srs", ".exe", ".lnk", ".bat", ".cmd", ".scr",
+}
+CLUTTER_NAMES = {"thumbs.db", "desktop.ini"}
+#: Archive parts (.r00, .001) and files renamed by a par2 repair (file.mp3.1).
+CLUTTER_SUFFIX_RE = re.compile(r"^\.(?:r\d{2}|\d+)$", re.IGNORECASE)
+#: Folders that hold NAS or macOS metadata (.AppleDouble, @eaDir, __MACOSX).
+METADATA_FOLDER_RE = re.compile(r"^(?:[.@]|__MACOSX$)")
+
+# Words that mark an ebook file as an extra beside the book (a sample chapter,
+# the errata) rather than another book in a pack.
+EXTRA_WORDS = {
+    "sample", "excerpt", "errata", "preview", "teaser", "appendix", "appendices",
+    "bonus", "extra", "extras", "companion", "supplement", "booklet",
+}
+
+# What Audiobookshelf reads, plus formats it stores but cannot open (.ape, and
+# most of the ebook formats after .cbr): filed with the book either way.
+EBOOK_EXTENSIONS = {
+    ".epub", ".azw3", ".mobi", ".pdf", ".cbz", ".cbr",
+    ".azw", ".kfx", ".djvu", ".fb2", ".lit", ".rtf",
+}
+AUDIOBOOK_EXTENSIONS = {
+    ".mp3", ".m4a", ".m4b", ".ogg", ".flac", ".wma", ".aac",
+    ".opus", ".oga", ".wav", ".aiff", ".ape", ".mka", ".mp4",
+    ".webm", ".webma", ".awb", ".caf", ".mpeg", ".mpg",
+}
 
 NOISE_TOKENS = {
     "retail", "epub", "ebook", "mobi", "azw3", "pdf", "audiobook",
@@ -1029,6 +1057,37 @@ def _repeated_names(book_files: list[Path]) -> set[str]:
     return repeated
 
 
+def _same_book(a: Path, b: Path) -> bool:
+    """Whether two ebook files of one format look like copies of one book."""
+    key_a, key_b = _normalise_for_match(a.stem), _normalise_for_match(b.stem)
+    if key_a != key_b:
+        return key_a in key_b or key_b in key_a
+    # One name in two folders is two copies (retail/, converted/), unless the
+    # folders differ only by a number, as in "Book 1/book.epub", "Book 2/book.epub".
+    folder_a, folder_b = _normalise_for_match(a.parent.name), _normalise_for_match(b.parent.name)
+    return folder_a == folder_b or re.sub(r"\d+", "", folder_a) != re.sub(r"\d+", "", folder_b)
+
+
+def _separate_books(book_files: list[Path]) -> list[str]:
+    """Names of the ebook files that look like different books; [] for one book.
+
+    One book often comes in several formats (Book.epub, Book.mobi) or copies
+    (retail/Book.epub, Book (retail).epub). Two files of the same format whose
+    names, letters and digits only, neither contain the other are taken for two
+    books, as in a pack of a series. Those are filed by hand, not as one item.
+    Extras named as such (a sample chapter, the errata) are filed with the book
+    and never count as another one.
+    """
+    by_format = {}
+    for f in book_files:
+        if EXTRA_WORDS.isdisjoint(re.findall(r"[a-z]+", f.stem.lower())):
+            by_format.setdefault(f.suffix.lower(), []).append(f)
+    for files in by_format.values():
+        if any(not _same_book(a, b) for a in files for b in files):
+            return sorted(f.name for f in files)
+    return []
+
+
 def plan_book_moves(source_path: Path, book_files: list[Path], media_type: str) -> list[tuple[Path, str]]:
     """(source file, name in the destination) for every book file, in order.
 
@@ -1088,17 +1147,6 @@ def find_existing_covers(source: Path) -> list[Path]:
     return covers
 
 
-def clean_junk_files(source: Path):
-    """Remove junk files from the source directory."""
-    removed = 0
-    for f in source.rglob("*"):
-        if f.is_file() and f.suffix.lower() in JUNK_EXTENSIONS:
-            f.unlink()
-            removed += 1
-    if removed:
-        logger.info(f"Cleaned {removed} junk file(s) from {source.name}")
-
-
 def build_destination(library: Path, meta: dict) -> Path:
     """
     Build Audiobookshelf-compatible path:
@@ -1113,6 +1161,15 @@ def build_destination(library: Path, meta: dict) -> Path:
         return library / author / series / title
     else:
         return library / author / title
+
+
+def _usable_folder(path: Path) -> bool:
+    """Blocking: whether path is an existing folder, given as an absolute path.
+
+    A blank setting reads as ".", the container's working directory, and "/" is
+    the container itself: neither is a mapped volume, so both count as missing.
+    """
+    return path.is_absolute() and path != Path(path.anchor) and path.is_dir()
 
 
 def _item_signature(path: Path) -> tuple:
@@ -1377,6 +1434,35 @@ def _read_filing_record(source_path: Path) -> tuple[Path, dict] | None:
     return dest, record["final"]
 
 
+def _write_kept_record(source_path: Path, dest: Path) -> None:
+    """Blocking: note that a filed download was kept, and as what it was left.
+
+    It holds only files that could not be moved in beside the book. While it is
+    unchanged, a restart must not take it for a new download and process it
+    again. Best effort: without the note it is processed once more, finds no
+    book in it and is set aside the same way.
+    """
+    record = _filing_record_path(source_path)
+    try:
+        with open(record, "w") as handle:
+            json.dump({"source": str(source_path), "dest": str(dest),
+                       "kept": list(_item_signature(source_path))}, handle)
+    except OSError as e:
+        logger.debug(f"Could not note that {source_path.name} was kept: {e}")
+
+
+def _kept_signature(source_path: Path) -> tuple | None:
+    """Blocking: the signature a kept download had when it was filed, if noted."""
+    try:
+        with open(_filing_record_path(source_path)) as handle:
+            record = json.load(handle)
+        if record.get("source") != str(source_path) or not isinstance(record.get("kept"), list):
+            return None
+        return tuple(record["kept"])
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def _clear_filing_record(source_path: Path) -> None:
     """Blocking: forget where the download was being filed."""
     _filing_record_path(source_path).unlink(missing_ok=True)
@@ -1424,16 +1510,23 @@ def _place_book(plan, dest: Path, source_path: Path, library: Path) -> PlaceResu
     the next attempt. On success the marker stays until the caller has written
     the cover and metadata. Any marker already in dest has been recovered by
     then and is replaced.
+
+    Folders are only ever created below the library folder, which must exist:
+    a missing one is a volume that is not mapped, and creating it would file
+    the book inside the container.
     """
+    if not _usable_folder(library):
+        return PlaceResult(False, error=f"the library folder {library} does not exist")
     resuming = os.path.lexists(dest / MOVE_MARKER)
     created = []
     folder = dest
     while folder != library and folder != folder.parent and not folder.exists():
         created.append(folder)
         folder = folder.parent
-    dest.mkdir(parents=True, exist_ok=True)
 
     try:
+        for folder in reversed(created):
+            folder.mkdir(exist_ok=True)
         _write_move_marker(dest, source_path, plan)
     except Exception as e:
         _remove_empty_folders(created)
@@ -1486,6 +1579,41 @@ def _adopt_existing_cover(existing_covers, dest: Path) -> bool:
     except Exception as e:
         logger.debug(f"Could not use existing cover {best.name}: {e}")
         return False
+
+
+def _file_leftovers(source_path: Path, dest: Path) -> list[str]:
+    """Blocking: move what is left in a filed download in beside its book.
+
+    Called once every book file is out, so anything still there other than
+    junk came with the book: a companion PDF, a booklet, other artwork. Junk,
+    release clutter (archives, Thumbs.db), hidden files, anything in a NAS or
+    macOS metadata folder and a release's own .opf (the book's metadata.opf
+    replaces it) are left to go with the folder. A name already taken in dest gets " (2)",
+    " (3)" before its extension. Returns the files that could not be moved,
+    relative to the download; while there are any, the download must be kept.
+    """
+    taken = {p.name.casefold() for p in dest.iterdir()}
+    kept = []
+    for f in sorted(source_path.rglob("*")):
+        suffix = f.suffix.lower()
+        if (not f.is_file() or f.name.startswith(".")
+                or suffix in JUNK_EXTENSIONS or suffix in CLUTTER_EXTENSIONS or suffix == ".opf"
+                or f.name.casefold() in CLUTTER_NAMES or CLUTTER_SUFFIX_RE.match(suffix)
+                or any(METADATA_FOLDER_RE.match(part) for part in f.relative_to(source_path).parts[:-1])):
+            continue
+        name, counter = f.name, 2
+        while name.casefold() in taken:
+            name = f"{f.stem} ({counter}){f.suffix}"
+            counter += 1
+        try:
+            _move_no_clobber(f, dest / name)
+        except Exception as e:
+            kept.append(f.relative_to(source_path).as_posix())
+            logger.error(f"Could not move {f.name} in beside the book in {dest}: {e}")
+            continue
+        taken.add(name.casefold())
+        logger.info(f"Filed {f.relative_to(source_path).as_posix()} beside the book as {name}")
+    return kept
 
 
 def _remove_source(source_path: Path) -> None:
@@ -1694,6 +1822,15 @@ async def process_item(
     logger.info(f"{'=' * 60}")
     logger.info(f"Processing {media_type}: {source_path.name}")
 
+    # A missing library folder is a volume that is not mapped. Filing anyway
+    # would create it inside the container, where the book is lost when the
+    # container is recreated, and the download would already be gone.
+    library = audiobook_lib if media_type == "audiobook" else ebook_lib
+    if not await run_blocking(_usable_folder, library):
+        logger.error(f"Not filed: {source_path.name}. The {media_type} library folder '{library}' does not "
+                     f"exist; check that it is mapped. The download and its hint are untouched.")
+        return False
+
     # ── Check for hint files from Plexbie media_requests ──
     hint_used = False
     hint = None
@@ -1743,14 +1880,26 @@ async def process_item(
         book_files = [source_path]
         existing_covers = []
     else:
-        # Directory walks and unlinks - blocking, so off the loop.
-        await run_blocking(clean_junk_files, source_path)
+        # Directory walks - blocking, so off the loop. Nothing is deleted until
+        # the book is filed: a download with no book in it (text files only,
+        # say) is left exactly as it came.
         book_files = await run_blocking(find_book_files, source_path, media_type)
         existing_covers = await run_blocking(find_existing_covers, source_path)
 
     if not book_files:
         logger.warning(f"No valid {media_type} files found in {source_path.name}, skipping")
         return False
+
+    if media_type == "ebook" and not earlier:
+        separate = _separate_books(book_files)
+        if separate:
+            shown = ", ".join(separate[:5]) + (f" and {len(separate) - 5} more" if len(separate) > 5 else "")
+            logger.warning(
+                f"Not filed: {source_path.name} holds {len(separate)} different books ({shown}). "
+                f"File them by hand, or move each one into the watch folder on its own to file "
+                f"it separately. The download and its hint are untouched."
+            )
+            return False
 
     logger.info(f"Found {len(book_files)} {media_type} file(s)")
 
@@ -1835,7 +1984,6 @@ async def process_item(
 
     # 4. Build destination path. A folder holding another book gets a numbered
     # name; one holding this download's own unfinished attempt is reused.
-    library = audiobook_lib if media_type == "audiobook" else ebook_lib
     if not earlier:
         base_dest = build_destination(library, final)
         dest = await run_blocking(_choose_destination, base_dest, source_path)
@@ -1927,8 +2075,21 @@ async def process_item(
     await run_blocking(_clear_move_marker, dest)
     await run_blocking(_clear_filing_record, source_path)
 
-    # 8. Clean up source - every book file has been moved out of it.
-    await run_blocking(_remove_source, source_path)
+    # 8. Clean up source - every book file has been moved out of it. Anything
+    # else that came with the book, junk aside, is filed beside it first; if any
+    # of that cannot be moved the download is kept rather than deleted with it.
+    # It holds no book files any more, so it is never filed a second time.
+    kept = []
+    if not single_file:
+        kept = await run_blocking(_file_leftovers, source_path, dest)
+    if kept:
+        logger.warning(
+            f"Kept {source_path.name}: {len(kept)} file(s) that came with the book could not be "
+            f"moved to {dest} ({', '.join(kept)}). Move them by hand, then remove the download."
+        )
+        await run_blocking(_write_kept_record, source_path, dest)
+    else:
+        await run_blocking(_remove_source, source_path)
 
     # 9. Clean up hint file if used
     if hint_used and hint_file.exists():
@@ -2030,6 +2191,10 @@ class BookshelfProcessorCog(commands.Cog):
     """Watches SABnzbd download directories and organizes ebooks/audiobooks
     for Audiobookshelf. Replaces the standalone bookshelf-processor container."""
 
+    #: Watch and library folders already reported missing, so each is reported
+    #: once rather than on every 10-second scan. Replaced, never mutated.
+    _reported_missing: frozenset = frozenset()
+
     def __init__(self, bot: commands.Bot, services):
         self.bot = bot
         self.services = services
@@ -2067,6 +2232,15 @@ class BookshelfProcessorCog(commands.Cog):
         logger.info(f"Ebook library:     {self.ebook_lib}")
         logger.info(f"Settle time:       {self.settle_seconds}s")
 
+        # A library only matters beside a watch folder that exists: a household
+        # that does not use the bookshelf has neither.
+        for watch, library, media_type in ((self.audiobook_watch, self.audiobook_lib, "audiobook"),
+                                           (self.ebook_watch, self.ebook_lib, "ebook")):
+            watching = await run_blocking(_usable_folder, watch)
+            self._note_folder(watch, f"{media_type} watch", watching)
+            if watching:
+                self._note_folder(library, f"{media_type} library", await run_blocking(_usable_folder, library))
+
         # Ensure cache directory exists
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2084,6 +2258,27 @@ class BookshelfProcessorCog(commands.Cog):
         self.scan_loop.cancel()
         logger.info("Bookshelf Processor stopped")
 
+    def _note_folder(self, path: Path, what: str, present: bool) -> None:
+        """Report a missing watch or library folder once, and its return."""
+        key = (what, str(path))
+        if present:
+            if key in self._reported_missing:
+                self._reported_missing = self._reported_missing - {key}
+                logger.info(f"The {what} folder {path} is back")
+            return
+        if key in self._reported_missing:
+            return
+        self._reported_missing = self._reported_missing | {key}
+        if not path.is_absolute() or path == Path(path.anchor):
+            problem = f"is set to '{path}', which is not a mapped folder (it must be a full path below /)"
+        else:
+            problem = f"{path} does not exist"
+        if what.endswith("library"):
+            logger.error(f"The {what} folder {problem}; check that it is mapped. "
+                         f"Finished downloads wait until it is there, and it is never created.")
+        else:
+            logger.info(f"The {what} folder {problem}; nothing is picked up from it")
+
     async def _seed_existing_items(self):
         """Record anything already in the watch dirs so the scan loop settles it.
 
@@ -2094,12 +2289,16 @@ class BookshelfProcessorCog(commands.Cog):
         seeded = 0
         now = datetime.now()
         for watch_dir in (self.audiobook_watch, self.ebook_watch):
-            if not watch_dir.exists():
+            if not await run_blocking(_usable_folder, watch_dir):
                 continue
             for path in sorted(watch_dir.iterdir()):
                 if path.name.startswith("."):
                     continue
                 signature = await run_blocking(_item_signature, path)
+                if await run_blocking(_kept_signature, path) == signature:
+                    # Filed already, and kept for files that could not be moved.
+                    self.failed[str(path)] = signature
+                    continue
                 self.pending[str(path)] = (signature, now)
                 seeded += 1
 
@@ -2129,8 +2328,10 @@ class BookshelfProcessorCog(commands.Cog):
             (self.audiobook_watch, "audiobook"),
             (self.ebook_watch, "ebook"),
         ]:
-            if not watch_dir.exists():
+            if not await run_blocking(_usable_folder, watch_dir):
+                self._note_folder(watch_dir, f"{media_type} watch", False)
                 continue
+            self._note_folder(watch_dir, f"{media_type} watch", True)
 
             # Expire stale hints here rather than only when an item happens to be
             # processed in this directory - orphaned hints outlive the download
@@ -2177,7 +2378,10 @@ class BookshelfProcessorCog(commands.Cog):
                 del self.failed[path_str]
 
         # Collect items whose signature has been stable for the settle period.
+        # While their library folder is missing they stay pending, and are filed
+        # once it is back: a missing library is a volume that is not mapped.
         settled = []
+        library_ready = {}
         for path_str, (signature, last_changed) in list(self.pending.items()):
             if (now - last_changed).total_seconds() < self.settle_seconds:
                 continue
@@ -2186,10 +2390,21 @@ class BookshelfProcessorCog(commands.Cog):
                 media_type = "audiobook"
             else:
                 media_type = "ebook"
-            settled.append((path, media_type, signature))
+            if media_type not in library_ready:
+                library = self.audiobook_lib if media_type == "audiobook" else self.ebook_lib
+                library_ready[media_type] = await run_blocking(_usable_folder, library)
+                self._note_folder(library, f"{media_type} library", library_ready[media_type])
+            if not library_ready[media_type]:
+                continue
+            settled.append((path, media_type, last_changed))
             del self.pending[path_str]
 
-        for path, media_type, _ in settled:
+        for path, media_type, last_changed in settled:
+            library = self.audiobook_lib if media_type == "audiobook" else self.ebook_lib
+            if not library_ready[media_type]:
+                # Gone while an earlier item in this batch was being filed.
+                self.pending[str(path)] = (await run_blocking(_item_signature, path), last_changed)
+                continue
             try:
                 processed = await process_item(
                     path, media_type,
@@ -2201,13 +2416,24 @@ class BookshelfProcessorCog(commands.Cog):
                 logger.error(f"Failed to process {media_type} {path.name}: {e}", exc_info=True)
                 processed = False
 
-            if not processed and path.exists():
+            if not processed and path.exists() and not await run_blocking(_usable_folder, library):
+                # The library went away while this batch was being filed: the
+                # item waits for it like any other, rather than counting as failed.
+                library_ready[media_type] = False
+                self._note_folder(library, f"{media_type} library", False)
+                self.pending[str(path)] = (await run_blocking(_item_signature, path), last_changed)
+            elif processed and path.exists():
+                # Filed, and kept for files that could not be moved in beside the
+                # book (already logged): it holds no book, so leave it be.
+                self.failed[str(path)] = await run_blocking(_item_signature, path)
+            elif not processed and path.exists():
                 # Record the failure against the item as processing left it, so
                 # it is not reprocessed (and re-logged) on every scan forever.
                 # One empty folder previously produced 30,931 processing cycles
                 # and 26 MB of log output. Not the signature from before: a
-                # failed attempt has already deleted the download's junk files,
-                # and that alone would look like a change worth retrying.
+                # failed attempt can already have changed the download (files
+                # of an earlier attempt moved back into it), and that alone
+                # would look like a change worth retrying.
                 self.failed[str(path)] = await run_blocking(_item_signature, path)
                 logger.warning(
                     f"Not retrying {path.name} until its contents change "

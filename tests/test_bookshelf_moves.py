@@ -1,7 +1,7 @@
 # path: tests/test_bookshelf_moves.py
 """Filing a book never replaces, loses or half-moves its files.
 
-Regression coverage for two defects:
+Regression coverage for these defects:
   * Every book file was moved to `dest / file.name`, flattening sub-folders.
     A multi-disc audiobook (CD1/01.mp3, CD2/01.mp3) collapsed into one 01.mp3
     holding the last disc, because shutil.move silently replaces an existing
@@ -10,12 +10,18 @@ Regression coverage for two defects:
     the book was announced and the requester DM'd, and process_item reported
     success. The leftovers were picked up again as a new item and filed into
     "Title (2)" with another announcement.
+  * A missing library folder (a volume left unmapped) was created inside the
+    container, so books "filed" there vanished when it was recreated.
+  * Removing the source deleted every file that was not a book file: a
+    companion PDF, audio in a format the filter did not know, text-only
+    downloads. A pack of several ebooks was filed as one book.
 """
 import asyncio
 import contextlib
 import errno
 import inspect
 import json
+import logging
 import os
 import re
 import shutil
@@ -55,7 +61,7 @@ class _FakeBot:
 
 
 def _setup(tmp):
-    """watch/<release>/CD1/01.mp3 + CD2/01.mp3, its hint, and a library that does not exist yet."""
+    """watch/<release>/CD1/01.mp3 + CD2/01.mp3, its hint, and an empty library."""
     root = Path(tmp)
     watch = root / "watch"
     source = watch / RELEASE
@@ -67,6 +73,7 @@ def _setup(tmp):
     hint.write_text(json.dumps({
         "nzb_title": RELEASE, "author": "Ann Author", "title": "The Book", "requested_by": "42",
     }))
+    (root / "lib_a").mkdir()
     return source, hint, root / "lib_a"
 
 
@@ -135,6 +142,38 @@ def _process(source, lib, bot):
 
 def _names(paths):
     return [name for _, name in paths]
+
+
+@contextlib.contextmanager
+def _logged(level=logging.WARNING):
+    """Collect what the bookshelf logs, at `level` and above, during a block."""
+    records = []
+    handler = logging.Handler()
+    handler.emit = records.append
+    previous = shelf.logger.level
+    shelf.logger.addHandler(handler)
+    shelf.logger.setLevel(level)
+    try:
+        yield records
+    finally:
+        shelf.logger.removeHandler(handler)
+        shelf.logger.setLevel(previous)
+
+
+def _bare_cog(watch, lib, tmp):
+    cog = object.__new__(shelf.BookshelfProcessorCog)
+    cog.bot = _FakeBot()
+    cog.services = cog.bot.services
+    cog.settle_seconds = 120
+    cog.pending = {}
+    cog.failed = {}
+    cog.audiobook_watch = watch
+    cog.ebook_watch = Path(tmp) / "ebooks"
+    cog.audiobook_lib = lib
+    cog.ebook_lib = Path(tmp) / "lib_e"
+    cog.cache_dir = Path(tmp) / "cache"
+    cog._last_hint_sweep = None
+    return cog
 
 
 # --- planning the destination names (pure) ------------------------------------
@@ -630,13 +669,329 @@ def test_a_folder_holding_another_book_still_gets_a_numbered_name():
         )
 
 
+# --- a missing library is never created -----------------------------------------
+
+def test_a_missing_library_is_never_created_and_the_download_is_left_alone():
+    """With the library volume unmapped, its folder would be made inside the
+    container and the book lost when the container is recreated."""
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        lib.rmdir()
+        (source / "release.nfo").write_text("nfo")
+        before = shelf._item_signature(source)
+        bot = _FakeBot()
+        with _recorded_dms() as dms, _logged() as logs:
+            assert _process(source, lib, bot) is False
+        assert not lib.exists(), "the library folder must not be created"
+        assert shelf._item_signature(source) == before, "not even the junk is touched"
+        assert (source / "release.nfo").exists()
+        assert hint.exists()
+        assert bot.channel.sent == [] and dms == []
+        assert any(r.levelno >= logging.ERROR and str(lib) in r.getMessage() for r in logs)
+
+
+def test_placing_a_book_never_creates_the_library_folder():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        lib.rmdir()
+        files = [source / "CD1" / "01.mp3", source / "CD2" / "01.mp3"]
+        plan = shelf.plan_book_moves(source, files, "audiobook")
+        result = shelf._place_book(plan, _book_folder(lib), source, lib)
+        assert not result.ok
+        assert not lib.exists()
+        assert (source / "CD1" / "01.mp3").read_bytes() == DISC1
+
+
+def test_scan_loop_waits_for_a_missing_library_and_says_so_once():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        lib.rmdir()
+        cog = _bare_cog(source.parent, lib, tmp)
+        cog.pending = {str(source): (shelf._item_signature(source), datetime.now() - timedelta(seconds=300))}
+
+        calls = []
+        real = shelf.process_item
+
+        async def counting(*args, **kwargs):
+            calls.append(args[0])
+            return await real(*args, **kwargs)
+
+        shelf.process_item = counting
+        try:
+            with _recorded_dms() as dms, _logged() as logs:
+                for _ in range(3):
+                    asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+                assert calls == [], "nothing is filed while the library is missing"
+                assert str(source) in cog.pending and str(source) not in cog.failed, "it waits, it has not failed"
+                assert not lib.exists()
+                about_lib = [r for r in logs if str(lib) in r.getMessage()]
+                assert len(about_lib) == 1 and about_lib[0].levelno >= logging.ERROR, [r.getMessage() for r in logs]
+
+                lib.mkdir()
+                asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        finally:
+            shelf.process_item = real
+        assert calls == [source], "filed as soon as the library is back"
+        assert (_book_folder(lib) / "Disc 01 - 01.mp3").read_bytes() == DISC1
+        assert dms == ["42"]
+
+
+def test_scan_loop_notes_a_missing_watch_folder_once():
+    """At info level: a household that does not use the bookshelf has none."""
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        cog = _bare_cog(source.parent, lib, tmp)
+        with _logged(logging.INFO) as logs:
+            for _ in range(3):
+                asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        about = [r for r in logs if str(cog.ebook_watch) in r.getMessage()]
+        assert len(about) == 1 and about[0].levelno == logging.INFO, [r.getMessage() for r in about]
+
+
+def test_startup_reports_a_missing_library_only_beside_a_watch_folder():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        lib.rmdir()
+        cog = _bare_cog(source.parent, lib, tmp)
+        cog.scan_loop = SimpleNamespace(start=lambda: None)
+        with _logged() as logs:
+            asyncio.run(cog.cog_load())
+        errors = [r.getMessage() for r in logs if r.levelno >= logging.ERROR]
+        assert len(errors) == 1 and str(lib) in errors[0], errors
+
+        # The bookshelf unused: neither watch folder, neither library.
+        cog = _bare_cog(Path(tmp) / "no-watch", lib, tmp)
+        cog.scan_loop = SimpleNamespace(start=lambda: None)
+        with _logged() as logs:
+            asyncio.run(cog.cog_load())
+        assert logs == [], [r.getMessage() for r in logs]
+
+
+def test_a_blank_relative_or_root_library_counts_as_missing():
+    """A cleared setting reads as ".": the container's working directory."""
+    with tempfile.TemporaryDirectory() as tmp:
+        assert shelf._usable_folder(Path(tmp))
+        for setting in ("", ".", "library", "/"):
+            assert not shelf._usable_folder(Path(setting)), setting
+
+        source, hint, lib = _setup(tmp)
+        cwd = os.getcwd()
+        os.chdir(tmp)
+        try:
+            with _recorded_dms() as dms, _logged() as logs:
+                assert _process(source, Path(""), _FakeBot()) is False
+                assert _process(source, Path("/"), _FakeBot()) is False
+            cog = _bare_cog(source.parent, Path(""), tmp)
+            cog.pending = {str(source): (shelf._item_signature(source), datetime.now() - timedelta(seconds=300))}
+            with _logged() as loop_logs:
+                asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        finally:
+            os.chdir(cwd)
+        assert not (Path(tmp) / "Ann Author").exists(), "nothing filed into the working directory"
+        assert (source / "CD1" / "01.mp3").read_bytes() == DISC1 and hint.exists()
+        assert dms == [] and len(logs) == 2
+        assert str(source) in cog.pending and str(source) not in cog.failed
+        assert any("is set to '.'" in r.getMessage() for r in loop_logs), [r.getMessage() for r in loop_logs]
+
+
+def test_a_library_that_goes_away_mid_batch_leaves_the_rest_waiting():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        other = source.parent / "Bea Writer - Second Book"
+        shutil.copytree(source, other)
+        cog = _bare_cog(source.parent, lib, tmp)
+        settled = datetime.now() - timedelta(seconds=300)
+        cog.pending = {str(p): (shelf._item_signature(p), settled) for p in (source, other)}
+
+        calls = []
+        real, real_fetch = shelf.process_item, shelf.fetch_metadata
+
+        async def counting(*args, **kwargs):
+            calls.append(args[0])
+            result = await real(*args, **kwargs)
+            if len(calls) == 1:
+                shutil.rmtree(lib)  # the volume drops out after the first book
+            return result
+
+        async def lookup(author, title, isbn=None):
+            return {}
+
+        shelf.process_item, shelf.fetch_metadata = counting, lookup
+        try:
+            with _recorded_dms():
+                asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+                assert len(calls) == 2 and not lib.exists()
+                waiting = [p for p in (source, other) if p.exists()]
+                assert len(waiting) == 1
+                assert str(waiting[0]) in cog.pending and str(waiting[0]) not in cog.failed
+
+                lib.mkdir()
+                asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        finally:
+            shelf.process_item, shelf.fetch_metadata = real, real_fetch
+        assert len(calls) == 3 and not waiting[0].exists(), "filed once the library is back"
+
+
+# --- nothing that came with the book is deleted ---------------------------------
+
+def test_audio_and_ebook_formats_audiobookshelf_reads_are_book_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for name in ("a.opus", "b.wav", "c.mka", "d.ape", "e.oga", "f.aiff"):
+            (root / name).write_bytes(b"x")
+        assert [f.name for f in shelf.find_book_files(root, "audiobook")] == [
+            "a.opus", "b.wav", "c.mka", "d.ape", "e.oga", "f.aiff",
+        ]
+        for name in ("g.djvu", "h.fb2", "i.azw", "j.kfx"):
+            (root / name).write_bytes(b"x")
+        assert [f.name for f in shelf.find_book_files(root, "ebook")] == ["g.djvu", "h.fb2", "i.azw", "j.kfx"]
+
+
+def test_other_files_that_came_with_the_book_are_filed_beside_it():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        (source / "Companion.pdf").write_bytes(b"maps and tables")
+        (source / "CD1" / "Booklet.pdf").write_bytes(b"booklet 1")
+        (source / "CD2" / "Booklet.pdf").write_bytes(b"booklet 2")
+        (source / "release.nfo").write_text("nfo")
+        with _recorded_dms():
+            assert _process(source, lib, _FakeBot()) is True
+        book = _book_folder(lib)
+        assert (book / "Companion.pdf").read_bytes() == b"maps and tables"
+        booklets = sorted((book / n).read_bytes() for n in ("Booklet.pdf", "Booklet (2).pdf"))
+        assert booklets == [b"booklet 1", b"booklet 2"], "neither booklet replaces the other"
+        assert not (book / "release.nfo").exists(), "junk is still dropped"
+        assert not source.exists()
+
+
+def test_a_file_that_cannot_be_filed_beside_the_book_keeps_the_download():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        (source / "Companion.pdf").write_bytes(b"maps and tables")
+        bot = _FakeBot()
+        with _recorded_dms() as dms, _fail_moves_from("Companion"):
+            assert _process(source, lib, bot) is True, "the book itself is filed"
+        book = _book_folder(lib)
+        assert (book / "Disc 02 - 01.mp3").read_bytes() == DISC2
+        assert (source / "Companion.pdf").read_bytes() == b"maps and tables", "kept, not deleted"
+        assert shelf.find_book_files(source, "audiobook") == [], "so it is never filed again"
+        assert len(bot.channel.sent) == 1 and dms == ["42"]
+
+
+def test_a_kept_download_is_not_processed_again_nor_after_a_restart():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        (source / "Companion.pdf").write_bytes(b"maps and tables")
+        cog = _bare_cog(source.parent, lib, tmp)
+        cog.pending = {str(source): (shelf._item_signature(source), datetime.now() - timedelta(seconds=300))}
+
+        calls = []
+        real = shelf.process_item
+
+        async def counting(*args, **kwargs):
+            calls.append(args[0])
+            return await real(*args, **kwargs)
+
+        shelf.process_item = counting
+        try:
+            with _recorded_dms() as dms, _fail_moves_from("Companion"), _logged() as logs:
+                for _ in range(3):
+                    asyncio.run(shelf.BookshelfProcessorCog.scan_loop.coro(cog))
+        finally:
+            shelf.process_item = real
+        assert calls == [source] and dms == ["42"]
+        assert (source / "Companion.pdf").exists()
+        assert not any("Not retrying" in r.getMessage() for r in logs)
+
+        restarted = _bare_cog(source.parent, lib, tmp)
+        asyncio.run(restarted._seed_existing_items())
+        assert str(source) not in restarted.pending and str(source) in restarted.failed
+
+        # Once it changes it is looked at again, like any set-aside download.
+        (source / "Companion.pdf").unlink()
+        restarted = _bare_cog(source.parent, lib, tmp)
+        asyncio.run(restarted._seed_existing_items())
+        assert str(source) in restarted.pending
+
+
+def test_release_clutter_and_nas_metadata_go_with_the_download():
+    with tempfile.TemporaryDirectory() as tmp:
+        source, hint, lib = _setup(tmp)
+        clutter = ["book.rar", "book.r00", "book.001", "book.zip", "book.srr", "setup.exe",
+                   "Thumbs.db", "desktop.ini", "CD1/01.mp3.1", "@eaDir/SYNOFILE_THUMB_XL.jpg",
+                   "__MACOSX/CD1/x.jpg", ".AppleDouble/Companion.pdf"]
+        for name in clutter:
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(b"clutter")
+        (source / "Companion.pdf").write_bytes(b"maps and tables")
+        with _recorded_dms():
+            assert _process(source, lib, _FakeBot()) is True
+        book = _book_folder(lib)
+        assert sorted(p.name for p in book.iterdir() if p.suffix != ".mp3") == ["Companion.pdf", "metadata.opf"]
+        assert not source.exists()
+
+
+def test_a_download_with_no_book_in_it_is_left_untouched():
+    """.txt and .html are junk beside a book, but here they are all there is."""
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "watch" / "Short Stories"
+        source.mkdir(parents=True)
+        (source / "story.txt").write_text("once upon a time")
+        (source / "story.html").write_text("<p>once upon a time</p>")
+        lib = Path(tmp) / "lib_a"
+        lib.mkdir()
+        assert _process(source, lib, None) is False
+        assert sorted(p.name for p in source.iterdir()) == ["story.html", "story.txt"]
+
+
+def test_one_ebook_in_several_formats_or_copies_is_one_book():
+    src = Path("/watch/Book")
+    one = [src / "Book.epub", src / "Book.mobi", src / "Book (retail).epub",
+           src / "retail" / "Book.epub", src / "converted" / "Book.epub", src / "Maps.pdf"]
+    assert shelf._separate_books(one) == []
+    pack = [src / "Red Rising.epub", src / "Golden Son.epub", src / "Morning Star.epub"]
+    assert shelf._separate_books(pack) == ["Golden Son.epub", "Morning Star.epub", "Red Rising.epub"]
+    extras = [src / "Book.pdf", src / "Errata.pdf", src / "Book.epub", src / "Sample Chapter.epub"]
+    assert shelf._separate_books(extras) == [], "named extras are not other books"
+    numbered = [src / "Book 1" / "book.epub", src / "Book 2" / "book.epub"]
+    assert shelf._separate_books(numbered) == ["book.epub", "book.epub"]
+
+
+def test_a_pack_of_several_ebooks_is_left_for_filing_by_hand():
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "watch" / "Red Rising Trilogy"
+        source.mkdir(parents=True)
+        for name in ("Red Rising.epub", "Golden Son.epub", "Morning Star.epub"):
+            (source / name).write_bytes(name.encode() * 20)
+        (source / "release.nfo").write_text("nfo")
+        lib_a, lib_e = Path(tmp) / "lib_a", Path(tmp) / "lib_e"
+        lib_a.mkdir()
+        lib_e.mkdir()
+        before = shelf._item_signature(source)
+        real_fetch = shelf.fetch_metadata
+
+        async def lookup(author, title, isbn=None):
+            return {}
+
+        shelf.fetch_metadata = lookup
+        try:
+            with _logged() as logs:
+                filed = asyncio.run(shelf.process_item(source, "ebook", lib_a, lib_e, bot=_FakeBot()))
+        finally:
+            shelf.fetch_metadata = real_fetch
+        assert filed is False
+        assert list(lib_e.iterdir()) == [], "not filed as one mislabelled book"
+        assert shelf._item_signature(source) == before
+        assert any("Golden Son.epub" in r.getMessage() for r in logs)
+
+
 # --- wiring --------------------------------------------------------------------
 
 def test_scan_loop_records_a_failed_move_and_does_not_retry_it_while_unchanged():
     with tempfile.TemporaryDirectory() as tmp:
         source, hint, lib = _setup(tmp)
-        # Junk is deleted by the first attempt, before the move fails. That
-        # alone must not count as the download changing.
+        # A failed attempt leaves the junk where it is; nothing it does may
+        # count as the download changing.
         (source / "release.nfo").write_text("nfo")
         cog = object.__new__(shelf.BookshelfProcessorCog)
         cog.bot = _FakeBot()

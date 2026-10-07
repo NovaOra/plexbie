@@ -259,6 +259,33 @@ who's watching from one place instead of five.
   its files couldn't all be put back, or Plexbie stopped part-way, and the next
   attempt moves them back and files the book again into the same folder. If you
   delete that download instead, tidy the folder by hand, marker included.
+  The library folders must already exist, set as full paths: Plexbie never
+  creates one, since a missing library folder almost always means its volume
+  isn't mapped and the books would land inside the container. A blank,
+  relative or `/` setting counts as missing too. Finished downloads wait, with
+  one error in the log, until it's there. (A mapped folder that is empty
+  because the disk behind it isn't mounted looks the same as a new library, so
+  check your mappings.) If you don't use the bookshelf, a missing watch folder
+  is only noted once, and its library isn't checked. Everything else in a
+  download, such as a companion PDF, a booklet or extra artwork, is filed
+  beside the book. Junk (`.nfo`, `.sfv`, `.par2`, `.txt`, `.cue` and the
+  like), release clutter (archives and their parts, `.srr`, programs,
+  `Thumbs.db`) and NAS or macOS metadata folders (`@eaDir`, `.AppleDouble`,
+  `__MACOSX`) are deleted with the download. If another file can't be moved,
+  the download is kept and logged, and set aside until you change or remove
+  it. A download with no book in it is left exactly as it is. An ebook
+  download holding several different books (a pack of a series) isn't filed
+  as one book: it's logged and left for you to file by hand, or to move each
+  book into the watch folder on its own. It counts as several books when two
+  files of one format have names that don't contain each other, or the same
+  name in folders numbered differently (`Book 1`, `Book 2`). Files named as
+  extras (sample, excerpt, errata, preview, appendix, bonus and the like)
+  never count as another book, but any other pair, such as `Book.pdf` and
+  `Maps.pdf`, is left for you to file. A pack whose titles contain one another
+  (`Dune`, `Dune Messiah`) is filed as one book. Audiobook files are the formats
+  Audiobookshelf plays (mp3, m4a, m4b, aac, flac, ogg, oga, opus, wav, aiff,
+  mka, wma, mp4, webm and a few more) plus ape; ebooks are epub, pdf, mobi,
+  azw, azw3, kfx, cbz, cbr, djvu, fb2, lit and rtf.
   Request details (who asked, title, cover) come only from the hidden
   `.plexbie_hint_*.json` Plexbie writes beside the download when it sends a
   request; nothing inside a download is taken as request details. Cover art is
