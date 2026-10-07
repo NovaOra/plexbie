@@ -192,6 +192,23 @@ export const sampleExempt = (ratingKey: string, keep: boolean) => {
   kept.set(ratingKey, keep);
   return wait({ ok: true, message: keep ? "Kept permanently." : "No longer kept." });
 };
+/** The films and shows the sample Plex server has, for the "Keep a title forever" search. */
+const plexTitles = [
+  { ratingKey: "1", title: "Elephants Dream", type: "movie", year: 2006 },
+  { ratingKey: "2", title: "Radar Men from the Moon", type: "show", year: 1952 },
+  { ratingKey: "3", title: "Pepper & Carrot", type: "show", year: 2017 },
+  { ratingKey: "4", title: "The Daily Dweebs", type: "show", year: 2017 },
+  { ratingKey: "5", title: "Sintel", type: "movie", year: 2010 },
+  { ratingKey: "6", title: "Big Buck Bunny", type: "movie", year: 2008 },
+  { ratingKey: "7", title: "Spring", type: "movie", year: 2019 },
+  { ratingKey: "8", title: "Caminandes", type: "show", year: 2013 },
+  { ratingKey: "9", title: "Cosmos Laundromat", type: "movie", year: 2015 },
+];
+export const cleanupSearch = (q: string) => {
+  const words = q.trim().toLowerCase();
+  const found = words.length < 2 ? [] : plexTitles.filter((t) => t.title.toLowerCase().includes(words));
+  return wait(found.map((t) => ({ ...t, kept: kept.get(t.ratingKey) ?? t.ratingKey === "4" })), 300);
+};
 export const sampleRemove = (plexName: string) => {
   decided.add(`people:${plexName}`);
   return wait({ ok: true, message: `Removed ${plexName} from Plex.` });
@@ -306,7 +323,9 @@ export const admin = (section: string): Promise<unknown> => {
   const isKept = (r: Row) => kept.get(r.ratingKey) ?? c.exempt.some((e) => e.ratingKey === r.ratingKey);
   c.warning = c.warning.filter((r) => !isKept(r));
   c.upcoming = c.upcoming.filter((r) => !isKept(r));
-  c.exempt = all.filter(isKept).map(({ ratingKey, title, type }) => ({ ratingKey, title, type }));
+  // Titles kept from the search are on the server but not on the clock.
+  c.exempt = [...all, ...plexTitles.filter((t) => !all.some((r) => r.ratingKey === t.ratingKey))].filter(isKept)
+    .map(({ ratingKey, title, type }) => ({ ratingKey, title, type, year: plexTitles.find((t) => t.ratingKey === ratingKey)?.year ?? null }));
   return wait(data[section]);
 };
 

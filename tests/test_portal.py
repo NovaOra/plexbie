@@ -76,6 +76,10 @@ class _Actions(Actions):
         self.calls.append(("exempt", body))
         return {"ok": True, "message": "kept"}
 
+    async def cleanup_search(self, user, query):
+        self.calls.append(("cleanup_search", query))
+        return []
+
 
 def _client(user, *, readonly=False):
     services = FakeServices(Config())
@@ -123,6 +127,29 @@ def test_the_manage_api_is_admins_only():
     assert status == 403 and actions.calls == []
     status, actions = _run(MEMBER, "POST", "/api/admin/cleanup/exempt", headers=OK_HEADERS, body={"ratingKey": "5", "keep": True})
     assert status == 403 and actions.calls == []
+
+
+def test_the_keep_forever_title_search_is_admins_only_and_has_an_hourly_limit():
+    """Each search asks Plex once per film and TV library."""
+    from portal.actions import LIMITS
+
+    status, actions = _run(MEMBER, "GET", "/api/admin/cleanup/search?q=sintel")
+    assert status == 403 and actions.calls == []
+
+    async def scenario():
+        client, actions = _client(ADMIN)
+        await client.start_server()
+        try:
+            for _ in range(LIMITS["cleanup_search"][0] - 1):
+                actions.limit(ADMIN["user"]["id"], "cleanup_search")
+            statuses = [(await client.get("/api/admin/cleanup/search?q=sintel")).status for _ in range(2)]
+            return statuses, actions.calls
+        finally:
+            await client.close()
+
+    statuses, calls = asyncio.run(scenario())
+    assert statuses == [200, 429], statuses
+    assert calls == [("cleanup_search", "sintel")], "the refused search still reached Plex"
 
 
 def test_an_admin_can_decide():
@@ -1523,6 +1550,15 @@ def test_requests_name_who_asked_however_they_asked():
     assert Admin._who(names, {}) == "Unknown"
     # The join list passes a bare Discord id (its records are keyed by it).
     assert Admin._who(names, "55") == "alt" and Admin._who(names, 1234567) == "Discord user …4567"
+
+
+def test_kept_titles_stored_as_unknown_take_the_countdowns_name():
+    """Titles kept from the website used to be stored as "Unknown"; the countdown still lists them by name."""
+    from portal.admin import Admin
+    live = {"title": "Sintel", "type": "movie", "year": 2010}
+    assert Admin._kept("7", {"title": "Unknown", "type": "unknown"}, live) == {"ratingKey": "7", **live}
+    assert Admin._kept("7", {"title": "Spring", "type": "movie", "year": 2019}, live)["title"] == "Spring"
+    assert Admin._kept("7", {"title": "Unknown"}, {}) == {"ratingKey": "7", "title": "Unknown", "type": None, "year": None}
 
 
 def test_plex_index_reads_new_and_old_agent_ids():

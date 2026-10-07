@@ -208,8 +208,10 @@ export interface AdminCleanup {
   channels?: { id: string; name: string }[];
   warning: AdminCleanupRow[];
   upcoming: AdminCleanupRow[];
-  exempt: { ratingKey: string; title: string; type?: string | null }[];
+  exempt: { ratingKey: string; title: string; type?: string | null; year?: number | null }[];
 }
+/** A film or show the "Keep a title forever" search found on Plex (never one in a library cleanup skips). */
+export interface CleanupMatch { ratingKey: string; title: string; type: string; year?: number | null; kept: boolean }
 
 /** A shelf of titles to browse (Trending, Popular, Coming soon, Top rated, or a genre), from Seerr. */
 export interface DiscoverShelf { key: string; title: string; titles: Title[]; more: boolean }

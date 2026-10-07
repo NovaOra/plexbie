@@ -3,12 +3,13 @@
 import asyncio
 import copy
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Iterable
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from discord.ui import Button
+from plexapi.exceptions import NotFound as PlexNotFound
 
 from core.blocking import run_blocking
 from core.logging import get_logger
@@ -1432,16 +1433,19 @@ class MediaCleanupCog(commands.Cog):
             return f"{prefix} {title} ({year})"
         return f"{prefix} {title}"
 
-    async def _find_media_matches(self, title_query: str, media_type: Optional[str] = None) -> List[Dict]:
+    async def _find_media_matches(self, title_query: str, media_type: Optional[str] = None,
+                                  skip_libraries: Iterable[str] = ()) -> List[Dict]:
         """Find candidate Plex media items matching a title query."""
-        return await run_blocking(self._find_media_matches_blocking, title_query, media_type)
+        return await run_blocking(self._find_media_matches_blocking, title_query, media_type, skip_libraries)
 
-    def _find_media_matches_blocking(self, title_query: str, media_type: Optional[str] = None) -> List[Dict]:
+    def _find_media_matches_blocking(self, title_query: str, media_type: Optional[str] = None,
+                                     skip_libraries: Iterable[str] = ()) -> List[Dict]:
         """Blocking: search every eligible library for a title.
 
         Runs in a worker thread. One request per library section to search, and it
         already reduces everything to plain dicts, so no lazy plexapi object
-        escapes back to the event loop.
+        escapes back to the event loop. Libraries named in skip_libraries aren't
+        asked at all.
         """
         matches = []
         normalized_query = title_query.casefold().strip()
@@ -1450,6 +1454,8 @@ class MediaCleanupCog(commands.Cog):
             if library.type not in ["movie", "show"]:
                 continue
             if media_type and library.type != media_type:
+                continue
+            if library.title in skip_libraries:
                 continue
 
             try:
@@ -1485,6 +1491,27 @@ class MediaCleanupCog(commands.Cog):
             deduped.values(),
             key=lambda item: (item["score"], item["title"].casefold(), item.get("year") or 0, item["rating_key"]),
         )
+
+    async def describe_media(self, rating_key: str) -> Optional[Dict]:
+        """One film or show by its Plex rating key, described as the title search
+        describes a match; None when Plex has no film or show by that key."""
+        return await run_blocking(self._describe_media_blocking, rating_key)
+
+    def _describe_media_blocking(self, rating_key: str) -> Optional[Dict]:
+        """Blocking: runs in a worker thread, like the title search."""
+        try:
+            item = self.services.plex_server.fetchItem(int(rating_key))
+        except PlexNotFound:
+            return None
+        if item.type not in ["movie", "show"]:
+            return None
+        return {
+            "rating_key": str(item.ratingKey),
+            "title": item.title,
+            "type": item.type,
+            "year": getattr(item, "year", None),
+            "added_at": item.addedAt.isoformat() if getattr(item, "addedAt", None) else None,
+        }
 
     async def _resolve_single_media_match(self, title_query: str, media_type: Optional[str] = None) -> tuple[Optional[Dict], List[Dict]]:
         """Resolve a query to one media item, preferring exact title matches"""

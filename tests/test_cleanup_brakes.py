@@ -322,3 +322,16 @@ def test_the_website_countdown_waits_for_the_warning_too():
     bot = {d["rating_key"]: 0 for d in delete}
     bot.update({n["rating_key"]: n["days_until_deletion"] for n in notify})
     assert bot == {rk: c["daysLeft"] for rk, c in out.items() if c["warning"]}
+
+
+def test_the_website_countdown_carries_each_titles_year():
+    """Keeping a title from the countdown stores its year, as /cleanup exempt add does."""
+    class Dated(_Plex):
+        def query(self, path):
+            root = super().query(path)
+            for el in root.findall("Video"):
+                el.set("year", "2010" if el.get("ratingKey") == "1" else "")
+            return root
+
+    out = countdown.compute(Dated([("1", "Sintel", 10), ("2", "No year", 10)]), {"inactivity_days": 90}, [], {})
+    assert (out["1"]["year"], out["2"]["year"]) == (2010, None)

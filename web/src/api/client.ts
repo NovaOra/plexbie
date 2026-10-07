@@ -1,4 +1,4 @@
-import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
+import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupMatch, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
 import * as sample from "./sample";
 export { DEMO } from "./sample";
 
@@ -92,6 +92,9 @@ export const api = {
     SAMPLE ? sample.sampleRemove(plexName) as Promise<Ack> : post("/admin/people/remove", { plexName }),
   cleanupSettings: (change: Partial<CleanupSettings>): Promise<Ack> =>
     SAMPLE ? sample.sampleCleanupSettings(change) : post("/admin/cleanup/settings", change),
+  /** Films and shows on Plex by that title, for keeping one that isn't on the clock yet. */
+  cleanupSearch: (q: string): Promise<CleanupMatch[]> =>
+    SAMPLE ? sample.cleanupSearch(q) : call(`/admin/cleanup/search?q=${enc(q)}`),
   cleanupScan: (): Promise<Ack> =>
     SAMPLE ? sample.wait({ ok: true, message: "Scan done: 2 titles in the warning window, 0 were removed." }, 1500) : post("/admin/cleanup/scan"),
   linkCandidates: (): Promise<{ discord: { id: string; name: string; username: string }[] }> =>

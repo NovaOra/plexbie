@@ -12,7 +12,7 @@ import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { api, type Ack } from "../api/client";
-import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
+import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, CleanupMatch, AdminHelp, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { Journey, LiveProgress } from "../components/motion";
@@ -1107,6 +1107,54 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
   );
 }
 
+/**
+ * Keep any film or show, not only the ones on the clock: the same Plex title search
+ * as /cleanup exempt add in Discord, without the libraries cleanup skips.
+ */
+function KeepSearch({ kept, onKeep }: { kept: Set<string>; onKeep: (m: CleanupMatch, on: boolean) => void }) {
+  const { readOnly } = useManage();
+  const [q, setQ] = useState("");
+  // The read-only preview's server has no Plex search behind it.
+  const words = !readOnly && q.trim().length >= 2 ? q.trim() : "";
+  const { found, searching, failed, retry } = useDebouncedSearch(words, (w) => api.cleanupSearch(w), 300);
+  return (
+    <section className="section">
+      <h2>Keep a title forever</h2>
+      <p className="muted">Search Plex for any film or show, even one nowhere near the clock, and cleanup will never touch it.</p>
+      {readOnly
+        ? <p className="muted m-actions__note">Switched off in the read-only preview.</p>
+        : <SearchField label="Search Plex by title" value={q} onChange={setQ} className="m-keepsearch" />}
+      {words && failed ? <LoadFailed text="Couldn’t search Plex just now." onRetry={retry} /> : words ? (
+        <p className="muted m-all__count" role="status">
+          {searching || !found ? "Searching…" : found.length ? `${found.length === 1 ? "1 title" : `${found.length} titles`} found` : "Nothing on Plex by that title."}
+        </p>
+      ) : null}
+      {words && found?.length ? (
+        <ul className="m-rows">
+          {found.map((m) => {
+            const on = kept.has(m.ratingKey);
+            return (
+              <li key={m.ratingKey}>
+                <article className="m-leaving">
+                  <span className={`m-ring ${on ? "is-kept" : "is-found"}`} aria-hidden>{on ? <ShieldCheck size={20} /> : <Hourglass size={20} />}</span>
+                  <div className="m-leaving__body">
+                    <h3 className="m-card__title">{m.title}</h3>
+                    <span className="muted m-person__meta">{m.type === "show" ? "TV" : "Film"}{m.year ? ` · ${m.year}` : ""} · {on ? "never removed" : "cleanup can remove it"}</span>
+                  </div>
+                  <span className="m-keep">
+                    <span aria-hidden>Keep</span>
+                    <Switch on={on} label={`Keep ${m.title} forever`} disabled={readOnly} onChange={() => onKeep(m, !on)} />
+                  </span>
+                </article>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 function CleanupTab() {
   const { data, patch, toast, readOnly } = useManage();
   const { act, later } = useAct();
@@ -1115,14 +1163,14 @@ function CleanupTab() {
   if (!res) return <div className="skeleton" style={{ height: 300 }} />;
   const { settings, warning, upcoming, exempt } = res;
 
-  const keep = async (row: { ratingKey: string; title: string; type?: string | null }, on: boolean, quiet = false) => {
+  const keep = async (row: { ratingKey: string; title: string; type?: string | null; year?: number | null }, on: boolean, quiet = false) => {
     // Move it straight away; the server confirms, and a failure puts it back.
     patch("cleanup", (d) => on
       ? {
         ...d,
         warning: d.warning.filter((c) => c.ratingKey !== row.ratingKey),
         upcoming: d.upcoming.filter((c) => c.ratingKey !== row.ratingKey),
-        exempt: [{ ratingKey: row.ratingKey, title: row.title, type: row.type ?? null }, ...d.exempt.filter((e) => e.ratingKey !== row.ratingKey)],
+        exempt: [{ ratingKey: row.ratingKey, title: row.title, type: row.type ?? null, year: row.year ?? null }, ...d.exempt.filter((e) => e.ratingKey !== row.ratingKey)],
       }
       : { ...d, exempt: d.exempt.filter((e) => e.ratingKey !== row.ratingKey) });
     const out = await act(null, () => api.exempt(row.ratingKey, on), { buzzOnFail: true });
@@ -1186,7 +1234,7 @@ function CleanupTab() {
                       <span className="m-ring is-kept" aria-hidden><ShieldCheck size={20} /></span>
                       <div className="m-leaving__body">
                         <h3 className="m-card__title">{e.title}</h3>
-                        <span className="muted m-person__meta">{e.type === "show" ? "TV" : e.type === "movie" ? "Film" : e.type ?? "Title"} · never removed</span>
+                        <span className="muted m-person__meta">{e.type === "show" ? "TV" : e.type === "movie" ? "Film" : e.type ?? "Title"}{e.year ? ` · ${e.year}` : ""} · never removed</span>
                       </div>
                       <span className="m-keep">
                         <span aria-hidden>Keep</span>
@@ -1197,10 +1245,12 @@ function CleanupTab() {
                 ))}
               </AnimatePresence>
             </ul>
-            {!exempt.length ? <AllClear title="Nothing kept forever yet">Flip “Keep” on any title and cleanup will never touch it.</AllClear> : null}
+            {!exempt.length ? <AllClear title="Nothing kept forever yet">Flip “Keep” on any title, or search for one below, and cleanup will never touch it.</AllClear> : null}
           </>
         )}
       </section>
+
+      <KeepSearch kept={new Set(exempt.map((e) => e.ratingKey))} onKeep={(m, on) => void keep(m, on)} />
     </div>
   );
 }

@@ -1450,6 +1450,9 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 .m-ring__fill { stroke: var(--screen); stroke-linecap: round; transition: stroke-dashoffset 600ms var(--ease-out); }
 .m-ring.is-hot .m-ring__fill { stroke: var(--tally); }
 .m-ring.is-kept { border-radius: 50%; background: rgb(255 209 228 / 0.12); color: var(--screen); }
+.m-ring.is-found { border-radius: 50%; background: var(--panel-raised); color: var(--slate-ink); }
+.m-keepsearch { display: flex; max-width: 520px; margin: 4px 0 12px; }
+.m-keepsearch input { flex: 1; min-width: 0; }
 .m-person__plexname { font-size: 0.8rem; font-weight: 500; }
 .m-keep { display: inline-flex; flex-direction: column-reverse; align-items: center; gap: 4px; font-size: 0.68rem; font-weight: 760; text-transform: uppercase; letter-spacing: 0.06em; color: var(--slate-ink); }
 @media (min-width: 760px) { .m-keep { flex-direction: row; gap: 10px; font-size: 0.82rem; text-transform: none; letter-spacing: 0; } }

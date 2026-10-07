@@ -147,7 +147,9 @@ def compute(server, config: dict, requests: List[dict],
             judged += 1
             rk = el.get("ratingKey")
             tmdb = _tmdb(el)
-            entry = {"ratingKey": rk, "tmdb": tmdb, "title": el.get("title"), "type": stype}
+            year = el.get("year") or ""
+            entry = {"ratingKey": rk, "tmdb": tmdb, "title": el.get("title"), "type": stype,
+                     "year": int(year) if year.isdigit() else None}
             if rk in exempt:
                 out[rk] = {**entry, "exempt": True}
                 continue

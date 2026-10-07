@@ -492,9 +492,17 @@ class Admin:
             "channels": self._text_channels(),
             "warning": [self._row(c) for c in leaving if c.get("warning")],
             "upcoming": [self._row(c) for c in leaving if not c.get("warning")][:30],
-            "exempt": [{"ratingKey": rk, "title": (m or {}).get("title") or (clock.get(rk) or {}).get("title") or "Unknown",
-                        "type": (m or {}).get("type")} for rk, m in exempt_meta.items()],
+            "exempt": [self._kept(rk, m or {}, clock.get(rk) or {}) for rk, m in exempt_meta.items()],
         }
+
+    @staticmethod
+    def _kept(rk: str, stored: dict, live: dict) -> dict:
+        """A kept title. Older installs stored "Unknown" (type "unknown") for titles
+        kept from the website; the countdown, which still lists kept titles, names them."""
+        title = stored.get("title") if stored.get("title") != "Unknown" else None
+        kind = stored.get("type") if stored.get("type") != "unknown" else None
+        return {"ratingKey": rk, "title": title or live.get("title") or "Unknown",
+                "type": kind or live.get("type"), "year": stored.get("year") or live.get("year")}
 
     async def _library_names(self) -> List[str]:
         """Plex library names, for choosing which ones cleanup skips."""

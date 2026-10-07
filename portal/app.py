@@ -374,6 +374,15 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return _err(404, "Not found.")
         return web.json_response(await message_log.conversation(who))
     r.add_get("/api/admin/messages/{who}", safe(admin_conversation))
+
+    async def admin_cleanup_search(request):
+        # Manage → Cleanup's "Keep a title forever" box. Each search asks Plex once per library.
+        user = await admin_only(request)
+        if actions is None:
+            return _err(404, "Not found.")
+        actions.limit(user["user"]["id"], "cleanup_search")
+        return web.json_response(await actions.cleanup_search(user, request.query.get("q", "")))
+    r.add_get("/api/admin/cleanup/search", safe(admin_cleanup_search))
     r.add_get("/api/admin/request/{key:\\d+}", safe(admin_request))
     r.add_get("/api/admin/ticket/{id:[0-9a-f]{12}}", safe(admin_ticket_view))
 

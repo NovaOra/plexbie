@@ -612,7 +612,9 @@ so the household can do everything above without Discord:
   invite links, manage people and Discord links, change cleanup settings (going
   live, and switching cleanup on while practice mode is off, take a press and
   hold; a typed number of days is saved when you leave the field or press
-  Enter) and keep titles forever, post as Plexbie, see who brought whom and
+  Enter) and keep titles forever (one from the countdown, or any film or show
+  found by title like `/cleanup exempt add`, leaving out the libraries cleanup
+  skips), post as Plexbie, see who brought whom and
   the live watch party, and check service health. Each command above has its
   counterpart there, and both sides run the same code. Left open, Manage keeps
   itself current: the section on screen and the counts beside it are asked for
@@ -1043,7 +1045,9 @@ docker exec plexbie python -c "import sqlite3; db = sqlite3.connect('/app/config
   endless calls to Seerr, TMDB and Open Library from your server: 600 searches and title
   pages an hour (the one search box and "More like this" included), a separate 600 pages
   of Discover shelves, and 120 saves of their language choices, with smaller limits on
-  requests, alerts and help. Past a limit the website and app say to try again later.
+  requests, alerts and help. An admin's title searches in Manage → Cleanup ask Plex once
+  per film and TV library, so they have their own limit of 300 an hour. Past a limit the
+  website and app say to try again later.
 - **Never commit `config/.env`.** It is gitignored, along with `config/*.db` and
   `logs/`.
 - **Only press Allow on a Plex sign-in you started yourself.** Every Plex sign-in

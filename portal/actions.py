@@ -36,7 +36,8 @@ logger = get_logger(__name__)
 
 #: (max actions, per seconds) by kind.
 LIMITS = {"request": (20, 3600), "join": (3, 86400), "admin": (120, 3600), "push_test": (6, 3600), "help": (5, 86400),
-          "push": (20, 3600), "lookup": (600, 3600), "browse": (600, 3600), "prefs": (120, 3600)}
+          "push": (20, 3600), "lookup": (600, 3600), "browse": (600, 3600), "prefs": (120, 3600),
+          "cleanup_search": (300, 3600)}
 
 #: What the website shows when the cleanup cog won't touch its settings: it hasn't
 #: been able to read the stored ones, or couldn't store a change.
@@ -395,16 +396,24 @@ class Actions:
         # wait has the next load swap in a new dict, and an exemption added to the old
         # one would be reported as kept but never stored.
         clock = await self.data.countdown() if keep else {}
+        info = clock.get(rk) or {}
+        if keep and not info.get("title"):
+            # Found by searching, or not in the countdown at all: what Plex calls it,
+            # as /cleanup exempt add stores it. A key Plex doesn't have is refused.
+            if not cog.services.plex_server:
+                raise web.HTTPServiceUnavailable(text='{"error":"Plex isn\'t connected."}', content_type="application/json")
+            info = await cog.describe_media(rk)
+            if not info:
+                raise web.HTTPNotFound(text='{"error":"Plex has no film or show by that key."}', content_type="application/json")
         if not await cog.load_data():
             return {"ok": False, "message": CLEANUP_UNREADABLE}
         items = cog.config.setdefault("exempt_items", {})
         if keep:
-            info = clock.get(rk) or {}
             items[rk] = {
-                "title": info.get("title") or "Unknown",
+                "title": info["title"],
                 "type": info.get("type"),
-                "year": None,
-                "added_at": None,
+                "year": info.get("year"),
+                "added_at": info.get("added_at"),
                 "exempted_at": datetime.now(timezone.utc).isoformat(),
             }
         else:
@@ -414,6 +423,22 @@ class Actions:
         self.data.cache.drop("cleanup:countdown")
         logger.info(f"{self.actor(user)} {'exempted' if keep else 'un-exempted'} {rk} from cleanup on the website")
         return {"ok": True, "message": "Kept permanently." if keep else "No longer kept."}
+
+    async def cleanup_search(self, user: dict, query: str) -> list:
+        """Manage → Cleanup's "Keep a title forever" box: the title search /cleanup
+        exempt add uses, leaving out the libraries cleanup skips. Best matches first."""
+        words = (query or "").strip()[:100]
+        if len(words) < 2:
+            return []
+        cog = self._cleanup_cog()
+        if not cog.services.plex_server:
+            raise web.HTTPServiceUnavailable(text='{"error":"Plex isn\'t connected."}', content_type="application/json")
+        config = await self.data.cleanup_config()
+        skipped = set(config.get("exclude_libraries") or [])
+        kept = config.get("exempt_items") or {}
+        found = await cog._find_media_matches(words, skip_libraries=skipped)
+        return [{"ratingKey": m["rating_key"], "title": m["title"], "type": m["type"], "year": m.get("year"),
+                 "kept": m["rating_key"] in kept} for m in found[:20]]
 
     def _cleanup_cog(self):
         cog = self.bot.get_cog("MediaCleanupCog") if self.bot else None

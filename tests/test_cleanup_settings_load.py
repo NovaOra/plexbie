@@ -526,6 +526,139 @@ def test_website_keep_forever_is_stored_even_if_a_save_fails_meanwhile():
     assert {**stored, "exempt_items": STORED["exempt_items"]} == STORED
 
 
+# --- keeping any title from the website, as /cleanup exempt add does ---
+
+class _Title:
+    def __init__(self, rk, title, kind, year):
+        self.ratingKey, self.title, self.type, self.year = rk, title, kind, year
+        self.addedAt = datetime(2024, 3, 1, tzinfo=timezone.utc)
+
+
+class _Section:
+    def __init__(self, title, kind, items):
+        self.title, self.type, self.items = title, kind, items
+        self.searched = 0
+
+    def search(self, title=None):
+        self.searched += 1
+        return [i for i in self.items if title.casefold() in i.title.casefold()]
+
+
+class _Plex:
+    """Films and shows in three libraries; STORED skips "Home Videos" and keeps 123."""
+
+    def __init__(self):
+        self.shelves = [
+            _Section("Movies", "movie", [_Title(201, "Sintel", "movie", 2010), _Title(123, "Spring", "movie", 2019)]),
+            _Section("TV Shows", "show", [_Title(301, "Caminandes", "show", 2013)]),
+            _Section("Home Videos", "movie", [_Title(401, "Sintel", "movie", 2021)]),
+        ]
+        self.library = self
+        self.fetched = []
+
+    def sections(self):
+        return self.shelves
+
+    def fetchItem(self, key):
+        from plexapi.exceptions import NotFound
+
+        self.fetched.append(key)
+        for section in self.shelves:
+            for item in section.items:
+                if item.ratingKey == key:
+                    return item
+        raise NotFound(f"no item {key}")
+
+
+def _keep_website(cog, countdown=None):
+    """_website, with the cleanup settings read the way the portal reads them."""
+    from database.kv_store import kv_get
+
+    actions = _website(cog, countdown)
+
+    async def cleanup_config():
+        return {**cleanup.DEFAULT_CONFIG, **(await kv_get(NS, "config", {}) or {})}
+    actions.data.cleanup_config = cleanup_config
+    return actions
+
+
+def test_website_keep_forever_stores_what_plex_calls_a_title_the_countdown_does_not_list():
+    """The website only had the countdown to name a title, so one found by searching
+    (or in a list the page cut short) was kept as "Unknown", with no type or year."""
+    plex = _Plex()
+
+    async def body(cog):
+        cog.services.plex_server = plex
+        result = await _keep_website(cog).exempt(ADMIN, {"ratingKey": "301", "keep": True})
+        return result, cog.config
+
+    (result, _), stored = _run(body)
+    assert result == {"ok": True, "message": "Kept permanently."}
+    kept = stored["exempt_items"]["301"]
+    assert (kept["title"], kept["type"], kept["year"]) == ("Caminandes", "show", 2013), kept
+    assert kept["added_at"] == "2024-03-01T00:00:00+00:00"
+    assert plex.fetched == [301]
+
+
+def test_website_keep_forever_takes_the_year_from_the_countdown():
+    async def countdown():
+        return {"5": {"ratingKey": "5", "title": "Old Film", "type": "movie", "year": 1999}}
+
+    async def body(cog):
+        return await _keep_website(cog, countdown).exempt(ADMIN, {"ratingKey": "5", "keep": True})
+
+    result, stored = _run(body)
+    assert result["ok"] is True
+    assert {k: stored["exempt_items"]["5"][k] for k in ("title", "type", "year")} == {"title": "Old Film", "type": "movie", "year": 1999}
+
+
+def test_website_keep_forever_refuses_a_title_plex_does_not_have():
+    async def body(cog):
+        cog.services.plex_server = _Plex()
+        try:
+            await _keep_website(cog).exempt(ADMIN, {"ratingKey": "999", "keep": True})
+        except Exception as e:
+            return getattr(e, "status", type(e).__name__)
+        return "kept"
+
+    status, stored = _run(body)
+    assert status == 404, status
+    assert stored == STORED, "a title Plex doesn't have was kept anyway"
+
+
+def test_website_keep_forever_says_plex_is_away_rather_than_that_it_lacks_the_title():
+    """With cleanup off the countdown is empty, so Plex has to be asked; with Plex
+    disconnected that's a 503, not "Plex has no film or show by that key"."""
+    async def body(cog):
+        cog.services.plex_server = None
+        try:
+            await _keep_website(cog).exempt(ADMIN, {"ratingKey": "301", "keep": True})
+        except Exception as e:
+            return getattr(e, "status", type(e).__name__), getattr(e, "text", "")
+        return "kept", ""
+
+    (status, text), stored = _run(body)
+    assert status == 503 and "isn't connected" in text, (status, text)
+    assert stored == STORED, "a title was kept without a name"
+
+
+def test_website_title_search_skips_the_libraries_cleanup_skips_and_says_what_is_kept():
+    plex = _Plex()
+
+    async def body(cog):
+        cog.services.plex_server = plex
+        actions = _keep_website(cog)
+        return (await actions.cleanup_search(ADMIN, "sin"), await actions.cleanup_search(ADMIN, "SPRING"),
+                await actions.cleanup_search(ADMIN, " s "))
+
+    (sintel, spring, short), stored = _run(body)
+    assert sintel == [{"ratingKey": "201", "title": "Sintel", "type": "movie", "year": 2010, "kept": False}], sintel
+    assert [s.searched for s in plex.shelves] == [2, 2, 0], "a library cleanup skips was still searched"
+    assert spring == [{"ratingKey": "123", "title": "Spring", "type": "movie", "year": 2019, "kept": True}], spring
+    assert short == [], "one letter would list most of the library"
+    assert stored == STORED, "searching changed the cleanup settings"
+
+
 # --- the defaults themselves ---
 
 def test_default_config_is_never_shared_with_a_cog():
