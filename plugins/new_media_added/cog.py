@@ -224,12 +224,13 @@ class NewMediaAddedCog(commands.Cog):
         self._progress = None
         self._show_ids_cache: Dict[str, tuple] = {}
         self._grabs_checked: set = set()       # Radarr downloads already checked (check_movie_grabs)
-        self.cleanup_old_batches.start()
-        self.sweep_recently_added.start()
-        self.live_progress.start()
 
     async def cog_load(self):
         self.bot.add_view(ArrivalsRoleView(self.services))
+        # Started last: a load that fails before this point leaves nothing running.
+        self.cleanup_old_batches.start()
+        self.sweep_recently_added.start()
+        self.live_progress.start()
 
     @tasks.loop(minutes=SWEEP_MINUTES)
     async def sweep_recently_added(self):

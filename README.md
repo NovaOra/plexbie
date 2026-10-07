@@ -837,6 +837,13 @@ module, instantiates that class and registers it — it does **not** call a
 
 Persistent views must be registered in `cog_load`, not `setup`.
 
+Start background loops (`tasks.loop`) at the end of `cog_load`, never in
+`__init__`, and stop them in `cog_unload`. If a plugin fails to load (an error
+in `cog_load`, or a command name that is already taken), the loader removes the
+event listeners and slash commands it had already registered and calls its
+`cog_unload`, so its loops stop too. Anything else the plugin starts is yours to
+stop in `cog_unload`.
+
 To turn a plugin off, set `"enabled": false` and restart. Top-level command names
 must be unique across **all** plugins, enabled or not; if two collide, one fails
 to load and the log names the command.

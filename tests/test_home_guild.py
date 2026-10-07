@@ -290,7 +290,7 @@ def test_owner_and_admin_role_run_admin_commands_without_administrator():
 
     bot = commands.Bot(command_prefix="!", intents=discord.Intents.none(), tree_cls=permissions.HomeGuildTree)
     bot.services = SimpleNamespace(config=PermConfig)
-    cog = WatchPartyCog.__new__(WatchPartyCog)  # not __init__: that starts the credit loops
+    cog = WatchPartyCog.__new__(WatchPartyCog)  # not __init__: it needs the full config
     cog.active_party = None
     bot.tree.add_command(cog.watchparty_active)
 

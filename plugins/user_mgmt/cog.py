@@ -267,16 +267,15 @@ class UserMgmtCog(commands.Cog):
     def __init__(self, bot: commands.Bot, services: BotServices):
         self.bot = bot
         self.services = services
-
-        # Start background tasks
-        self.check_inactive_users.start()
-        self.auto_link_users.start()
         self._link_task: Optional[asyncio.Task] = None
 
     async def cog_load(self):
         from webhooks.tautulli_handler import recently_live
         if await recently_live():
             self.events_connected()
+        # Started last: a load that fails before this point leaves nothing running.
+        self.check_inactive_users.start()
+        self.auto_link_users.start()
 
     def events_connected(self) -> None:
         """Tautulli is sending playback events: a viewer Plexbie doesn't know yet

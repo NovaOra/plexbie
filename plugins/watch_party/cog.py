@@ -68,8 +68,11 @@ class WatchPartyCog(commands.Cog):
         # Cache of discord_id -> plex_username for linked users
         self._linked_users_cache: Dict[int, str] = {}
 
-        # Start background tasks
         self.accumulate_credits.change_interval(seconds=services.config.watch_party_credit_interval)
+
+    async def cog_load(self):
+        # Started here, not in __init__: add_cog runs this, so a plugin that
+        # never loads never starts them.
         self.accumulate_credits.start()
         self.refresh_linked_users_cache.start()
 

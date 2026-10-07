@@ -354,7 +354,6 @@ class MediaCleanupCog(commands.Cog):
         #: Held for a whole scan, daily or on demand: two at once would send the same
         #: removals and post every warning twice.
         self._scan_lock = asyncio.Lock()
-        self.daily_cleanup_check.start()
 
         # Register persistent view
         self.bot.add_view(CleanupControlPanel(self))
@@ -369,6 +368,9 @@ class MediaCleanupCog(commands.Cog):
         hiccup here can't stop the plugin loading; a failure is logged and retried on
         first use."""
         await self.load_data()
+        # Started here, not in __init__: add_cog runs this, so a plugin that
+        # never loads never starts the daily cleanup.
+        self.daily_cleanup_check.start()
 
     async def load_data(self) -> bool:
         """Load config and tracking data from database. True once they're in memory.

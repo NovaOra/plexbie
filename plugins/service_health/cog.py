@@ -59,9 +59,12 @@ class ServiceHealthCog(commands.Cog):
         # Admin channel for alerts
         self.admin_channel: Optional[discord.TextChannel] = None
 
-        # Start health check task
-        # Set interval from config and start
+        # Interval from config; cog_load starts the loop
         self.health_check_loop.change_interval(seconds=services.config.health_check_interval)
+
+    async def cog_load(self):
+        # Started here, not in __init__: add_cog runs this, so a plugin that
+        # never loads never starts it.
         self.health_check_loop.start()
 
     def cog_unload(self):

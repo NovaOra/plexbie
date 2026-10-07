@@ -94,7 +94,26 @@ class PluginManager:
                 cog_instance = cog_class(self.bot, self.services)
 
                 # Add to bot
-                await self.bot.add_cog(cog_instance)
+                try:
+                    await self.bot.add_cog(cog_instance)
+                except Exception:
+                    # add_cog runs cog_load, then adds the cog's listeners, then
+                    # its slash commands one at a time. It doesn't undo any of
+                    # that or call cog_unload when cog_load fails or a slash
+                    # command name is already taken. Take back the listeners and
+                    # the commands this cog added (only where the tree holds this
+                    # cog's own command, never the other plugin's of the same
+                    # name), then stop its loops.
+                    for name, listener in cog_instance.get_listeners():
+                        self.bot.remove_listener(listener, name)
+                    for command in cog_instance.__cog_app_commands__:
+                        if self.bot.tree.get_command(command.name) is command:
+                            self.bot.tree.remove_command(command.name)
+                    try:
+                        await discord.utils.maybe_coroutine(cog_instance.cog_unload)
+                    except Exception as e:
+                        logger.error(f"Plugin {plugin_name}: stopping it after the failed load failed: {e}")
+                    raise
                 self.loaded_cogs.append(plugin_name)
                 # Suppress individual plugin load messages
             else:

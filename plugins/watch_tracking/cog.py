@@ -85,16 +85,15 @@ class WatchTrackingCog(commands.Cog):
         if not STREAKS_FILE.exists():
             STREAKS_FILE.write_text("{}")
 
-        # Start background tasks
-        self.update_now_watching.start()
-        self.update_leaderboard.start()
-        self.update_watch_streaks.start()
-        self.update_streaks_display.start()
-
     async def cog_load(self):
         from webhooks.tautulli_handler import recently_live
         if await recently_live():
             self.events_connected()
+        # Started last: a load that fails before this point leaves nothing running.
+        self.update_now_watching.start()
+        self.update_leaderboard.start()
+        self.update_watch_streaks.start()
+        self.update_streaks_display.start()
 
     def events_connected(self) -> None:
         """Tautulli is sending playback events: refresh on those, and poll only as a
