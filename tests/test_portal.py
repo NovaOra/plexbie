@@ -825,6 +825,38 @@ def test_closed_backlog_requests_are_neither_waiting_nor_decisions():
     assert stages == {"Old": "closed", "Waiting": "requested"}
 
 
+def test_manage_links_a_seerr_request_to_its_announcement():
+    from database.request_store import save_request, set_fields
+    from portal.admin import Admin
+    from portal.data import Data
+
+    data = Data(FakeServices(Config()))
+    data.config.guild_id, data.config.admin_channel_id = 1, 9
+
+    async def video(media, seasons):
+        return {"stage": "requested"}
+    data.progress.video = video
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(5000, user_id=7, media={"id": 1, "media_type": "movie", "title": "From Discord"})
+        # Made in Seerr, keyed by Seerr's number: one announced in the admin channel, one not.
+        for number, title in ((41, "Announced"), (42, "Unannounced")):
+            await save_request(number, user_id=7, media={"id": number, "media_type": "movie", "title": title},
+                               extra={"source": "seerr", "overseerr_request_id": number})
+        await set_fields(41, admin_card_id=9001)
+        admin = Admin(data)
+        return await admin.requests(), await admin.request_detail("41"), await admin.request_detail("42")
+
+    listed, announced, unannounced = asyncio.run(scenario())
+    links = {r["title"]: r["discordUrl"] for r in listed["pending"] + listed["older"]}
+    assert links == {"From Discord": "https://discord.com/channels/1/9/5000",
+                     "Announced": "https://discord.com/channels/1/9/9001",
+                     "Unannounced": None}, links
+    assert announced["discordUrl"] == "https://discord.com/channels/1/9/9001"
+    assert unannounced["discordUrl"] is None
+
+
 # --------------------------------------------------------- download progress
 def test_a_season_pack_counts_once_and_sabnzbd_numbers_win():
     """The real Simpsons case: Sonarr listed a 13-episode pack 13 times at full size,

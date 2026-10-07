@@ -83,9 +83,11 @@ def looks_foreign_language(release_title: str) -> bool:
 
 
 
-#: What admins are told about a show with no TheTVDB entry.
-NO_TVDB_NOTE = ("⚠️ This show isn't on TheTVDB, so Sonarr can't take it and Seerr would drop the request. "
-                "It wasn't sent to Seerr: it needs a hand download, then Plexbie sees it on Plex.")
+#: Why a show with no TheTVDB entry wasn't sent to Seerr, as a plain sentence.
+NO_TVDB_REASON = ("This show isn't on TheTVDB, so Sonarr can't take it and Seerr would drop the request. "
+                  "It wasn't sent to Seerr: it needs a hand download, then Plexbie sees it on Plex.")
+#: What admins are told about a show with no TheTVDB entry, on its card.
+NO_TVDB_NOTE = f"⚠️ {NO_TVDB_REASON}"
 
 
 async def no_tvdb_entry(services, tmdb_id) -> bool:
@@ -435,6 +437,11 @@ class MediaTypeSelectView(RequesterOnlyView):
 
     @discord.ui.button(label="TV & Movie", style=discord.ButtonStyle.primary, emoji="🎬")
     async def tv_movie(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.cog.services.config.tmdb_api_key:
+            await interaction.response.send_message(
+                "Search needs a TMDB API key. Ask an admin to add one in Plexbie's setup.", ephemeral=True
+            )
+            return
         modal = TVMovieRequestModal(cog=self.cog)
         await interaction.response.send_modal(modal)
 
@@ -1199,7 +1206,7 @@ class BookAdminApprovalView(_RequestApprovalBase):
 
         title = self._title()
         if format_type == 'both':
-            msg = f"✅ **Your request for **{title}** has been approved!**\n"
+            msg = f"✅ Your request for **{title}** has been approved!\n"
             msg += "📖 Ebook: Sent for download\n" if ebook_ok else "📖 Ebook: ⚠️ Not available on indexers\n"
             msg += "🎧 Audiobook: Sent for download" if audio_ok else "🎧 Audiobook: ⚠️ Not available on indexers"
         else:
@@ -1224,11 +1231,8 @@ class BookAdminApprovalView(_RequestApprovalBase):
     @single_flight
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         logger.info(f"Book approve button clicked by {interaction.user} for message {interaction.message.id}")
-
-        # Disable buttons immediately to prevent double-clicks
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(view=self)
+        # Answered now: a website decision may hold the lock for longer than Discord waits.
+        await interaction.response.defer()
 
         # The same lock as the website and Seerr, then the stored status: one decision per request.
         async with _decision_lock(interaction.message.id):
@@ -1241,10 +1245,15 @@ class BookAdminApprovalView(_RequestApprovalBase):
             req = type(self)()
             if not await req._load_from_saved(interaction.message.id, interaction.client):
                 logger.error(f"Could not load book request data for message {interaction.message.id}")
-                await interaction.followup.send("❌ Could not find request data. Please re-submit.", ephemeral=True)
+                await interaction.followup.send("❌ Couldn't load this request. Try again, or decide it on the website.", ephemeral=True)
                 return
 
             logger.info(f"Book data loaded: {req.book.get('title', '?')}, format: {req.book.get('request_format', '?')}")
+
+            # Greyed out only now: a request that couldn't be loaded keeps its buttons.
+            for child in self.children:
+                child.disabled = True
+            await _edit_card(interaction.message, view=self)
 
             result = await req._approve_core()
             if not result["download_success"]:
@@ -1694,7 +1703,7 @@ class AdminApprovalView(_RequestApprovalBase):
                 "admin_note": NO_TVDB_NOTE,
                 "user_message": f"✅ Your request for **{title}** was approved. It can't be fetched automatically, "
                                 "so an admin will add it by hand. That can take a little longer.",
-                "followup_message": f"Approved, but {NO_TVDB_NOTE[0].lower()}{NO_TVDB_NOTE[1:]}",
+                "followup_message": f"Approved, but {NO_TVDB_REASON[0].lower()}{NO_TVDB_REASON[1:]}",
             }
         if submitted and self.media.get("media_type") != "movie" and self.media.get("id"):
             # Seerr adds the show to Sonarr; Sonarr's search-on-add skips episodes
@@ -1749,7 +1758,7 @@ class AdminApprovalView(_RequestApprovalBase):
             req = type(self)()
             if not await req._load_from_saved(interaction.message.id, interaction.client):
                 logger.error(f"Could not load media request data for message {interaction.message.id}")
-                await interaction.followup.send("❌ Could not find request data. Please re-submit.", ephemeral=True)
+                await interaction.followup.send("❌ Couldn't load this request. Try again, or decide it on the website.", ephemeral=True)
                 return
 
             # Fulfill by restoring monitoring if the item already exists, otherwise submit to Seerr
@@ -1945,11 +1954,9 @@ class MediaRequestsCog(commands.Cog):
     async def list_requests(self, interaction: discord.Interaction):
         """Show requests with no recorded outcome, newest first.
 
-        Outcome recording started on 2026-09-30. Everything submitted before that
-        has no outcome stored, because nothing ever updated the status field - so
-        this cannot tell an untouched request from one approved months ago. Rather
-        than guess, those are counted separately and each entry carries a link to
-        its approval message, where the presence of buttons is the real answer.
+        Each entry links to its card in the admin channel: a Discord request's
+        approval message, or the announcement of one made in Seerr (which is
+        saved under Seerr's own number, so it has no link if it wasn't announced).
         """
         if not await require_admin(interaction):
             return
@@ -1975,11 +1982,6 @@ class MediaRequestsCog(commands.Cog):
                 outstanding.items(), key=lambda kv: submitted_at(kv[1]), reverse=True
             )
 
-            tracked_from = datetime(2026, 9, 30, tzinfo=timezone.utc)
-            before_tracking = sum(
-                1 for _, record in ordered if submitted_at(record) < tracked_from
-            )
-
             embed = discord.Embed(
                 title="📥 Requests awaiting a decision",
                 description=f"{len(ordered)} with no recorded outcome",
@@ -1999,10 +2001,12 @@ class MediaRequestsCog(commands.Cog):
                 if record.get("user_id"):
                     lines.append(f"**Requested by:** <@{record['user_id']}>")
                 lines.append(f"**Submitted:** <t:{int(when.timestamp())}:R>")
-                if guild_id and channel_id:
+                from_seerr = record.get("source") in SEERR_SOURCES
+                card_id = record.get("admin_card_id") if from_seerr else message_id
+                if guild_id and channel_id and card_id:
                     lines.append(
-                        f"[Open the approval message]"
-                        f"(https://discord.com/channels/{guild_id}/{channel_id}/{message_id})"
+                        f"[{'Open the announcement' if from_seerr else 'Open the approval message'}]"
+                        f"(https://discord.com/channels/{guild_id}/{channel_id}/{card_id})"
                     )
 
                 embed.add_field(
@@ -2014,11 +2018,6 @@ class MediaRequestsCog(commands.Cog):
             notes = []
             if len(ordered) > MAX_LISTED_REQUESTS:
                 notes.append(f"Showing newest {MAX_LISTED_REQUESTS} of {len(ordered)}")
-            if before_tracking:
-                notes.append(
-                    f"{before_tracking} predate outcome tracking - open the message "
-                    f"to see whether the buttons are still there"
-                )
             if notes:
                 embed.set_footer(text=" · ".join(notes))
 
@@ -2113,18 +2112,8 @@ class MediaRequestsCog(commands.Cog):
     async def _search_tmdb(self, query: str) -> List[dict]:
         """Search TMDB for media"""
         if not self.services.config.tmdb_api_key:
-            # Mock data for testing
-            return [
-                {
-                    "id": 1,
-                    "title": query,
-                    "media_type": "movie",
-                    "overview": "Mock movie result",
-                    "release_date": "2024-01-01",
-                    "vote_average": 8.0
-                }
-            ]
-        
+            return []
+
         try:
             data = await self.services.tmdb.get("search/multi", query=query, include_adult="false")
             # Only movies and TV shows

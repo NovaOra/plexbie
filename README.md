@@ -252,6 +252,9 @@ who's watching from one place instead of five.
   are picked season by season, up to 25 seasons per menu (the newest 100 when
   a show has more), with **All Seasons** and, for a running show,
   **Latest + Monitor** as buttons; a show TMDB lists no seasons for yet says so.
+  Film and TV search needs `TMDB_API_KEY`: without it, **TV & Movie** tells the
+  member search needs a TMDB key instead of searching (book search uses Open
+  Library and needs no key).
   While the website is running, a request from Discord passes the same checks as
   one from the website before the admins see it: at most 20 requests an hour per
   member (both counted together), nothing they already asked for and is still
@@ -597,7 +600,7 @@ reply is ephemeral unless stated otherwise.
 | `/list-plex-users` | `show?` | Plex accounts; `show: Only malformed accounts` filters to those needing removal |
 | `/list-tracked-users` | | Database view, flagging accounts no longer on Plex |
 | `/manage-links` | | Link or unlink a Discord member and a Plex account |
-| `/requests` | | Requests still awaiting a decision, newest first |
+| `/requests` | | Requests still awaiting a decision, newest first, each linked to its card in the admin channel (a request made in Seerr links to its announcement, and has no link if it wasn't announced) |
 | `/remove-user` | `plex_username` | Remove from Plex, notify, and drop the tracking row (found on the Plex share by account id; someone already off it is just forgotten, with no removal DM; never the server owner) |
 | `/who-invited` | `member` | Who invited this member |
 | `/watchparty-active` | | The watch party in progress |

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from core.clients import ServiceError
 from core.logging import get_logger
 from database.kv_store import kv_get_all, kv_set
+from database.request_store import SEERR_SOURCES
 from database.session import get_session
 from portal.data import Data, _iso, predates_outcomes, tmdb_art
 from core.discord_lookup import PUBLIC_BOT_FIX, home_guild, home_health_items
@@ -31,6 +32,13 @@ SEARCH_LIMIT = 60
 STUCK_SEARCHING = 24       # approved this long ago, and still nothing found
 STUCK_STILL = 6            # a download whose percentage hasn't moved
 STUCK_ADDING = 2           # unpacking or being added to Plex
+
+
+def _card_url(guild, channel, key, rec: dict) -> Optional[str]:
+    """The request's card in the admin channel. One made in Seerr is keyed by Seerr's own
+    number, so its card is the announcement saved with it (none if it was never announced)."""
+    card = rec.get("admin_card_id") if rec.get("source") in SEERR_SOURCES else key
+    return f"https://discord.com/channels/{guild}/{channel}/{card}" if guild and channel and str(card or "").isdigit() else None
 
 
 def _parse(value: Any) -> Optional[datetime]:
@@ -178,7 +186,7 @@ class Admin:
                 "status": rec.get("status", "pending"),
                 "resolvedBy": rec.get("resolved_by"),
                 "resolvedAt": _iso(rec.get("resolved_at")) if rec.get("resolved_at") else None,
-                "discordUrl": f"https://discord.com/channels/{guild}/{channel}/{key}" if guild and channel and key.isdigit() else None,
+                "discordUrl": _card_url(guild, channel, key, rec),
             }
             if item["status"] == "closed":
                 continue  # the cleared backlog: neither waiting nor a decision
@@ -257,7 +265,7 @@ class Admin:
             **row,
             "via": "Seerr" if source in ("seerr", "overseerr") else "the website" if rec.get("via") == "website" else "Discord",
             "seerrId": rec.get("overseerr_request_id"),
-            "discordUrl": f"https://discord.com/channels/{guild}/{channel}/{key}" if guild and channel and str(key).isdigit() else None,
+            "discordUrl": _card_url(guild, channel, key, rec),
             "tickets": [{k: h.get(k) for k in ("id", "status", "reason", "note", "who", "opened_by", "created_at",
                                                    "resolved_by", "resolved_at", "reply", "actions", "status_then")}
                         for h in tickets],

@@ -29,7 +29,7 @@ from utils.standings import load_aliases, load_streaks, resolve_alias, standings
 logger = get_logger(__name__)
 
 
-#: Outcome recording started on 2026-09-30 (see MediaRequestsCog.list_requests).
+#: Outcome recording started on 2026-09-30.
 #: A record older than this still says "pending" whatever really happened to it,
 #: so it is never shown as waiting; its real state comes from Radarr/Sonarr/SABnzbd.
 OUTCOMES_SINCE = datetime(2026, 9, 30, tzinfo=timezone.utc)

@@ -18,6 +18,11 @@ A request from Discord skipped the website's checks: no per-member limit, no
 "you already asked for this one", and a title blocked in Seerr or already on
 Plex went to the admins anyway. Members also had no way to list their own
 requests in Discord, only on the website.
+
+Without a TMDB key, film and TV search offered a made-up film (TMDB number 1)
+instead of saying search needs a key. /requests linked a request made in Seerr
+to a message that doesn't exist, and counted requests from before a fixed date
+as untracked on every install.
 """
 import asyncio
 import pathlib
@@ -50,6 +55,10 @@ class _Response:
     async def defer(self, ephemeral=False, thinking=False):
         self._done = True
 
+    async def send_modal(self, modal):
+        self._done = True
+        self.screen.modal = modal
+
 
 class _Followup:
     def __init__(self, screen):
@@ -67,7 +76,7 @@ class _Screen:
 
     def __init__(self):
         self.contents, self.notes = [], []
-        self.view = self.embed = None
+        self.view = self.embed = self.modal = None
 
     async def show(self, changes):
         view = changes.get("view")
@@ -608,3 +617,69 @@ def test_my_requests_with_nothing_asked_for_or_no_website():
     assert screen.embed is None and "/request" in screen.notes[-1], screen.notes
     screen = _my_requests(SimpleNamespace(portal_actions=None))
     assert screen.embed is None and "website" in screen.notes[-1], screen.notes
+
+
+# ------------------------------------------------------------ no TMDB key
+
+def test_without_a_tmdb_key_film_and_tv_search_says_so_instead_of_offering_a_made_up_film():
+    from plugins.media_requests.cog import MediaRequestsCog, MediaTypeSelectView
+    config = SimpleNamespace(admin_channel_id=1, tmdb_api_key=None)
+    cog = MediaRequestsCog(SimpleNamespace(), SimpleNamespace(config=config))
+
+    async def press_tv_and_movie():
+        interaction = _Interaction()
+        await MediaTypeSelectView(cog, 7).tv_movie.callback(interaction)
+        return interaction.screen
+
+    assert asyncio.run(cog._search_tmdb("Dune")) == [], "offered a film TMDB never returned"
+    screen = asyncio.run(press_tv_and_movie())
+    assert screen.modal is None, "the search box opened with nothing to search with"
+    assert screen.notes == ["Search needs a TMDB API key. Ask an admin to add one in Plexbie's setup."], screen.notes
+
+    config.tmdb_api_key = "k"
+    screen = asyncio.run(press_tv_and_movie())
+    assert type(screen.modal).__name__ == "TVMovieRequestModal" and screen.notes == [], screen.notes
+
+
+# ------------------------------------------------------------ /requests
+
+def _awaiting(saved):
+    """What an admin's /requests shows, with `saved` storing the requests first."""
+    from plugins.media_requests import cog
+
+    async def admin(interaction):
+        return True
+
+    async def scenario():
+        await saved()
+        command = cog.MediaRequestsCog(SimpleNamespace(), _SERVICES)
+        interaction = _Interaction()
+        interaction.guild = SimpleNamespace(id=99)
+        await command.list_requests.callback(command, interaction)
+        return interaction.screen.embed
+
+    allowed, cog.require_admin = cog.require_admin, admin
+    try:
+        return _run(scenario, _Channel())
+    finally:
+        cog.require_admin = allowed
+
+
+def test_requests_links_each_request_to_its_own_card():
+    async def saved():
+        from database.request_store import save_request, set_fields
+        await save_request(5000, user_id=1, media=dict(_FILM), media_type="movie")
+        await set_fields(5000, timestamp="2025-01-01T00:00:00+00:00")
+        # Made in Seerr, keyed by Seerr's number: one announced in the admin channel, one not.
+        for number, name in ((41, "The Show"), (42, "Unannounced")):
+            await save_request(number, user_id=1, media={"id": number, "media_type": "tv", "name": name},
+                               media_type="tv", extra={"source": "seerr", "overseerr_request_id": number})
+        await set_fields(41, admin_card_id=9001)
+
+    embed = _awaiting(saved)
+    shown = {f.name: f.value for f in embed.fields}
+    assert "https://discord.com/channels/99/1/5000)" in shown["The Film"], shown["The Film"]
+    assert "[Open the approval message](https://discord.com/channels/99/1/5000)" in shown["The Film"]
+    assert "[Open the announcement](https://discord.com/channels/99/1/9001)" in shown["The Show"], shown["The Show"]
+    assert "discord.com" not in shown["Unannounced"], "linked to a message that doesn't exist"
+    assert "predate" not in (embed.footer.text or ""), embed.footer.text

@@ -9,7 +9,9 @@ approval a second time, or turned an approved request into a declined one.
 Also: a book approval that sent nothing to SABnzbd was recorded as approved and
 closed, so it could never be retried; a failed edit of the admin card skipped
 recording the decision, so the next click submitted the request again; and the
-Seerr arrival check ran as a task nothing held on to.
+Seerr arrival check ran as a task nothing held on to. A book Approve greyed out
+the buttons before loading the request, so a request that couldn't be loaded
+left a card nobody could press, with "Please re-submit" as the only advice.
 
 The film/TV and book cards decline through one shared body (each keeping the
 button ids already-posted cards carry), and both season follow-ups build the
@@ -36,14 +38,15 @@ MID = 4242
 # ------------------------------------------------------------------ fakes
 
 class _Message:
-    def __init__(self, fail_edit: bool = False):
+    def __init__(self, fail_edit: bool = False, fail_after: int = None):
         self.id = MID
         self.embeds = [discord.Embed(title="Request")]
         self.edits = []
         self.fail_edit = fail_edit
+        self.fail_after = fail_after
 
     async def edit(self, **changes):
-        if self.fail_edit:
+        if self.fail_edit or (self.fail_after is not None and len(self.edits) >= self.fail_after):
             raise RuntimeError("card gone")
         self.edits.append(changes)
 
@@ -344,6 +347,51 @@ def test_a_book_wanted_in_both_formats_with_one_found_says_so():
     assert any("some formats not available" in s for s in clicked.said), clicked.said
 
 
+def test_a_book_wanted_in_both_formats_is_announced_with_its_title_in_bold():
+    w = _World()
+
+    async def scenario():
+        await w.save_book("both")
+        await w.press(w.cog.BookAdminApprovalView, "approve_book_request", _Message())
+
+    w.run(scenario)
+    assert len(w.dms) == 1 and w.dms[0].startswith("✅ Your request for **The Book** has been approved!\n"), w.dms
+
+
+# ------------------------------------------- a request that can't be loaded
+
+def test_an_approve_that_cant_load_the_request_leaves_the_buttons_and_says_so():
+    w = _World()
+
+    async def scenario():
+        pressed = []
+        for view_type, custom_id in ((w.cog.BookAdminApprovalView, "approve_book_request"),
+                                     (w.cog.AdminApprovalView, "approve_request")):
+            card = _Message()
+            pressed.append((custom_id, card, await w.press(view_type, custom_id, card)))
+        return pressed
+
+    for custom_id, card, clicked in w.run(scenario):
+        assert card.edits == [], f"{custom_id}: the buttons were greyed out with nothing to decide"
+        assert clicked.said == ["❌ Couldn't load this request. Try again, or decide it on the website."], (custom_id, clicked.said)
+    assert w.downloads == [] and w.fulfils == [] and w.dms == []
+
+
+def test_a_loaded_book_approve_still_greys_out_the_buttons_while_it_downloads():
+    w = _World()
+
+    async def scenario():
+        await w.save_book()
+        card = _Message()
+        await w.press(w.cog.BookAdminApprovalView, "approve_book_request", card)
+        return card
+
+    card = w.run(scenario)
+    greyed = card.edits[0].get("view")
+    assert greyed is not None and all(c.disabled for c in greyed.children), card.edits
+    assert card.edits[-1].get("view", "kept") is None, "the decided card keeps its buttons"
+
+
 # ------------------------------------------- a card that can't be edited
 
 def test_a_failed_card_edit_after_a_discord_approval_still_records_it():
@@ -363,19 +411,8 @@ def test_a_failed_card_edit_after_a_discord_book_approval_still_records_it():
 
     async def scenario():
         await w.save_book()
-        card = _Message()
-        view = w.cog.BookAdminApprovalView()
-        item = next(c for c in view.children if c.custom_id == "approve_book_request")
-        interaction = _Interaction(w.bot, card)
-
-        async def respond_then_fail(**changes):      # the first edit lands, the closing one doesn't
-            interaction.response._done = True
-            card.fail_edit = True
-        interaction.response.edit_message = respond_then_fail
-        try:
-            await item.callback(interaction)
-        except Exception as e:
-            await view.on_error(interaction, e, item)
+        # Greying out the buttons lands, the closing edit doesn't.
+        await w.press(w.cog.BookAdminApprovalView, "approve_book_request", _Message(fail_after=1))
         return await w.status()
 
     assert w.run(scenario) == "approved", "the next click would queue a second download"
@@ -734,6 +771,8 @@ def test_a_show_with_no_tvdb_entry_is_approved_for_a_hand_download_not_sent_to_s
     assert seerr.posts == [], "sent to Seerr, which quietly deletes a request Sonarr can't take"
     assert result["success"] is True and result["mode"] == "manual", result
     assert result["admin_note"] == NO_TVDB_NOTE
+    assert result["followup_message"].startswith("Approved, but this show isn't on TheTVDB, so Sonarr can't take it"), \
+        result["followup_message"]
     assert "by hand" in result["user_message"]
     assert record["no_tvdb"] is True, "Manage → All requests can't flag it for a hand download"
     assert followed == [], "Sonarr was asked to search for a show it can't have"
