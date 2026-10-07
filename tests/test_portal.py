@@ -2405,6 +2405,29 @@ def test_only_a_sign_in_cookie_is_a_sign_in():
     assert app_release.source_session(cfg.web_session_secret, source) == {"via": "discord", "id": "42", "name": "Pat"}
 
 
+def test_no_cookie_passes_for_another():
+    """One key signs the session, the sign-in flows, the app sign-in waiting to be
+    confirmed and the invite being used: each is read only under the name it was
+    made for (a sign-in flow's cookie is not a session, an invite is not a flow)."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+    from portal.auth import CONFIRM_COOKIE, FLOW_COOKIE, INVITE_COOKIE, SESSION_COOKIE, START_COOKIE, Auth
+    cfg = Config()
+    cfg.web_session_secret = SECRET
+    auth = Auth(None, FakeServices(cfg), None)
+    names = (SESSION_COOKIE, FLOW_COOKIE, START_COOKIE, CONFIRM_COOKIE, INVITE_COOKIE)
+    for made in names:
+        response = web.Response()
+        auth._set(response, made, {"id": "42", "via": "discord", "key": "k"}, 60)
+        value = response.cookies[made].value
+        for read in names:
+            got = auth._cookie(make_mocked_request("GET", "/", headers={"Cookie": f"{read}={value}"}), read)
+            if read == made:
+                assert got and got["id"] == "42", made
+            else:
+                assert got is None, f"a {made} cookie was taken as {read}"
+
+
 def _cookie_auth():
     from portal.auth import Auth
     from portal.cache import TTLCache
