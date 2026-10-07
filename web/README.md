@@ -32,6 +32,9 @@ A new stats database gets its `events` table from `cloudflare/migrations/`:
 plexbie.com's Worker sends a Content-Security-Policy with the site's pages (`PAGE_HEADERS`
 in `cloudflare/worker.js`): only the site itself, plus the films and posters on
 media.plexbie.com. Anything new the site loads from elsewhere goes in that list too.
+It has none of a household's addresses: `/api`, `/img`, `/download`, `/app-source`,
+`/app`, `/invite`, `/auth` and `/setup` are answered 404 there, never redirected or
+passed on to any Plexbie.
 
 Add `?demo` to any dev URL for demo mode: every title, author and blurb is made up and
 covers are drawn in code, so recordings show no real artwork. `demo-gifs.mjs` prints the

@@ -1,20 +1,17 @@
 // plexbie.com: the Plexbie project's own site (the static build in ../dist-project),
 // served by Cloudflare so it stays up whatever any Plexbie server is doing.
 //
-// The project's maintainer used to run their own household's Plexbie at plexbie.com
-// too, before it moved to HOME. So that nothing pointing here breaks:
-//   - pages people open (/app/..., /invite/..., a sign-in) are sent there, address and all;
-//   - the phone app's traffic (/api, /img, the app's sign-in, downloads, iPhone sources)
-//     is passed through to it, because older app versions still talk
-//     to plexbie.com, and a redirect would drop their sign-in header.
-// Self-hosters don't need any of this: their Plexbie is on their own address.
+// No household's Plexbie is here: each is on its own address. So a household's addresses
+// (its pages, the phone app's traffic, downloads, iPhone sources) are answered 404, never
+// redirected or passed on anywhere: the app's in plain text, pages with the site's own
+// not-found page.
 
-const FORWARD = [/^\/api\//, /^\/img\//, /^\/auth\/mobile\//, /^\/download\//, /^\/app-source\//];
-const REDIRECT = [/^\/app(\/|$)/, /^\/invite(\/|$)/, /^\/auth\//, /^\/setup(\/|$)/];
+const APP_PATHS = [/^\/api\//, /^\/img\//, /^\/auth\/mobile\//, /^\/download(\/|$)/, /^\/app-source(\/|$)/];
+const HOUSEHOLD_PAGES = [/^\/app(\/|$)/, /^\/invite(\/|$)/, /^\/auth\//, /^\/setup(\/|$)/];
 
-// The site's own pages (not what's passed through from HOME) say what they may load: only
-// this site, plus the films and posters on media.plexbie.com. Styles allow inline too:
-// the animation library holds the hero's outgoing word in place with a style element it adds.
+// The site's own pages say what they may load: only this site, plus the films and posters
+// on media.plexbie.com. Styles allow inline too: the animation library holds the hero's
+// outgoing word in place with a style element it adds.
 const PAGE_HEADERS = {
   "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https://media.plexbie.com; media-src 'self' https://media.plexbie.com; "
     + "style-src 'self' 'unsafe-inline'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
@@ -198,33 +195,21 @@ export default {
       return Response.redirect(url.toString(), 301);
     }
     const path = url.pathname;
-    const home = env.HOME.replace(/\/$/, "");
-    if (FORWARD.some((r) => r.test(path))) {
-      const target = home + path + url.search;
-      const headers = new Headers(request.headers);
-      // Nothing a visitor sends about where they are reaches the bot: Cloudflare says that.
-      for (const h of ["host", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-real-ip", "cf-connecting-ip", "cf-visitor", "forwarded"]) headers.delete(h);
-      const answer = await fetch(target, {
-        method: request.method, headers, redirect: "manual",
-        body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-      });
-      // plexbie.com sets no cookies, even passing on an answer from HOME.
-      const out = new Response(answer.body, answer);
-      out.headers.delete("set-cookie");
-      return out;
-    }
     if (path === "/demo" || path === "/demo/") return Response.redirect("https://demo.plexbie.com/", 302);
-    if (REDIRECT.some((r) => r.test(path))) {
-      // 308 keeps the method; the household site drops the old /app prefix itself.
-      return Response.redirect(home + path + url.search, request.method === "GET" || request.method === "HEAD" ? 301 : 308);
-    }
-    if (path === "/sw.js" || path === "/manifest.webmanifest") {
-      // Browsers that installed the old site's alerts keep their worker (it still shows
-      // alerts, and their links lead here, then HOME); an update check just finds nothing.
+    if (APP_PATHS.some((r) => r.test(path)) || path === "/sw.js" || path === "/manifest.webmanifest") {
+      // Browsers that installed alerts here before plexbie.com was only the project's site
+      // keep their worker; an update check just finds nothing.
       return new Response("Not here: this is the Plexbie project's site.", { status: 404 });
     }
-    const page = await env.ASSETS.fetch(request);
-    const out = new Response(page.body, page);
+    const gone = HOUSEHOLD_PAGES.some((r) => r.test(path));
+    let asked = request;
+    if (gone) {
+      // Always the whole not-found page: a 304 here would leave a person an empty 404.
+      asked = new Request(request);
+      for (const h of ["if-none-match", "if-modified-since"]) asked.headers.delete(h);
+    }
+    const page = await env.ASSETS.fetch(asked);
+    const out = new Response(page.body, gone ? { status: 404, headers: page.headers } : page);
     for (const [k, v] of Object.entries(PAGE_HEADERS)) out.headers.set(k, v);
     return out;
   },

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// plexbie.com's Worker (cloudflare/worker.js): its visit counter (POST /e) and the headers
-// on the site's own pages. D1, the rate limiter and the static files are stand-ins here.
+// plexbie.com's Worker (cloudflare/worker.js): its visit counter (POST /e), the headers
+// on the site's own pages, and the addresses it doesn't have. D1, the rate limiter and the
+// static files are stand-ins here.
 // The Worker is plain JavaScript, so its shape is written out.
 type Worker = { fetch(request: Request, env: object, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<Response> };
 const worker: Worker = (await import("../../cloudflare/worker.js" as string)).default;
@@ -27,7 +28,7 @@ function site(env: Record<string, unknown> = {}) {
     }),
   };
   const ASSETS = { fetch: async () => new Response("<!doctype html><title>Plexbie</title>", { headers: { "Content-Type": "text/html" } }) };
-  return { env: { HOME: "https://home.example", STATS, STATS_SALT: "salt", ASSETS, ...env }, rows, statements };
+  return { env: { STATS, STATS_SALT: "salt", ASSETS, ...env }, rows, statements };
 }
 
 async function send(env: object, body: unknown, { ip = "198.51.100.7", origin = "https://plexbie.com" } = {}) {
@@ -145,10 +146,60 @@ describe("the site's pages", () => {
     expect(res.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
   });
 
-  it("aren't added to the answers passed through from the household's Plexbie", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { headers: { "Content-Type": "application/json" } })));
+  it("are served as they are", async () => {
     const { env } = site();
-    const res = await worker.fetch(new Request("https://plexbie.com/api/session"), env, { waitUntil: () => undefined });
-    expect(res.headers.get("Content-Security-Policy")).toBeNull();
+    const res = await worker.fetch(new Request("https://plexbie.com/"), env, { waitUntil: () => undefined });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("<title>Plexbie</title>");
+  });
+});
+
+describe("addresses the site doesn't have", () => {
+  const open = (path: string, init?: RequestInit) => {
+    const { env } = site();
+    return worker.fetch(new Request(`https://plexbie.com${path}`, init), env, { waitUntil: () => undefined });
+  };
+
+  it.each(["/api/mobile", "/app/x", "/invite/abc", "/auth/mobile/start", "/download", "/download/plexbie.apk", "/img/poster/1", "/app-source/ios.json", "/setup", "/auth/discord/callback"])(
+    "%s is not found, and not sent anywhere else", async (path) => {
+      const elsewhere = vi.fn(async () => new Response("{}"));
+      vi.stubGlobal("fetch", elsewhere);
+      const res = await open(path);
+      expect(res.status).toBe(404);
+      expect(res.headers.get("Location")).toBeNull();
+      expect(elsewhere).not.toHaveBeenCalled();
+    },
+  );
+
+  it("answers the phone app's addresses in plain text, whatever the method", async () => {
+    const res = await open("/api/mobile/session", { method: "POST", body: "{}" });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Location")).toBeNull();
+    expect(await res.text()).not.toContain("<");
+  });
+
+  it("shows a person the site's own not-found page", async () => {
+    const res = await open("/invite/abc");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toContain("<title>Plexbie</title>");
+    expect(res.headers.get("Content-Security-Policy")).toContain("default-src 'self'");
+  });
+
+  it("shows the whole not-found page again to a browser that kept it", async () => {
+    const ASSETS = {
+      fetch: async (request: Request) => request.headers.has("If-None-Match")
+        ? new Response(null, { status: 304, headers: { ETag: '"page"' } })
+        : new Response("<!doctype html><title>Plexbie</title>", { headers: { "Content-Type": "text/html", ETag: '"page"' } }),
+    };
+    const { env } = site({ ASSETS });
+    const res = await worker.fetch(new Request("https://plexbie.com/invite/abc", { headers: { "If-None-Match": '"page"' } }), env, { waitUntil: () => undefined });
+    expect(res.status).toBe(404);
+    expect(await res.text()).toContain("<title>Plexbie</title>");
+  });
+
+  it("still sends /demo to the public demo", async () => {
+    const res = await open("/demo");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("https://demo.plexbie.com/");
   });
 });
