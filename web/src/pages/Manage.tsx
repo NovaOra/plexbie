@@ -52,6 +52,9 @@ interface ManageState {
   toast: (t: ToastIn) => void;
   readOnly: boolean;
   failed: Partial<Record<Section, boolean>>;
+  /** The invite link just made, shown on Invites until "Make another". */
+  freshInvite: NewInvite | null;
+  setFreshInvite: (made: NewInvite | null) => void;
 }
 const ManageCtx = createContext<ManageState | null>(null);
 /** What each tab shows (most show only their own section). */
@@ -1716,14 +1719,13 @@ function PlexInvites() {
 }
 
 function InvitesTab() {
-  const { data, patch, toast, readOnly } = useManage();
+  const { data, patch, toast, readOnly, freshInvite: made, setFreshInvite: setMade } = useManage();
   const { act, later } = useAct();
   const [label, setLabel] = useState("");
   const [email, setEmail] = useState("");
   const [days, setDays] = useState(7);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
-  const [made, setMade] = useState<NewInvite | null>(null);
   const rows = data.invites;
 
   const create = async (e: React.FormEvent) => {
@@ -2228,6 +2230,9 @@ const showing = (show: Show, r: AdminRequestRow) =>
   show === "progress" ? !["available", "requested", ...ENDED].includes(r.stage) : show === "stuck" ? r.stuck.length > 0
     : show === "waiting" ? r.stage === "requested" : show === "finished" ? r.stage === "available" : show === "declined" ? ENDED.includes(r.stage) : true;
 
+/** How many rows All requests puts on screen at a time. */
+const PAGE = 50;
+
 /**
  * Every request from everyone (waiting, approved, declined, on Plex), where it is now, and
  * which look stuck. It opens on the last 30 days (and anything still on its way); "Every
@@ -2261,6 +2266,19 @@ function AllRequestsTab() {
   // Searching asks the bot (it reaches every request ever, not only the ones listed).
   const words = q.trim();
   const { found, searching, failed: searchFailed, retry } = useDebouncedSearch(words, (w) => api.adminAll(w), 300);
+  // Rows go on screen a page at a time (every request since No. 0001 can be thousands),
+  // starting again from the first page whenever the list asked for changes.
+  const view = `${show}|${words}|${everything}`;
+  const [paged, setPaged] = useState({ view, limit: PAGE });
+  if (paged.view !== view) setPaged({ view, limit: PAGE });
+  const limit = paged.view === view ? paged.limit : PAGE;
+  const list = useRef<HTMLUListElement>(null);
+  // Focus goes to the first row added, so the keyboard carries on where the list did.
+  const more = () => {
+    const from = limit;
+    setPaged({ view, limit: from + PAGE });
+    requestAnimationFrame(() => list.current?.children[from]?.querySelector("button")?.focus());
+  };
 
   const recent = data.all;
   if (!recent) return failed.all ? null : <p className="muted">Loading…</p>;
@@ -2296,13 +2314,20 @@ function AllRequestsTab() {
         </p>
       ) : null}
       {shown.length ? (
-        <ul className="m-rows m-all__rows">
-          {shown.map((r) => <li key={r.id}><AllRequestRow r={r} onOpen={() => setOpen(r.id!)} /></li>)}
+        <ul className="m-rows m-all__rows" ref={list}>
+          {shown.slice(0, limit).map((r) => <li key={r.id}><AllRequestRow r={r} onOpen={() => setOpen(r.id!)} /></li>)}
         </ul>
       ) : !words ? (
         <p className="muted">{show === "stuck" ? "Nothing looks stuck right now." : show === "finished" ? `Nothing reached Plex ${history ? "yet" : "in the last 30 days"}.`
           : show === "waiting" ? "Nothing is waiting for a decision." : show === "declined" ? `Nothing declined${history ? "" : " in the last 30 days"}.`
           : show === "progress" ? "Nothing on its way right now." : "No requests yet."}</p>
+      ) : null}
+      {shown.length > limit ? (
+        <div className="m-all__more">
+          <button type="button" className="btn m-btn" onClick={more}>
+            Show {Math.min(PAGE, shown.length - limit)} more · {shown.length - limit} not shown
+          </button>
+        </div>
       ) : null}
       {!words ? (
         <div className="m-all__more">
@@ -2766,22 +2791,27 @@ function Overview({ go, failed }: { go: (t: Section) => void; failed: Partial<Re
 
 /* ================================================================ toasts */
 
-function ToastItem({ t, dismiss }: { t: Toast; dismiss: (id: number) => void }) {
+/** What Undo's shortcut is called on this keyboard. */
+const UNDO_KEYS = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "Option+Z" : "Alt+Z";
+
+function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number) => void; hold: boolean }) {
   // The clock pauses while the tab is hidden, or while the pointer or keyboard
   // focus is on the toast (reaching Undo takes a moment), so nothing vanishes unread.
+  // With `hold` (an Undo while the keyboard is in use) it waits until it's let go.
   const clock = useRef<{ pause: () => void; resume: () => void } | null>(null);
   useEffect(() => {
     let left = t.undo ? 6500 : 4200;
     let started = Date.now();
     let timer: number | undefined = window.setTimeout(() => dismiss(t.id), left);
     let holds = 0;
+    let gone = false;
     const pause = () => {
-      if (holds++ > 0) return;
+      if (gone || holds++ > 0) return;
       window.clearTimeout(timer);
       left -= Date.now() - started;
     };
     const resume = () => {
-      if (--holds > 0) return;
+      if (gone || --holds > 0) return;
       holds = 0;
       started = Date.now();
       timer = window.setTimeout(() => dismiss(t.id), Math.max(800, left));
@@ -2789,8 +2819,15 @@ function ToastItem({ t, dismiss }: { t: Toast; dismiss: (id: number) => void }) 
     clock.current = { pause, resume };
     const onVis = () => (document.hidden ? pause() : resume());
     document.addEventListener("visibilitychange", onVis);
-    return () => { window.clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
+    // Once torn down the clock never starts again, even if a late resume() reaches it.
+    return () => { gone = true; window.clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };
   }, [t, dismiss]);
+  useEffect(() => {
+    if (!hold) return;
+    const c = clock.current;
+    c?.pause();
+    return () => c?.resume();
+  }, [hold]);
   return (
     <motion.div
       layout
@@ -2807,11 +2844,72 @@ function ToastItem({ t, dismiss }: { t: Toast; dismiss: (id: number) => void }) 
       onDragEnd={(_, i) => { if (Math.abs(i.offset.x) > 70 || Math.abs(i.velocity.x) > 500) dismiss(t.id); }}
     >
       {t.tone === "error" ? <CircleAlert size={18} aria-hidden /> : <Check size={18} aria-hidden />}
-      <span className="m-toast__text"><b>{t.text}</b>{t.detail && t.detail !== t.text ? <small>{t.detail}</small> : null}</span>
+      <span className="m-toast__text">
+        <b>{t.text}</b>{t.detail && t.detail !== t.text ? <small>{t.detail}</small> : null}
+        {t.undo ? <span className="visually-hidden"> {UNDO_KEYS} undoes it.</span> : null}
+      </span>
       {t.undo ? (
-        <button type="button" className="m-toast__undo" onClick={() => { t.undo!(); dismiss(t.id); }}>Undo</button>
+        <button type="button" className="m-toast__undo" aria-keyshortcuts="Alt+Z" onClick={() => { t.undo!(); dismiss(t.id); }}>Undo</button>
       ) : null}
     </motion.div>
+  );
+}
+
+/**
+ * The toasts, kept apart from the page so a new one re-renders only this. `register`
+ * gets the function that adds one. While the keyboard is in use, Undo toasts wait to be
+ * acted on (Escape lets them go), and Alt+Z (Option+Z on a Mac) runs the newest Undo.
+ */
+function ToastHost({ register }: { register: (push: (t: ToastIn) => void) => void }) {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextId = useRef(1);
+  const [keyboard, setKeyboard] = useState(false);
+  const [letGo, setLetGo] = useState<Set<number>>(() => new Set());
+  const dismiss = useCallback((id: number) => setToasts((all) => all.filter((t) => t.id !== id)), []);
+  useLayoutEffect(() => register((t) => setToasts((all) => {
+    const rest = all.length && all[all.length - 1].text === t.text ? all.slice(0, -1) : all;
+    return [...rest.slice(-2), { ...t, id: nextId.current++ }];
+  })), [register]);
+  const latest = useRef(toasts);
+  useEffect(() => { latest.current = toasts; }, [toasts]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLetGo(new Set(latest.current.map((t) => t.id)));
+        return;
+      }
+      // A shortcut such as copy, or a modifier alone, doesn't count as using the keyboard.
+      if (!e.ctrlKey && !e.metaKey && !["Alt", "Control", "Meta", "Shift"].includes(e.key)) setKeyboard(true);
+      // The key marked Z on any layout; Option+Z on a Mac types Ω, so there it's the key's place.
+      const z = /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() === "z" : e.code === "KeyZ";
+      if (e.altKey && !e.ctrlKey && !e.metaKey && z) {
+        const t = [...latest.current].reverse().find((x) => x.undo);
+        if (!t) return;
+        e.preventDefault();
+        // Holding the keys down undoes one thing, not one after another.
+        if (e.repeat) return;
+        t.undo!();
+        dismiss(t.id);
+      }
+    };
+    const onPointer = () => setKeyboard(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer);
+    };
+  }, [dismiss]);
+  // Always present, so screen readers hear each toast as it's added. On body beside the
+  // sheets, not in #root: an open sheet makes the page inert and covers it, and a result
+  // from inside the sheet must still be seen and heard.
+  return createPortal(
+    <div className="m-toasts" role="status" aria-live="polite">
+      <AnimatePresence initial={false}>
+        {toasts.map((t) => <ToastItem key={t.id} t={t} dismiss={dismiss} hold={keyboard && !!t.undo && !letGo.has(t.id)} />)}
+      </AnimatePresence>
+    </div>,
+    document.body,
   );
 }
 
@@ -2830,8 +2928,13 @@ export function Manage() {
   const [failed, setFailed] = useState<Partial<Record<Section, boolean>>>({});
   // When each section last loaded, for "Couldn't refresh, last updated 14:32".
   const [loadedAt, setLoadedAt] = useState<Partial<Record<Section, number>>>({});
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const nextId = useRef(1);
+  // Toasts live in ToastHost; this hands its add function to every tab, unchanged across renders.
+  const pushToast = useRef<(t: ToastIn) => void>(() => {});
+  const registerToasts = useCallback((push: (t: ToastIn) => void) => { pushToast.current = push; }, []);
+  const toast = useCallback((t: ToastIn) => pushToast.current(t), []);
+  // A new invite link, held here so it's still shown after switching sections, and lands
+  // even when it's made after switching away.
+  const [freshInvite, setFreshInvite] = useState<NewInvite | null>(null);
 
   // Each section's newest ask (`n`) and when it went. An answer to an older ask, or to one
   // sent before a change made here, is dropped, so a slow reply never puts back what's
@@ -2856,11 +2959,6 @@ export function Manage() {
     if (ask) ask.n += 1;
     setData((prev) => (prev[s] ? { ...prev, [s]: fn(prev[s] as NonNullable<Store[K]>) } : prev));
   }, []);
-  const dismiss = useCallback((id: number) => setToasts((all) => all.filter((t) => t.id !== id)), []);
-  const toast = useCallback((t: ToastIn) => setToasts((all) => {
-    const rest = all.length && all[all.length - 1].text === t.text ? all.slice(0, -1) : all;
-    return [...rest.slice(-2), { ...t, id: nextId.current++ }];
-  }), []);
 
   const admin = !!session?.admin;
   /** Asks again for what wasn't asked for in the last few seconds (coming back fires both focus and visibilitychange). */
@@ -2904,10 +3002,13 @@ export function Manage() {
   const counts: Partial<Record<Section, number>> = {
     requests: w.requests || undefined, all: data.all?.counts?.stuck || undefined, tickets: w.tickets || undefined,
     joins: w.joins, cleanup: w.leaving, health: w.down, messages: w.messages || undefined,
+    invites: freshInvite ? 1 : undefined,
   };
-  /** "All requests · 2 stuck"; everything else counts what's waiting. */
-  const word = (t: Section) => (t === "all" ? "stuck" : t === "tickets" ? "open" : t === "messages" ? "new" : "waiting");
-  const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed };
+  /** "All requests · 2 stuck", "Invites · 1 ready" (a new link to send); everything else counts what's waiting. */
+  const word = (t: Section) => (t === "all" ? "stuck" : t === "tickets" ? "open" : t === "messages" ? "new" : t === "invites" ? "ready" : "waiting");
+  // The ready link is held on this page, so a failed invites refresh doesn't put it in doubt.
+  const doubt = (t: Section) => failed[t] && t !== "invites";
+  const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed, freshInvite, setFreshInvite };
   // A refresh of this tab failed over what's already on screen: say so, and how old it is.
   const stale = shows(tab).filter((s) => failed[s] && data[s]);
 
@@ -2923,13 +3024,13 @@ export function Manage() {
         <div className="m-tabbar request-bar" ref={panel} role="group" aria-label="Manage">
           <select className="select" value={tab} aria-label="Section" onChange={(e) => go(e.target.value as Section)}>
             {TABS.map((t) => (
-              <option key={t.id} value={t.id}>{counts[t.id] ? `${t.label} · ${failed[t.id] ? "couldn’t refresh" : `${counts[t.id]} ${word(t.id)}`}` : t.label}</option>
+              <option key={t.id} value={t.id}>{counts[t.id] ? `${t.label} · ${doubt(t.id) ? "couldn’t refresh" : `${counts[t.id]} ${word(t.id)}`}` : t.label}</option>
             ))}
           </select>
           {TABS.filter((t) => t.id !== tab && counts[t.id]).map((t) => (
             <button key={t.id} type="button" className={`m-waiting${t.id === "health" || t.id === "cleanup" ? " is-hot" : ""}`}
               onClick={() => go(t.id)}>
-              {t.label} <span className="m-badge"><Tick value={failed[t.id] ? "?" : counts[t.id]!} /></span>
+              {t.label} <span className="m-badge"><Tick value={doubt(t.id) ? "?" : counts[t.id]!} /></span>
             </button>
           ))}
         </div>
@@ -2952,17 +3053,7 @@ export function Manage() {
           )}
         </div>
       </div>
-      {/* Always present, so screen readers hear each toast as it's added. On body beside the
-          sheets, not in #root: an open sheet makes the page inert and covers it, and a result
-          from inside the sheet must still be seen and heard. */}
-      {createPortal(
-        <div className="m-toasts" role="status" aria-live="polite">
-          <AnimatePresence initial={false}>
-            {toasts.map((t) => <ToastItem key={t.id} t={t} dismiss={dismiss} />)}
-          </AnimatePresence>
-        </div>,
-        document.body,
-      )}
+      <ToastHost register={registerToasts} />
     </ManageCtx.Provider>
   );
 }

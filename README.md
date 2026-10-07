@@ -651,7 +651,12 @@ so the household can do everything above without Discord:
   found by title like `/cleanup exempt add`, leaving out the libraries cleanup
   skips), post as Plexbie, see who brought whom and
   the live watch party, and check service health. Each command above has its
-  counterpart there, and both sides run the same code. Left open, Manage keeps
+  counterpart there, and both sides run the same code. A new invite link stays
+  on Invites ("1 ready" beside it in the section list) until you press Make
+  another, even after switching sections; All requests shows 50 at a time, with
+  Show more. A change with Undo offers it for a few seconds; while you're using
+  the keyboard it waits until you act or press Escape, and Alt+Z (Option+Z on a
+  Mac) undoes the newest. Left open, Manage keeps
   itself current: the section on screen and the counts beside it are asked for
   again every minute while the page is visible, and when you come back to it
   (pending Plex invites only on opening Invites and coming back, and the
