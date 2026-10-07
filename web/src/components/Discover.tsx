@@ -29,7 +29,9 @@ function Shelf({ kind, shelf }: { kind: "movie" | "tv"; shelf: DiscoverShelf }) 
   const [page, setPage] = useState(1);
   const [more, setMore] = useState(shelf.more);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setTitles(shelf.titles); setPage(1); setMore(shelf.more); }, [shelf]);
+  // Starts over only when the shelf itself changes, not each time the page around it
+  // re-renders (which hands it a new object), so the pages loaded with "More" stay.
+  useEffect(() => { setTitles(shelf.titles); setPage(1); setMore(shelf.more); }, [shelf.key, shelf.titles, shelf.more]);
   const next = async () => {
     setBusy(true);
     try {

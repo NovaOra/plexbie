@@ -33,6 +33,9 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = [], refresh
   return { ...state, reload };
 }
 
+/** What `useLoad` gives back, for a page that loads something once and hands it to its parts. */
+export type Loaded<T> = ReturnType<typeof useLoad<T>>;
+
 /** A load failed: say so (never "nothing here", which would be a false answer), and offer another go. */
 export function OffAir({ children, onRetry, compact = false }: { children?: ReactNode; onRetry?: () => void; compact?: boolean }) {
   return (

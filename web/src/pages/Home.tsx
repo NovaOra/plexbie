@@ -6,12 +6,14 @@ import { useSession } from "../components/Layout";
 import { LiveProgress, RequestSlot, Stage, Stagger, Ticker } from "../components/motion";
 import { InviteOutcome } from "./InvitePage";
 import { AlertsPanel } from "../components/Alerts";
-import { Art, OffAir, SlotSkeletons, since, stageLabel, stageHelp, useLoad, whileActive, useTitle, Section, Moment } from "../components/ui";
+import { Art, OffAir, SlotSkeletons, since, stageLabel, stageHelp, useLoad, whileActive, useTitle, Section, Moment, type Loaded } from "../components/ui";
+import type { Community } from "../api/types";
 
 export function NowStrap() {
   const { status, statusFailed, session } = useSession();
-  const arrivals = useLoad(() => api.arrivals());
-  // The server's status is for members; someone not on Plex yet just doesn't see this strip.
+  // The server's status is for members; someone not on Plex yet just doesn't see this strip
+  // (and isn't sent asking for what's new, which the server would refuse them).
+  const arrivals = useLoad(() => (session?.member ? api.arrivals() : Promise.resolve(null)), [session?.member]);
   if (!session?.member) return null;
   if (!status && statusFailed) {
     return (
@@ -139,8 +141,8 @@ function LibraryTeaser() {
   );
 }
 
-export function OnAirNow({ limit }: { limit?: number }) {
-  const community = useLoad(() => api.community());
+/** Who's watching. The page loads `community` once and shares it with its other parts. */
+export function OnAirNow({ community, limit }: { community: Loaded<Community>; limit?: number }) {
   const rows = community.data?.onAir.slice(0, limit) ?? [];
   return (
     <Section id="air-h" title="On air now" action={limit ? <Link to="/channel">Channel</Link> : null}>
@@ -169,8 +171,7 @@ export function OnAirNow({ limit }: { limit?: number }) {
   );
 }
 
-function YourStanding() {
-  const community = useLoad(() => api.community());
+function YourStanding({ community }: { community: Loaded<Community> }) {
   const you = community.data?.you;
   if (community.error) {
     return (
@@ -239,8 +240,8 @@ export function Home() {
             <LibraryTeaser />
           </div>
           <div style={{ display: "grid", gap: 40 }}>
-            <OnAirNow limit={3} />
-            <YourStanding />
+            <OnAirNow community={community} limit={3} />
+            <YourStanding community={community} />
           </div>
         </div>
       </div>

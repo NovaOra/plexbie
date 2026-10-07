@@ -80,12 +80,19 @@ export function AlertsPanel({ compact = false }: { compact?: boolean }) {
 /** The full page, reachable from the account menu. */
 export function AlertsPage() {
   useTitle("Alerts");
+  // One look at the newest release, for both apps.
+  const [app, setApp] = useState<AppRelease | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.appLatest().then((a) => { if (live) setApp(a); }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
   return (
     <div className="shell page" style={{ display: "grid", gap: 20, maxWidth: 640 }}>
       <h1 className="display page-title">Alerts</h1>
       <AlertsPanel />
-      <AppDownload />
-      <IphoneApp />
+      <AppDownload app={app} />
+      <IphoneApp app={app} />
       <p className="muted" style={{ fontSize: "0.9rem" }}>
         Alerts come from this site itself, with no outside service involved. They’re per device: turn them on in each
         phone or browser you want them in.
@@ -96,15 +103,9 @@ export function AlertsPage() {
 
 /** The Android app, for members: its latest version, what's new, and a download
  *  link that's good for ten minutes (the server signs it; the file isn't public). */
-export function AppDownload() {
-  const [app, setApp] = useState<AppRelease | null>(null);
+export function AppDownload({ app }: { app: AppRelease | null }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
-  useEffect(() => {
-    let live = true;
-    api.appLatest().then((a) => { if (live) setApp(a); }).catch(() => undefined);
-    return () => { live = false; };
-  }, []);
   if (!app) return null;
 
   const download = async () => {
@@ -148,16 +149,10 @@ export function AppDownload() {
  *  keeps it signed. Each member gets their own source address, which SideStore checks
  *  for updates; it stops working if they're no longer on the household's Plex, or
  *  once they replace it (a copy got out, say). */
-export function IphoneApp() {
-  const [app, setApp] = useState<AppRelease | null>(null);
+export function IphoneApp({ app }: { app: AppRelease | null }) {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
   const [note, setNote] = useState("");
-  useEffect(() => {
-    let live = true;
-    api.appLatest().then((a) => { if (live) setApp(a); }).catch(() => undefined);
-    return () => { live = false; };
-  }, []);
   // An unanswered "press again" lapses, so a later stray tap can't replace the address.
   useEffect(() => {
     if (!armed) return;

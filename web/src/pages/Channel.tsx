@@ -21,7 +21,7 @@ export function Channel() {
 
       <div className="split">
         <div style={{ display: "grid", gap: 40 }}>
-          <OnAirNow />
+          <OnAirNow community={community} />
 
           <Section id="lb-h" title="Most watched">
             <p className="muted" style={{ fontSize: "0.92rem", marginTop: -6 }}>All-time watch time, watch parties included. The top three are never removed for inactivity.</p>

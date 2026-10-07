@@ -14,6 +14,10 @@ const TABS: { id: LibraryKind; label: string; library: string }[] = [
 
 type Sort = "added" | "az" | "year";
 
+/** Cards move into their new places on a sort or filter while the wall is short;
+ *  past this many, they just appear there, which a phone can keep up with. */
+const ANIMATED_UP_TO = 96;
+
 export function Library() {
   useTitle("Library");
   const reduced = useReducedMotion();
@@ -24,7 +28,14 @@ export function Library() {
   const items = useLoad(() => api.library(kind), [kind]);
   const [shown_n, setShownN] = useState(48);
   const more = useRef<HTMLDivElement>(null);
-  useEffect(() => setShownN(48), [kind, genre, sort]);
+  // A new shelf, genre or sort starts again from the first 48, in the same render
+  // (an effect would first lay out, and animate, every card shown so far).
+  const view = `${kind}|${genre}|${sort}`;
+  const [shownFor, setShownFor] = useState(view);
+  if (shownFor !== view) {
+    setShownFor(view);
+    setShownN(48);
+  }
 
   const genres = useMemo(() => {
     const all = new Set<string>();
@@ -39,6 +50,9 @@ export function Library() {
     else list.sort((a, b) => b.addedAt.localeCompare(a.addedAt));
     return list;
   }, [items.data, genre, sort]);
+  // Cards on their way out keep what they last rendered with, so a long wall
+  // also drops them at once instead of animating each one away.
+  const animated = Math.min(shown_n, shown.length) <= ANIMATED_UP_TO;
 
   const counts = TABS.map((t) => ({
     ...t,
@@ -96,8 +110,8 @@ export function Library() {
             {shown.slice(0, shown_n).map((t) => (
               <motion.div
                 key={t.id}
-                layout
-                exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.12 } }}
+                layout={animated}
+                exit={animated ? { opacity: 0, scale: 0.96, transition: { duration: 0.12 } } : undefined}
                 transition={{ layout: { duration: 0.25, ease: EASE_OUT } }}
               >
                 <PosterCard title={t} link={!t.id.startsWith("plex:")} meta={sort === "added" ? `Added ${since(t.addedAt)}` : t.year} />
