@@ -199,8 +199,10 @@ class Data:
 
         status: "available" (all episodes on Plex), "partial" (some), "requested"
         (waiting for an admin, or with Seerr/Sonarr already), "upcoming" (not
-        aired yet) or "none". Sonarr counts what is on disk; Seerr knows what
-        is requested; Plexbie's own store knows what an admin hasn't decided yet.
+        aired yet) or "none". Plex counts the episodes it has, Sonarr's files
+        only when Plex can't be asked: a library older than Sonarr has episodes
+        Sonarr never imported. Seerr knows what is requested; Plexbie's own store
+        knows what an admin hasn't decided yet.
         """
         ov = {x.get("seasonNumber"): x.get("status") for x in (r.get("mediaInfo") or {}).get("seasons") or []}
         try:
@@ -209,6 +211,13 @@ class Data:
             logger.info(f"portal: Sonarr unavailable for season status ({type(e).__name__})")
             series = None
         stats = {x.get("seasonNumber"): (x.get("statistics") or {}) for x in (series or {}).get("seasons", [])}
+        try:
+            tvdb = (r.get("externalIds") or {}).get("tvdbId")
+            rk = await self.progress._plex_key("show", f"tmdb://{tid}", *([f"tvdb://{tvdb}"] if tvdb else []))
+            on_plex = await self.progress._plex_seasons(rk) if rk else {}
+        except Exception as e:
+            logger.info(f"portal: Plex not asked for season counts ({e})")
+            on_plex = None
         numbers, every, latest = await self._waiting_seasons(int(tid))
         today = datetime.now(timezone.utc).date().isoformat()
         aired = [x["seasonNumber"] for x in r.get("seasons", [])
@@ -220,7 +229,8 @@ class Data:
             if not n:
                 continue
             eps = x.get("episodeCount") or 0
-            files = (stats.get(n) or {}).get("episodeFileCount") or 0
+            files = (on_plex.get(n, 0) if on_plex is not None
+                     else (stats.get(n) or {}).get("episodeFileCount") or 0)
             have = min(files, eps) if eps else files
             if (eps and have >= eps) or ov.get(n) == 5:
                 status = "available"

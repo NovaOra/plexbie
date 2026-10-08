@@ -949,6 +949,41 @@ def test_each_season_says_where_it_stands():
                    5: ("none", 0), 6: ("upcoming", 0)}
 
 
+def test_season_counts_come_from_plex_when_sonarr_never_imported_them():
+    """One Piece season 22: 37 of 70 episodes on Plex, Seerr says partly available,
+    Sonarr has no files for it. The season showed "0 of 70 on Plex"."""
+    from portal.data import Data
+
+    data = Data(FakeServices(Config()))
+    asked = []
+
+    async def series():
+        return {37854: {"seasons": [{"seasonNumber": 21, "statistics": {"episodeFileCount": 0}},
+                                    {"seasonNumber": 22, "statistics": {"episodeFileCount": 0}}]}}
+
+    async def plex_key(kind, *ids):
+        asked.append((kind, ids))
+        return "777"
+
+    async def plex_seasons(rk):
+        return {0: 3, 21: 999, 22: 37} if rk == "777" else {}
+    data.progress._sonarr_series = series
+    data.progress._plex_key = plex_key
+    data.progress._plex_seasons = plex_seasons
+    seerr = {"externalIds": {"tvdbId": 81797},
+             "mediaInfo": {"seasons": [{"seasonNumber": 21, "status": 5}, {"seasonNumber": 22, "status": 4}]},
+             "seasons": [{"seasonNumber": 21, "episodeCount": 112}, {"seasonNumber": 22, "episodeCount": 70},
+                         {"seasonNumber": 23, "episodeCount": 12}]}
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        return await data.tv_seasons("37854", seerr)
+
+    got = {s["n"]: (s["status"], s["have"]) for s in asyncio.run(scenario())}
+    assert got == {21: ("available", 112), 22: ("partial", 37), 23: ("none", 0)}
+    assert asked == [("show", ("tmdb://37854", "tvdb://81797"))]
+
+
 def test_trending_gives_five_films_and_five_shows_with_their_plex_status():
     from portal.data import Data
     data = Data(FakeServices(Config()))
