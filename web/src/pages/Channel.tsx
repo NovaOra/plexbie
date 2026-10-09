@@ -24,7 +24,7 @@ export function Channel() {
           <OnAirNow community={community} />
 
           <Section id="lb-h" title="Most watched">
-            <p className="muted" style={{ fontSize: "0.92rem", marginTop: -6 }}>All-time watch time, watch parties included. The top three are never removed for inactivity.</p>
+            <p className="muted" style={{ fontSize: "0.92rem", marginTop: -6 }}>All-time watch time, watch parties included. The top three, not counting the server’s owner, are never removed for inactivity.</p>
             {community.loading ? (
               <div className="ranks" aria-busy="true" aria-label="Loading the board">
                 {Array.from({ length: 5 }, (_, i) => <div key={i} className="skeleton" style={{ height: 48 }} />)}

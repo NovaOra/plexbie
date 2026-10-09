@@ -85,6 +85,11 @@ def test_nobody_with_watch_time_means_no_exemptions():
     assert top_watchers([_u("a", 0)]) == []
 
 
+def test_left_out_names_give_their_place_to_the_next_watcher():
+    rows = [_u("owner", 5000), _u("a", 900), _u("b", 800), _u("c", 700), _u("d", 600)]
+    assert top_watchers(rows, exclude={"owner"}) == ["a", "b", "c"]
+
+
 def test_default_limit_is_three():
     assert DEFAULT_TOP_WATCHERS == 3
 
@@ -981,3 +986,49 @@ def test_a_member_without_discord_is_warned_another_way():
     finally:
         undo()
     assert calls["dm"] == [] and len(calls["notify"]) == 1
+
+
+def test_the_owner_does_not_take_a_top_three_place():
+    """The owner is never removed anyway: their place goes to the fourth watcher."""
+    h = _Harness(
+        users=[_user("owner", 999, 0), _user("fourth", 2, 40, warning_sent=True)],
+        tautulli_rows=[_u("owner", 5000), _u("a", 900), _u("b", 800), _u("fourth", 700), _u("e", 10)],
+    )
+    rows = h.run()
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
+    assert rows["fourth"]["is_top_watcher"] == 1
+    assert rows["owner"]["is_top_watcher"] == 1, "the owner is still exempt, as the owner"
+
+
+def test_an_untracked_plex_owner_does_not_take_a_place_either():
+    """Found only by their Plex account id in Tautulli, under another name, with
+    watch-party time credited to their Plex name."""
+    h = _Harness(
+        users=[_user("fourth", 2, 40, warning_sent=True)],
+        tautulli_rows=[_u("Boss", 5000, user_id=777), _u("a", 900), _u("b", 800), _u("fourth", 700)],
+        credits={"bossplex": 9000},
+        plex_owner="bossplex",
+        owner_account_id="777",
+    )
+    rows = h.run()
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
+    assert rows["fourth"]["is_top_watcher"] == 1
+
+
+def test_the_fifth_watcher_behind_the_owner_is_still_enforced():
+    h = _Harness(
+        users=[_user("owner", 999, 0), _user("fifth", 2, 40, warning_sent=True)],
+        tautulli_rows=[_u("owner", 5000), _u("a", 900), _u("b", 800), _u("c", 700), _u("fifth", 10)],
+    )
+    h.run()
+    assert h.removed == ["fifth"], f"removed={h.removed} warned={h.warned}"
+
+
+def test_an_owner_who_is_the_only_watcher_still_lets_the_check_run():
+    """No one else has watch time: nobody is protected by rank, but the pass isn't skipped."""
+    h = _Harness(
+        users=[_user("owner", 999, 0), _user("idler", 2, 40, warning_sent=True)],
+        tautulli_rows=[_u("owner", 5000), _u("idler", 0)],
+    )
+    h.run()
+    assert h.removed == ["idler"], f"removed={h.removed} warned={h.warned}"

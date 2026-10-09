@@ -210,6 +210,10 @@ who's watching from one place instead of five.
   whoever an old email or name now points at. Every Tautulli user is read, page by
   page, up to 5,000 (past that the log says so); a name two Tautulli users share (ignoring case) matches neither,
   and the log says so.
+- The three people with the most all-time watch time (watch parties included) are
+  never warned or removed; someone who drops out of the three gets a DM and a full
+  fresh period. The server owner is never removed either, and isn't counted among
+  the three, so their place goes to the next watcher down.
 - Someone who has never watched anything is treated the same: warned, then
   removed, with the same exemptions. So is a tracked person still shared with
   whom Tautulli doesn't list at all (this needs a plex.tv sign-in, to tell who

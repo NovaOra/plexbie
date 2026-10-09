@@ -106,8 +106,10 @@ def top_watchers(
     aliases: Optional[Dict[str, str]] = None,
     credits: Optional[Dict[str, int]] = None,
     limit: int = DEFAULT_TOP_WATCHERS,
+    exclude: Iterable[str] = (),
 ) -> List[str]:
-    """The primary names of the `limit` highest watchers.
+    """The primary names of the `limit` highest watchers, leaving out `exclude`
+    (the server owner, who is never removed and so needs no place).
 
     Fewer than `limit` people with any watch time means all of them qualify -
     there is no way to be "outside the top three" of two people.
@@ -116,7 +118,8 @@ def top_watchers(
     """
     if limit <= 0:
         return []
-    return [name for name, _ in standings(users, aliases, credits)[:limit]]
+    skip = set(exclude)
+    return [name for name, _ in standings(users, aliases, credits) if name not in skip][:limit]
 
 
 def load_aliases(path: Optional[Path] = None) -> Dict[str, str]:

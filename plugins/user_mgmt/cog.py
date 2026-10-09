@@ -20,7 +20,7 @@ from core.admin_mirror import send_user_dm
 from utils.embeds import truncate_field
 from utils.formatting import ensure_utc
 from utils.views import disable_and_refresh, reply_failure
-from utils.standings import load_aliases, resolve_alias, top_watchers
+from utils.standings import load_aliases, resolve_alias, standings, top_watchers
 from database.session import get_session
 from plugins.watch_party.models import WatchPartyCredit
 from .models import PlexUser
@@ -228,6 +228,19 @@ def _by_unique_name(tautulli_users) -> Dict[str, dict]:
         logger.warning(f"Two Tautulli users are called {name!r}; neither is matched by that name")
         del found[name]
     return found
+
+
+def _tautulli_row(user, by_id: Dict[str, dict], by_name: Dict[str, dict]) -> Optional[dict]:
+    """A tracked person's Tautulli row: by Plex account id, else by name, but never a
+    name that belongs to another account (the daily check's own matching, unlogged)."""
+    row = by_id.get(str(user.plex_user_id or ""))
+    if row:
+        return row
+    row = by_name.get(user.plex_username.lower())
+    other_id = (row or {}).get('user_id')
+    if user.plex_user_id and other_id and str(other_id) != str(user.plex_user_id):
+        return None
+    return row
 
 
 def _fetch_shared_usernames(config) -> set:
@@ -452,6 +465,28 @@ class UserMgmtCog(commands.Cog):
             return True
         return bool(owner_name and user.plex_username.lower() == owner_name.lower())
 
+    def _owner_names(self, tracked_users, tautulli_users, by_id, by_name, aliases,
+                     owner_name, owner_account_id) -> set:
+        """Every name the server owner goes by in the standings: their Tautulli row's,
+        and their Plex name (watch-party time is credited under it), alias-resolved.
+        The owner needn't be tracked, so Tautulli's rows are searched too."""
+        names = set()
+        for user in tracked_users:
+            row = _tautulli_row(user, by_id, by_name) or {}
+            if self._is_permanently_exempt(user) or self._is_plex_owner(user, row, owner_name, owner_account_id):
+                names.add(resolve_alias(user.plex_username, aliases))
+                if row.get('friendly_name'):
+                    names.add(resolve_alias(row['friendly_name'], aliases))
+        for row in tautulli_users:
+            by_account = owner_account_id and str(row.get('user_id') or "") == str(owner_account_id)
+            by_login = owner_name and owner_name.lower() in {(row.get('username') or '').lower(),
+                                                             (row.get('friendly_name') or '').lower()}
+            if (by_account or by_login) and row.get('friendly_name'):
+                names.add(resolve_alias(row['friendly_name'], aliases))
+        if owner_name:
+            names.add(resolve_alias(owner_name, aliases))
+        return names
+
     @tasks.loop(hours=24)
     async def check_inactive_users(self):
         """Check all users for inactivity every 24 hours"""
@@ -497,8 +532,7 @@ class UserMgmtCog(commands.Cog):
                 )
                 credits = {name: total for name, total in credit_rows.all()}
 
-            top = top_watchers(tautulli_users, aliases, credits)
-            if not top:
+            if not standings(tautulli_users, aliases, credits):
                 # No standings means we cannot tell who is exempt. Treating that as
                 # "nobody is exempt" would start every user's clock at once on a
                 # Tautulli hiccup, so do nothing at all this pass.
@@ -507,7 +541,6 @@ class UserMgmtCog(commands.Cog):
                     "so top-watcher exemptions cannot be determined"
                 )
                 return
-            logger.info(f"Top {len(top)} watchers (exempt from removal): {', '.join(top)}")
 
             # Tautulli can keep answering after it has stopped recording plays (a
             # broken Plex connection or token, a changed server address). Every
@@ -553,6 +586,13 @@ class UserMgmtCog(commands.Cog):
             before = {user.id: persisted_fields(user) for user in tracked_users}
 
             owner_name, owner_account_id = await self._plex_owner(owner_account_entry)
+            # The owner is never removed anyway, so they don't take one of the three
+            # places that protect everyone else: the next watcher down gets it.
+            owners = self._owner_names(tracked_users, tautulli_users, tautulli_by_id, tautulli_by_name,
+                                       aliases, owner_name, owner_account_id)
+            top = top_watchers(tautulli_users, aliases, credits, exclude=owners)
+            logger.info(f"Top {len(top)} watchers (exempt from removal): {', '.join(top) or 'nobody'}"
+                        + (f"; the server owner ({', '.join(sorted(owners))}) isn't counted" if owners else ""))
             never_watched_since = await self._never_watched_since(datetime.now(timezone.utc))
             # Tautulli's table stops at USERS_TABLE_PAGES pages; someone missing from a
             # cut-off table may well have watched.

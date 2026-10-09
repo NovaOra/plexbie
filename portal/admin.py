@@ -445,7 +445,9 @@ class Admin:
                 "lastWatched": _iso(r.last_watched) if r.last_watched else None,
                 "daysIdle": idle,
                 "warned": bool(r.warning_sent),
-                "topThree": bool(r.is_top_watcher),
+                # The owner is exempt as the owner, not as one of the top three (whose places
+                # they don't take), though the daily check marks their row exempt too.
+                "topThree": bool(r.is_top_watcher) and r.plex_username != owner,
                 "removalIn": None if (r.is_top_watcher or r.never_remove) else max(0, remove_after - idle),
                 "neverRemove": bool(r.never_remove),
                 "displayName": r.display_name,
