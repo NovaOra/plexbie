@@ -160,10 +160,13 @@ export const title = (kind: MediaKind, id: string) => {
     const status = s.episodes && have >= s.episodes ? "available" : asked.has(s.n) ? "requested" : have ? "partial" : !s.episodes ? "upcoming" : "none";
     return { ...s, have, status } as const;
   });
+  const ticket = kind === "movie" || kind === "tv" ? myTicketOn(id, requested?.id) : undefined;
   return wait({
     ...t, kind, seasons,
     availability: requested ? (requested.stage === "available" ? "available" : "requested") : t.availability,
+    onPlex: t.availability === "available" || !!seasons?.some((x) => x.have),
     yourRequest: requested ? { slot: requested.slot, stage: requested.stage } : undefined,
+    yourTicket: ticket ? memberTicket(ticket) : null,
   } as Title);
 };
 
@@ -323,10 +326,10 @@ export const admin = (section: string): Promise<unknown> => {
   data.messages = Object.entries(conversations).map(([id, list]) => {
     const last = list[list.length - 1];
     const done = doneBy[id] ?? null;
-    const open = openTicket(names[id]);
+    const open = openTicketOf(names[id]);
     return { id, name: names[id], count: list.filter((m) => m.direction === "out").length, received: list.filter((m) => m.direction === "in").length,
       unread: list.filter((m) => m.direction === "in" && !(done && done.at >= m.at)).length, done,
-      ticket: open ? { id: open.id, title: open.title, slot: open.slot } : null,
+      ticket: open ? { id: open.id, title: open.title ?? "", slot: open.slot ?? 0, subject: open.subject ?? "request" } : null,
       failed: list.filter((m) => !m.delivered).length, via: [...new Set(list.map((m) => m.channel))],
       last: { at: last.at, text: last.title ?? last.text, channel: last.channel, delivered: last.delivered, direction: last.direction } };
   }).sort((a, b) => b.last.at.localeCompare(a.last.at));
@@ -423,17 +426,17 @@ export const messageDone = (who: string, done: boolean) => {
 };
 export const messageToTicket = (key: string) => {
   const [who, list] = Object.entries(conversations).find(([, l]) => l.some((x) => x.id === key)) ?? [];
-  const h = who ? openTicket(names[who]) : undefined;
+  const h = who ? openTicketOf(names[who]) : undefined;
   if (!h) return wait({ ok: false, message: "They have no open ticket." }, 400);
   list!.find((x) => x.id === key)!.ticket = h.id;
-  return wait({ ok: true, message: `Added to their ticket on ${h.title}.` }, 400);
+  return wait({ ok: true, message: `Added to their ${h.subject === "general" ? "general ticket" : `ticket on ${h.title}`}.` }, 400);
 };
 
 /** Someone's newest open ticket, the one their messages go on. */
-const openTicket = (who: string) => helps.find((h) => h.who === who && h.status === "open");
+const openTicketOf = (who: string) => helps.find((h) => h.who === who && h.status === "open");
 
 /** Help requests made in this dev session. */
-const helps: import("./types").AdminHelp[] = [
+const helps: Help[] = [
   { id: "h1", request: "6001", slot: 212, title: "Undersea Kingdom", kind: "tv", seasons: [1], who: "Jordan Lee", reason: "Stuck downloading",
     note: "It's been at 0% since this morning.", status_then: "Downloading, 0%", status: "open", created_at: ago(35) },
   { id: "h2", request: "6002", slot: 207, title: "Spring", kind: "movie", seasons: null, who: "Alex Kim", reason: "Can't be found", offer: "name",
@@ -570,7 +573,11 @@ export const requestSearch = (key: string, how: "again" | "episodes" | "name") =
 /* ------------------------------------------------------------- tickets */
 
 type Entry = import("./types").TicketEntry;
-type Help = import("./types").AdminHelp & { opened_by?: string };
+/** A ticket as the bot keeps it; one that isn't on a request has a subject, and a title one its TMDB id. */
+type Help = Omit<import("./types").AdminHelp, "request" | "slot" | "title"> & {
+  request: string | null; slot: number | null; title: string | null;
+  opened_by?: string; subject?: import("./types").TicketSubject; tmdb?: string | null; year?: string | null;
+};
 const threads: Record<string, Entry[]> = {};
 const owners: Record<string, string | null> = { h1: "Sam Rivera" };
 const waits: Record<string, boolean> = { h3: true };
@@ -649,7 +656,8 @@ function told(h: Help | undefined, said: string, done: string, sent?: Entry) {
 function ticketRow(h: Help): import("./types").AdminTicketRow {
   const t = threadOf(h);
   const last = t[t.length - 1];
-  return { id: h.id, requestKey: h.request, slot: h.slot, title: h.title, kind: h.kind, seasons: h.seasons, who: h.who,
+  return { id: h.id, subject: h.subject ?? "request", requestKey: h.request, slot: h.slot ?? 0, title: h.title ?? "",
+    tmdb: h.tmdb ?? null, year: h.year ?? null, kind: h.kind, seasons: h.seasons, who: h.who,
     reason: h.reason, status: h.status, waiting: !!waits[h.id] && h.status === "open", owner: owners[h.id] ?? null,
     openedBy: h.opened_by ?? null, offer: h.offer ?? null, createdAt: h.created_at, updatedAt: last?.at ?? h.created_at,
     last: last ? { by: last.by, kind: last.kind, text: last.text.slice(0, 160) } : null, count: t.length };
@@ -666,7 +674,7 @@ export const adminTicket = (id: string) => {
   const h = helps.find((x) => x.id === id) ?? helps[0];
   const request = allRequests("").rows.find((r) => r.id === h.request) ?? null;
   return wait({ ...ticketRow(h), note: h.note, statusThen: h.status_then, quiet: false, thread: [...threadOf(h)], request,
-    blocked: h.id === "h4" ? sampleBlocked : null }, 250);
+    blocked: h.id === "h4" ? sampleBlocked : null, plexUrl: null }, 250);
 };
 export const ticketComment = (id: string, kind: "note" | "reply", text: string) => {
   const sent = entry(id, kind, "Sam Rivera", text);
@@ -701,11 +709,95 @@ export const answerTicket = (requestId: string, text: string) => {
   waits[h.id] = false;
   return wait({ ok: true, message: "Sent. The admins have it." }, 400);
 };
+/** A ticket as its member sees it: what they said, what was said to them, and whether it's solved. */
+function memberThread(h: Help): Entry[] {
+  return threadOf(h).filter((e) => e.kind === "member" || e.kind === "reply" || (e.kind === "status" && ["Solved", "Reopened"].includes(e.text)))
+    .map(({ id, at, by, kind, text }) => ({ id, at, kind, text, by: kind === "member" ? "You" : by }));
+}
+const memberTicket = (h: Help): import("./types").MemberTicket =>
+  ({ id: h.id, reason: h.reason, subject: h.subject ?? "request", status: h.status, waiting: !!waits[h.id] && h.status === "open", thread: memberThread(h) });
 /** A member's request with its open ticket, as they see it. */
 function withTicket(r: MediaRequest): MediaRequest {
   const h = helps.find((x) => x.request === r.id && x.status === "open");
-  if (!h) return r;
-  const thread = threadOf(h).filter((e) => e.kind === "member" || e.kind === "reply" || (e.kind === "status" && ["Solved", "Reopened"].includes(e.text)))
-    .map(({ id, at, by, kind, text }) => ({ id, at, kind, text, by: kind === "member" ? "You" : by }));
-  return { ...r, help: { id: h.id, reason: h.reason, status: h.status, waiting: !!waits[h.id], thread } };
+  return h ? { ...r, help: memberTicket(h) } : r;
 }
+
+/* ------------------------------------------ tickets that aren't on a request */
+
+const ME = "Sam Rivera";
+const COSMOS = byTitle("Cosmos Laundromat");
+/** The member's ticket on a film nobody requested, which an admin answered, and a general one solved
+ *  last week; and someone else's general ticket that needs an admin. */
+helps.push(
+  { id: "t1", request: null, slot: null, subject: "title", title: COSMOS.title, tmdb: COSMOS.id, year: COSMOS.year, kind: "movie", seasons: null, who: ME,
+    reason: "Picture looks wrong", note: "It’s grey and washed out on the living-room TV",
+    status_then: `File: 4K WEB-DL, Dolby Vision + HDR10, 18.3 GB\nLast played ${shortDay(at(60 * 20))} on Living room TV (Plex for LG), direct play, 4K Dolby Vision`,
+    status: "open", created_at: at(60 * 20) },
+  { id: "g1", request: null, slot: null, subject: "general", title: null, kind: "", seasons: null, who: ME,
+    reason: "Something else", note: "Can I watch on my parents’ TV when I visit?", status_then: "", status: "resolved",
+    created_at: at(60 * 24 * 8), resolved_by: "Alex Kim", resolved_at: at(60 * 24 * 7),
+    reply: "Yes: sign in to Plex on their TV with your own account, and the household’s library is all there." },
+  { id: "g2", request: null, slot: null, subject: "general", title: null, kind: "", seasons: null, who: "Jordan Lee",
+    reason: "Can't get in, or nothing plays", note: "The new TV says I don’t have access",
+    status_then: `Last played Undersea Kingdom ${shortDay(at(60 * 24 * 3))} on Phone (Plex for Android), direct play, 1080p SDR`,
+    status: "open", created_at: at(25) },
+);
+threads.t1 = [
+  { id: "e21", at: at(60 * 20), by: ME, kind: "member", text: "Picture looks wrong. It’s grey and washed out on the living-room TV" },
+  { id: "e22", at: at(60 * 18), by: "Alex Kim", kind: "note", text: "Dolby Vision profile 5, the LG can’t show it. Tone mapping was off." },
+  { id: "e23", at: at(60 * 17), by: "Alex Kim", kind: "reply", text: "That one’s Dolby Vision. I’ve switched on tone mapping on the server, so it should look right now." },
+];
+
+function shortDay(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** The member's open ticket on a film or show: about it, or on their request for it. */
+function myTicketOn(tmdb: string, requestId?: string) {
+  return helps.find((h) => h.who === ME && h.status === "open"
+    && ((h.subject === "title" && h.tmdb === tmdb) || (!!requestId && h.request === requestId)));
+}
+
+/** A ticket on the member's own list. */
+function myTicket(h: Help): import("./types").MyTicket {
+  const r = h.request ? mine.find((x) => x.id === h.request) : undefined;
+  const t = threadOf(h);
+  return { id: h.id, subject: h.subject ?? "request", title: h.title, kind: (h.kind || null) as import("./types").MyTicket["kind"],
+    tmdb: h.tmdb ?? (r ? r.title.id : null), year: h.year ?? null, requestKey: h.request, slot: h.slot, seasons: h.seasons,
+    reason: h.reason, status: h.status, waiting: !!waits[h.id] && h.status === "open", createdAt: h.created_at,
+    updatedAt: t[t.length - 1]?.at ?? h.created_at, thread: memberThread(h) };
+}
+
+export const myTickets = () => {
+  const since = new Date(Date.now() - 30 * 864e5).toISOString();
+  const rows = helps.filter((h) => h.who === ME && (h.status === "open" || (h.resolved_at ?? "") >= since)).map(myTicket)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .sort((a, b) => Number(a.status !== "open") - Number(b.status !== "open") || Number(!a.waiting) - Number(!b.waiting));
+  return wait(rows, 260);
+};
+
+const TICKET_WORDS: Record<string, string> = {
+  playback: "Won’t play on Plex", picture: "Picture looks wrong", audio: "Sound or subtitles", wrongfilm: "Wrong film or episode",
+  episodes: "Missing episodes", access: "Can’t get in, or nothing plays", other: "Something else",
+};
+export const openTicket = (body: { kind?: "movie" | "tv"; id?: string; reason: string; note: string }) => {
+  const t = body.id ? titles.find((x) => x.id === body.id) : undefined;
+  if (t && myTicketOn(t.id)) return Promise.reject(new Error("You already have a ticket open on this. Add to it there."));
+  if (!t && helps.filter((h) => h.who === ME && h.subject === "general" && h.status === "open").length >= 3) {
+    return Promise.reject(new Error("You have 3 general tickets open already. Add to one of those."));
+  }
+  const h: Help = { id: `t${Date.now()}`, request: null, slot: null, subject: t ? "title" : "general", title: t?.title ?? null,
+    tmdb: t?.id ?? null, year: t?.year ?? null, kind: t ? (body.kind ?? "movie") : "", seasons: null, who: ME,
+    reason: TICKET_WORDS[body.reason] ?? "Something else", note: body.note,
+    status_then: t ? "File: 1080p WEB-DL, SDR, 2.1 GB" : "", status: "open", created_at: new Date().toISOString() };
+  helps.unshift(h);
+  return wait({ ok: true, message: "Sent. An admin will take a look and get back to you.", help: { id: h.id, reason: h.reason }, ticket: myTicket(h) }, 600);
+};
+export const replyTicket = (id: string, text: string) => {
+  const h = helps.find((x) => x.id === id && x.who === ME);
+  if (!h) return Promise.reject(new Error("No such ticket."));
+  if (h.status !== "open") return Promise.reject(new Error("This ticket is closed. Open a new one if it's still wrong."));
+  entry(h.id, "member", h.who, text);
+  waits[h.id] = false;
+  return wait({ ok: true, message: "Sent. The admins have it." }, 400);
+};

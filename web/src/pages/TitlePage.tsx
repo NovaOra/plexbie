@@ -8,7 +8,7 @@ import type { BookFormat, MediaKind, MediaRequest, SeasonStatus, Title } from ".
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { Countdown, Journey, LiveProgress } from "../components/motion";
-import { HelpButton } from "../components/HelpSheet";
+import { HelpButton, TitleTicket } from "../components/HelpSheet";
 import { Art, formatSlot, isBook, KIND_LABEL, homeOf, OffAir, scrollBehavior, stageLabel, stageHelp, useLoad, whileActive, useTitle, Notice } from "../components/ui";
 
 type SeasonPick = "latest" | number[];
@@ -278,7 +278,11 @@ function TitleView() {
             </Notice>
           ) : !tv && t.yourRequest && t.yourRequest.stage !== "available" ? null
           : !tv && t.availability === "available" ? (
-            <Notice icon={CircleDot} title={`Already on ${homeOf(t.kind)}`}>{t.plexUrl ? "Watch on Plex opens it." : `Open ${homeOf(t.kind)} and search for it.`} If something’s missing, say so in Discord.</Notice>
+            <Notice icon={CircleDot} title={`Already on ${homeOf(t.kind)}`}>
+              {t.plexUrl ? "Watch on Plex opens it." : `Open ${homeOf(t.kind)} and search for it.`}
+              {/* A film or show has its own ticket button below; a book is a general ticket. */}
+              {book ? " If something’s wrong with it, open a ticket under Need help? on Home." : null}
+            </Notice>
           ) : !tv && t.availability === "requested" ? (
             <Notice icon={Clock3} title="Already requested">It’s waiting in the queue, so there’s nothing more to do. It’ll show up in Just arrived.</Notice>
           ) : !session?.member ? (
@@ -294,6 +298,9 @@ function TitleView() {
               </button>
             </div>
           ) : null}
+
+          {/* Something wrong with what's on Plex is a ticket (a request's own ticket is in its box above). */}
+          {!done && t.onPlex && session?.member && !(t.yourRequest && t.yourRequest.stage !== "available") ? <TitleTicket title={t} /> : null}
         </div>
       </div>
       {t.kind === "movie" || t.kind === "tv" ? <MoreLikeThis kind={t.kind} id={t.id} /> : null}

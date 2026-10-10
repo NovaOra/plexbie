@@ -72,6 +72,22 @@ describe("the client", () => {
     });
   });
 
+  describe("tickets", () => {
+    it("list the member's own, open one about a title or nothing in particular, and add to one by its id", async () => {
+      const fetch = serve(() => json({ ok: true, message: "Sent." }));
+      await api.myTickets();
+      await api.openTicket({ kind: "movie", id: "45745", reason: "picture", note: "Washed out" });
+      await api.openTicket({ reason: "access", note: "" });
+      await api.replyTicket("abcdefabcdef", "The TV in the lounge");
+      expect(fetch.mock.calls.map(([url, init]) => [url, init?.method ?? "GET", init?.body ? JSON.parse(init.body as string) : null])).toEqual([
+        ["/api/tickets", "GET", null],
+        ["/api/tickets", "POST", { kind: "movie", id: "45745", reason: "picture", note: "Washed out" }],
+        ["/api/tickets", "POST", { reason: "access", note: "" }],
+        ["/api/tickets/abcdefabcdef/reply", "POST", { text: "The TV in the lounge" }],
+      ]);
+    });
+  });
+
   describe("errors", () => {
     it("carry the status and the bot's own message", async () => {
       serve(() => json({ error: "Only admins can do that." }, 403));

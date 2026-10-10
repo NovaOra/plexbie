@@ -64,7 +64,8 @@ for (const demo of [false, true]) describe(demo ? "the demo's sample household" 
     for (const r of [...requests.pending, ...requests.recent]) note(r.slot, r.title, r.requester, "Manage requests");
     for (const r of all) note(r.slot, r.title.title, r.requester, "All requests");
     for (const t of tickets.rows) {
-      note(t.slot, t.title, t.who, `ticket ${t.id}`);
+      // A ticket about a title, or a general one, has no request number.
+      if (t.slot) note(t.slot, t.title, t.who, `ticket ${t.id}`);
       const open = await done(s.adminTicket(t.id));
       if (open.request) note(open.request.slot, open.request.title.title, open.request.requester, `ticket ${t.id}'s request`);
     }
@@ -131,7 +132,7 @@ for (const demo of [false, true]) describe(demo ? "the demo's sample household" 
     const add = (title: string, who: string) => askedBy.set(title, (askedBy.get(title) ?? new Set()).add(who));
     for (const r of everyone.rows) add(r.title.title, r.requester);
     for (const r of [...now.pending, ...now.recent]) add(r.title, r.requester);
-    for (const t of tickets.rows) add(t.title, t.who);
+    for (const t of tickets.rows) if (t.title) add(t.title, t.who);
     const people = await done(s.admin("messages")) as MessagePerson[];
     expect(people.length).toBeGreaterThan(0);
     for (const p of people) {
@@ -210,6 +211,29 @@ for (const demo of [false, true]) describe(demo ? "the demo's sample household" 
     expect({ stage: row(no.slot).stage, status: row(no.slot).status }).toEqual({ stage: "declined", status: "declined" });
     expect(row(own.slot).stage).toBe("declined");
     expect(theirs.find((r) => r.slot === own.slot)?.stage).toBe("declined");
+  });
+
+  it("lists the member's own tickets, about anything, and opens and answers them as the bot does", async () => {
+    const list = await done(s.myTickets());
+    // Waiting on their answer first, then the other open ones, then those solved lately.
+    expect(list.map((t) => [t.subject, t.status, t.waiting])).toEqual([["request", "open", true], ["title", "open", false], ["general", "resolved", false]]);
+    expect(list.every((t) => t.thread.every((e) => e.kind !== "note" && e.kind !== "action"))).toBe(true);
+    const film = list.find((t) => t.subject === "title")!;
+    const page = await done(s.title("movie", film.tmdb!));
+    expect(page.onPlex).toBe(true);
+    expect(page.yourTicket).toMatchObject({ id: film.id, reason: "Picture looks wrong", subject: "title" });
+    await expect(s.openTicket({ kind: "movie", id: film.tmdb!, reason: "audio", note: "" })).rejects.toThrow("already have a ticket open");
+    // Not on Plex: no ticket to open there.
+    expect((await done(s.title("movie", all.find((r) => r.stage === "requested" && r.title.kind === "movie")!.title.id))).onPlex).toBe(false);
+    const made = await done(s.openTicket({ reason: "access", note: "The TV says I don’t have access" }));
+    expect(made.ticket).toMatchObject({ subject: "general", title: null, status: "open", reason: "Can’t get in, or nothing plays" });
+    await done(s.replyTicket(made.ticket.id, "It's the lounge TV"));
+    const after = (await done(s.myTickets())).find((t) => t.id === made.ticket.id)!;
+    expect(after.thread.map((e) => [e.kind, e.by])).toEqual([["member", "You"], ["member", "You"]]);
+    // Manage says what each is about, and the member's own requests never show a ticket that isn't on one.
+    const rows = (await done(s.admin("tickets")) as AdminTickets).rows;
+    expect(rows.find((r) => r.id === made.ticket.id)).toMatchObject({ subject: "general", requestKey: null, slot: 0, title: "" });
+    expect((await done(s.myRequests())).every((r) => !r.help || r.help.subject === "request")).toBe(true);
   });
 
   // Only the demo's newest request waits in its first seconds; an answer then must hold once the journey moves on.

@@ -10,7 +10,7 @@ import {
 } from "../components/icons";
 import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, mayHaveWorked, type Ack } from "../api/client";
 import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRef, BlockedRow, AdminAllRequests, AdminRequestDetail, AdminRequestRow, AdminTicket, AdminTicketDetail, AdminTicketRow, AdminTickets, TicketEntry, AdminCleanup, AdminCleanupRow, CleanupMatch, AdminInvite, PlexInvite, CleanupSettings, DiscordOverview, LoggedMessage, MessageChannel, MessagePerson, AdminJoin, AdminPerson, AdminRequest, AdminRequests, HealthCheck, NewInvite } from "../api/types";
 import { sendAgain } from "../api/alerts";
@@ -2197,7 +2197,7 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
                   {m.direction === "in" && m.ticket ? <span className="muted m-msg__by"><LifeBuoy size={13} aria-hidden /> On their ticket</span> : null}
                   {m.direction === "in" && !m.ticket && person.ticket && m.context === "Discord DM" ? (
                     <button type="button" className="btn btn--quiet m-btn m-msg__action" disabled={readOnly || busy.has(m.id)} onClick={() => void toTicket(m.id)}>
-                      <LifeBuoy size={14} aria-hidden /> Add to their ticket on {person.ticket.title}
+                      <LifeBuoy size={14} aria-hidden /> Add to their {person.ticket.subject === "general" ? "general ticket" : `ticket on ${person.ticket.title}`}
                     </button>
                   ) : null}
                 </div>
@@ -2593,6 +2593,17 @@ function ticketState(t: Pick<AdminTicketRow, "status" | "waiting" | "who">) {
   return t.status !== "open" ? { label: "Solved", tone: "done" } : t.waiting ? { label: `Waiting on ${t.who}`, tone: "wait" } : { label: "Needs an admin", tone: "hot" };
 }
 
+/** What a ticket is about, as its eyebrow puts it: its request's number, "Title" or "General". */
+function ticketKind(t: Pick<AdminTicketRow, "subject" | "slot">) {
+  return t.subject === "general" ? "General" : t.subject === "title" ? "Title" : `No. ${formatSlot(t.slot)}`;
+}
+
+/** Its heading: the film or show (a title ticket's with its year), or "General ticket". */
+function ticketTitle(t: Pick<AdminTicketRow, "subject" | "title" | "year">) {
+  if (t.subject === "general" || !t.title) return "General ticket";
+  return t.subject === "title" && t.year ? `${t.title} (${t.year})` : t.title;
+}
+
 /**
  * Every ticket: what members asked for help with ("Something wrong?") and what admins
  * opened from a request. A ticket is worked on in one place: its timeline, notes only
@@ -2626,7 +2637,7 @@ function TicketsTab() {
   return (
     <section className="section m-tickets">
       <h2>Tickets</h2>
-      <p className="muted m-all__lede">“Something wrong?” from members, and tickets admins open from a request. Open one to talk it through, fix it and solve it.</p>
+      <p className="muted m-all__lede">“Something wrong?” from members, on a request, a film or show, or anything else, and tickets admins open from a request. Open one to talk it through, fix it and solve it.</p>
       <div className="request-bar m-all__bar">
         <select className="select" value={show} aria-label="Show" onChange={(e) => setShow(e.target.value as TicketShow)}>
           {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -2649,8 +2660,8 @@ function TicketRow({ t, onOpen }: { t: AdminTicketRow; onOpen: () => void }) {
   const state = ticketState(t);
   return (
     <button type="button" className={`m-ticket is-${state.tone}`} onClick={onOpen}>
-      <span className="m-card__eyebrow">No. {formatSlot(t.slot)} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} · {since(t.updatedAt)}</span>
-      <span className="m-ticket__title">{t.title}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</span>
+      <span className="m-card__eyebrow">{ticketKind(t)} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} · {since(t.updatedAt)}</span>
+      <span className="m-ticket__title">{ticketTitle(t)}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</span>
       <span className="m-ticket__reason">{t.reason}</span>
       {t.last ? <span className="m-ticket__last"><b>{t.last.by}:</b> {t.last.text}</span> : null}
       <span className="m-ticket__tags">
@@ -2696,15 +2707,16 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
     return <BottomSheet titleId={titleId} onClose={onClose} title="Ticket"><LoadFailed text="Couldn’t load this ticket." onRetry={load} /></BottomSheet>;
   }
   const state = t ? ticketState(t) : null;
-  const video = t && ["tv", "movie"].includes(t.kind);
+  // A title ticket is searched for by its own TMDB id; a general one has nothing to search for.
+  const video = t && ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
   const mine = t?.owner && t.owner === session?.user.name;
   return (
     <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet m-ticketsheet"
-      title={t ? <>{t.title}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</> : "Ticket"}>
+      title={t ? <>{ticketTitle(t)}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</> : "Ticket"}>
       {!t ? <p className="muted">Loading…</p> : (
         <div className="m-reqsheet__body">
           {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
-          <p className="m-card__eyebrow">No. {formatSlot(t.slot)} · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p>
+          <p className="m-card__eyebrow">{ticketKind(t)} · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p>
           <div className="m-ticket__tags">
             <span className={`m-pill m-pill--${state!.tone}`}>{state!.label}</span>
             <span className="m-pill">{t.owner ? `${t.owner} has it` : "Nobody has it yet"}</span>
@@ -2723,6 +2735,20 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
               {t.request.stuck.length ? (
                 <span className="m-stuck"><CircleAlert size={15} aria-hidden /><span>{t.request.stuck.map((s) => <span key={s} className="m-stuck__item">{s}</span>)}</span></span>
               ) : null}
+            </div>
+          ) : null}
+
+          {t.subject === "title" && ((t.tmdb && ["tv", "movie"].includes(t.kind)) || t.plexUrl) ? (
+            <div className="m-ticket__links">
+              {t.tmdb && ["tv", "movie"].includes(t.kind) ? <Link to={`/title/${t.kind}/${t.tmdb}`}>Open its page</Link> : null}
+              {t.plexUrl ? <a href={t.plexUrl} target="_blank" rel="noopener noreferrer">Open in Plex</a> : null}
+            </div>
+          ) : null}
+
+          {t.statusThen ? (
+            <div className="m-ticket__sees">
+              <span className="m-card__eyebrow">When it was opened, Plexbie saw</span>
+              {t.statusThen.split("\n").map((line, i) => <span key={i}>{line}</span>)}
             </div>
           ) : null}
 

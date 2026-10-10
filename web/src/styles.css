@@ -558,7 +558,7 @@ html, body { overflow-x: clip; }
 }
 .title-actions { display: grid; gap: 28px; align-content: start; min-width: 0; }
 @media (min-width: 960px) { .title-actions { position: sticky; top: 84px; } }
-.confirm .help-open { justify-self: start; }
+.confirm .help-open, .title-actions > .help-open { justify-self: start; }
 .title-facts { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--slate-ink); font-size: 0.92rem; margin-top: 10px; }
 .title-watch { margin-top: 14px; display: inline-flex; align-items: center; gap: 8px; }
 .title-watch svg { width: 18px; height: 18px; fill: currentColor; }
@@ -575,6 +575,8 @@ html, body { overflow-x: clip; }
 }
 @media (hover: hover) and (pointer: fine) { .choice:hover { border-color: var(--slate); } }
 .choice small { font-weight: 520; opacity: 0.75; }
+/* A reason with a line under it. */
+.choices--stacked .choice { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding: 8px 16px; text-align: left; }
 
 .confirm {
   display: grid; gap: 14px; padding: 18px; border-radius: var(--r);
@@ -1996,4 +1998,24 @@ html.has-sheet, html.has-sheet body, html.has-menu, html.has-menu body { overflo
 .m-textarea--note { border-color: rgb(229 160 13 / 0.5); }
 .m-textarea--reply { border-color: rgb(255 209 228 / 0.5); }
 .m-ticket__solve { justify-self: start; }
+.m-ticket__links { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.9rem; }
+.m-ticket__sees { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 12px; font-size: 0.9rem; overflow-wrap: anywhere; }
 .help-ticket.is-waiting { color: var(--tally); font-weight: 700; }
+
+/* Home → Need help?: open a ticket, and the member's own tickets. */
+.need-help__open { justify-self: start; display: inline-flex; align-items: center; gap: 8px; }
+.need-help__list { margin-top: 6px; font-size: 1rem; }
+.tickets { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ticket-row {
+  width: 100%; display: grid; gap: 2px; padding: 12px 14px; text-align: left;
+  border: 1px solid var(--rule); border-radius: var(--r); background: var(--panel); color: var(--ink);
+  font: inherit; cursor: pointer; transition: border-color 160ms ease, transform 120ms var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .ticket-row:hover { border-color: var(--slate); } }
+.ticket-row:active { transform: scale(0.99); }
+.ticket-row__about { font-weight: 700; overflow-wrap: anywhere; }
+.ticket-row__reason { font-size: 0.92rem; }
+.ticket-row__state { color: var(--slate-ink); font-size: 0.84rem; }
+.ticket-row.is-waiting { border-color: rgb(255 92 147 / 0.55); }
+.ticket-row.is-waiting .ticket-row__state { color: var(--tally); font-weight: 700; }
+.ticket-row.is-solved { opacity: 0.8; }

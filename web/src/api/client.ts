@@ -1,4 +1,4 @@
-import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupMatch, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, NewInvite, ServerStatus, Session, ShelfPage, SignedOutOthers, Title, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
+import type { ArrEpisode, ArrItem, BlockedChoice, BlockedPreview, BlockedRow, AppRelease, Arrival, IosSource, BookFormat, CleanupMatch, CleanupSettings, Community, Discover, HelpReason, InviteInfo, LibraryItem, LibraryKind, LoggedMessage, MediaKind, MediaRequest, MyTicket, NewInvite, ServerStatus, Session, ShelfPage, SignedOutOthers, Title, TicketReason, WatchPartyMine, AdminAllRequests, AdminRequestDetail, AdminTicketDetail } from "./types";
 import * as sample from "./sample";
 export { DEMO } from "./sample";
 
@@ -205,6 +205,14 @@ export const api = {
   /** The member answers on the ticket on their own request. */
   answerTicket: (requestId: string, text: string): Promise<Ack> =>
     SAMPLE ? sample.answerTicket(requestId, text) : post(`/requests/${enc(requestId)}/help/reply`, { text }),
+  /** The member's own tickets, about anything: open ones, and those solved in the last 30 days. */
+  myTickets: (): Promise<MyTicket[]> => (SAMPLE ? sample.myTickets() : call("/tickets")),
+  /** A ticket that isn't on a request: about a film or show on Plex (its kind and TMDB id), or general. */
+  openTicket: (body: { kind?: "movie" | "tv"; id?: string; reason: TicketReason; note: string }): Promise<Ack & { help: { id: string; reason: string }; ticket: MyTicket }> =>
+    SAMPLE ? sample.openTicket(body) : post("/tickets", body),
+  /** The member adds to one of their open tickets (any of them, by its id). */
+  replyTicket: (id: string, text: string): Promise<Ack> =>
+    SAMPLE ? sample.replyTicket(id, text) : post(`/tickets/${enc(id)}/reply`, { text }),
   requestSearch: (key: string, how: "again" | "episodes" | "name"): Promise<Ack> =>
     SAMPLE ? sample.requestSearch(key, how) : post(`/admin/request/${enc(key)}/search/${how}`),
   /** Ends every website and app sign-in but this one (for one made in an admin's name). */

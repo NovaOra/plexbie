@@ -1,13 +1,17 @@
 import { useState, type FormEvent, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Search } from "../components/icons";
+import { createPortal } from "react-dom";
+import { AnimatePresence } from "motion/react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { LifeBuoy, Search } from "../components/icons";
 import { api } from "../api/client";
+import { NewTicketSheet, TicketSheet } from "../components/HelpSheet";
+import { asMemberTicket, ticketHeading } from "../components/tickets";
 import { useSession } from "../components/Layout";
 import { LiveProgress, RequestSlot, Stage, Stagger, Ticker } from "../components/motion";
 import { InviteOutcome } from "./InvitePage";
 import { AlertsPanel } from "../components/Alerts";
-import { Art, OffAir, SlotSkeletons, since, stageLabel, stageHelp, useLoad, whileActive, useTitle, Section, Moment, type Loaded } from "../components/ui";
-import type { Community } from "../api/types";
+import { Art, OffAir, SlotSkeletons, formatSlot, since, stageLabel, stageHelp, useLoad, whileActive, useTitle, Section, Moment, type Loaded } from "../components/ui";
+import type { Community, MemberTicket, MyTicket } from "../api/types";
 
 export function NowStrap() {
   const { status, statusFailed, session } = useSession();
@@ -118,6 +122,81 @@ function YourSchedule() {
         <Moment>
           <p>Nothing requested yet. Search above for a film, show or book and it shows up here.</p>
         </Moment>
+      )}
+    </Section>
+  );
+}
+
+/** What one of the member's tickets is about, on their list: "General", "Sintel (2010)" or "No. 0214 · Pepper & Carrot". */
+function ticketAbout(t: MyTicket) {
+  if (t.subject === "general" || !t.title) return "General";
+  if (t.subject === "request") return t.slot ? `No. ${formatSlot(t.slot)} · ${t.title}` : t.title;
+  return t.year ? `${t.title} (${t.year})` : t.title;
+}
+
+/**
+ * "Need help?": a ticket about anything that isn't one of their requests (a film or show's
+ * own page has one for that), and every ticket of theirs, open or solved in the last 30 days,
+ * to read and add to. An alert about one of them opens it here (?ticket=…).
+ */
+function NeedHelp() {
+  const [params, setParams] = useSearchParams();
+  const tickets = useLoad(() => api.myTickets(), [], (list) => (list?.some((t) => t.status === "open") ? 60_000 : null));
+  const [open, setOpen] = useState<string | null>(params.get("ticket"));
+  const [making, setMaking] = useState(false);
+  // Sent or answered here, until the list that comes back has it too.
+  const [added, setAdded] = useState<MyTicket[]>([]);
+  const [answered, setAnswered] = useState<Record<string, MemberTicket>>({});
+  const fetched = tickets.data ?? [];
+  const rows = [...added.filter((a) => !fetched.some((t) => t.id === a.id)), ...fetched];
+  const live = (t: MyTicket): MemberTicket => {
+    const mine = answered[t.id];
+    return mine && (mine.thread?.length ?? 0) > t.thread.length ? mine : asMemberTicket(t);
+  };
+  const shown = rows.find((t) => t.id === open);
+  const close = () => {
+    setOpen(null);
+    if (params.get("ticket")) setParams((p) => { p.delete("ticket"); return p; }, { replace: true });
+  };
+  return (
+    <Section id="help-h" title="Need help?" className="need-help">
+      <p className="muted">Something wrong with Plex, or with something you didn’t request? Tell the admins.</p>
+      <button type="button" className="btn need-help__open" onClick={() => setMaking(true)}>
+        <LifeBuoy size={16} aria-hidden /> Open a ticket
+      </button>
+      {tickets.error && !rows.length ? (
+        <OffAir compact onRetry={tickets.reload}>Couldn’t load your tickets. They’re still there.</OffAir>
+      ) : rows.length ? (
+        <>
+          <h3 className="need-help__list">Your tickets</h3>
+          <ul className="tickets">
+            {rows.map((t) => (
+              <li key={t.id}>
+                <button type="button" className={`ticket-row${t.status === "resolved" ? " is-solved" : live(t).waiting ? " is-waiting" : ""}`}
+                  onClick={() => setOpen(t.id)}>
+                  <span className="ticket-row__about">{ticketAbout(t)}</span>
+                  <span className="ticket-row__reason">{t.reason}</span>
+                  <span className="ticket-row__state">
+                    {t.status === "resolved" ? "Solved" : live(t).waiting ? "An admin asked you something" : "Open"} · {since(t.updatedAt)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {createPortal(
+        <AnimatePresence>
+          {making ? (
+            <NewTicketSheet key="new" about={null} onClose={() => setMaking(false)}
+              onSent={(t) => { setAdded((a) => [t, ...a]); setMaking(false); tickets.reload(); }} />
+          ) : shown ? (
+            <TicketSheet key={shown.id} ticket={live(shown)}
+              heading={ticketHeading(shown.subject, shown.title, shown.slot)} about={shown.subject === "request" ? shown.title : null}
+              onClose={close} onAnswered={(t) => { setAnswered((a) => ({ ...a, [t.id]: t })); tickets.reload(); }} />
+          ) : null}
+        </AnimatePresence>,
+        document.body,
       )}
     </Section>
   );
@@ -237,6 +316,7 @@ export function Home() {
         <div className="split">
           <div style={{ display: "grid", gap: 40 }}>
             <YourSchedule />
+            {session?.member ? <NeedHelp /> : null}
             <LibraryTeaser />
           </div>
           <div style={{ display: "grid", gap: 40 }}>

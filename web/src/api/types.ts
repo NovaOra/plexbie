@@ -60,8 +60,13 @@ export interface Title {
   availability: "available" | "requested" | "none" | "blocked";
   /** Plex's own page for it (app.plex.tv) when Plex has it. */
   plexUrl?: string | null;
+  /** On Plex, fully or partly: something wrong with it is a ticket rather than a request.
+   *  Older bots leave it out (and take no tickets about a title). */
+  onPlex?: boolean;
   /** Set when the signed-in member asked for it. */
   yourRequest?: { slot: number; stage: RequestStage };
+  /** The member's open ticket on it: about the title itself, or on their request for it. */
+  yourTicket?: MemberTicket | null;
   /** media_cleanup's schedule for this title: days until removal, or exempt. */
   leaving?: Leaving | null;
 }
@@ -295,7 +300,7 @@ export interface MessagePerson {
   /** Who marked the conversation done, and when (the history stays). */
   done?: { at: string; by: string | null } | null;
   /** Their open ticket, for "Add to their ticket". */
-  ticket?: { id: string; title: string; slot: number } | null;
+  ticket?: { id: string; title: string; slot: number; subject?: TicketSubject } | null;
 }
 export interface LoggedMessage {
   id: string; at: string; direction?: MessageDirection; channel: MessageChannel; delivered: boolean;
@@ -316,16 +321,45 @@ export interface TicketEntry {
   /** A reply that reached nobody (admins only). */
   missed?: boolean;
 }
+/** What a ticket is about: one of the member's requests, a film or show on Plex they
+ *  didn't request, or nothing in particular. */
+export type TicketSubject = "request" | "title" | "general";
+/** What a member can pick for a ticket that isn't on a request: the first five for a film
+ *  or show ("episodes" for a show only), "access" for a general one, "other" for both. */
+export type TicketReason = "playback" | "picture" | "audio" | "wrongfilm" | "episodes" | "access" | "other";
 export interface MemberTicket {
   id: string; reason: string;
+  /** Older bots leave it out: a ticket on a request. */
+  subject?: TicketSubject;
   status?: "open" | "resolved";
   /** An admin asked something and waits on the member's answer. */
   waiting?: boolean;
   thread?: TicketEntry[];
 }
+/** One of the member's own tickets (GET /api/tickets): open ones, and those solved in the last 30 days. */
+export interface MyTicket {
+  id: string; subject: TicketSubject;
+  /** The film or show it's about, or the request's (null on a general ticket). */
+  title: string | null; kind: "movie" | "tv" | "audiobook" | "ebook" | null;
+  /** Its TMDB id, for its page (null on a general ticket, or when Plex has no TMDB match for it). */
+  tmdb: string | null; year: string | null;
+  /** On a request: its key and number. */
+  requestKey: string | null; slot: number | null; seasons?: number[] | "all" | "latest" | null;
+  reason: string; status: "open" | "resolved"; waiting: boolean;
+  createdAt: string; updatedAt: string;
+  /** As the member sees it: what they said, what was said to them, and whether it's solved. */
+  thread: TicketEntry[];
+}
 /** A ticket on Manage → Tickets. */
 export interface AdminTicketRow {
-  id: string; requestKey: string; slot: number; title: string; kind: string; seasons: number[] | "all" | null;
+  id: string;
+  /** Older bots leave it out: on a request. */
+  subject?: TicketSubject;
+  /** On a request: its key and number (null, and 0, on any other). */
+  requestKey: string | null; slot: number;
+  /** The film or show ("" on a general ticket), with a title ticket's TMDB id and year. */
+  title: string; tmdb?: string | null; year?: string | null;
+  kind: string; seasons: number[] | "all" | null;
   who: string; reason: string; status: "open" | "resolved"; waiting: boolean; owner?: string | null;
   openedBy?: string | null; offer?: "name" | null; createdAt: string; updatedAt: string;
   last?: { by: string; kind: TicketEntry["kind"]; text: string } | null; count: number;
@@ -336,7 +370,10 @@ export interface AdminTickets {
   counts: { action: number; waiting: number; solved: number };
 }
 export interface AdminTicketDetail extends AdminTicketRow {
+  /** statusThen: what Plexbie saw when it was opened (on a title: the file, and the member's last play of it). */
   note?: string | null; statusThen?: string | null; quiet?: boolean;
+  /** A title ticket's page on Plex (app.plex.tv). */
+  plexUrl?: string | null;
   thread: TicketEntry[];
   /** Its request, as Manage → All requests shows it (null if the request is gone). */
   request: AdminRequestRow | null;
@@ -431,7 +468,7 @@ export interface AdminRequestDetail extends AdminRequestRow {
 
 /* ---------------------------------------------------------- help requests */
 
-export type HelpReason = "stuck" | "notfound" | "quality" | "episodes" | "playback" | "other";
+export type HelpReason = "stuck" | "notfound" | "notonplex" | "wrongfilm" | "quality" | "episodes" | "playback" | "other";
 export interface AdminHelp {
   id: string; request: string; slot: number; title: string; kind: string; seasons: number[] | "all" | null;
   who: string; reason: string; note: string; status_then: string; status: "open" | "resolved";
