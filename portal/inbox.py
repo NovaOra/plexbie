@@ -225,7 +225,12 @@ async def on_dm(bot, message) -> None:
         logger.info(f"Auto-reply to {who} failed: {type(e).__name__}")
     ticket = await open_ticket_for({"discord_id": author.id})
     text = (await message_log.entry(key) or {}).get("text") or message.content or ""
-    note = f"\n-# They have an open ticket on {ticket.get('title')}." if ticket else ""
+    note = ""
+    if ticket:
+        from portal.help import named, subject_of
+        on = {"general": "an open general ticket", "title": f"an open ticket on {named(ticket)}"}.get(
+            subject_of(ticket), f"an open ticket on {ticket.get('title')}")
+        note = f"\n-# They have {on}."
     await post(bot, who, name, f"📨 **{discord.utils.escape_markdown(name)}**: {text}{note}",
                view=view_for(who, key, ticket=bool(ticket)))
     actions = getattr(bot, "portal_actions", None)

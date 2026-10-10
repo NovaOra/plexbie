@@ -15,9 +15,14 @@ said, admins' notes (admins only), replies sent to the member, what Plexbie did 
 status changes; an owner (an admin who took it; any admin can still help); and
 "waiting": an admin asked the member something and the ticket waits on their answer.
 `status` stays "open" or "resolved", as older app versions read it.
+
+A ticket's `subject` is what it's about: a request (every ticket from before there
+were others has no subject, and is one), a title on Plex the member didn't request
+("title": its TMDB id, kind and Plex ratingKey instead of a request), or nothing in
+particular ("general").
 """
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from core.logging import get_logger
@@ -44,10 +49,57 @@ PLEXBIE_REASONS = {
     "blocked": "Downloaded, but won't import",
     "notreached": "Approved, but it never reached Sonarr or Radarr",
 }
+#: What can be wrong with a film or show on Plex that the member didn't request.
+TITLE_REASONS = {
+    "playback": "Won't play on Plex",
+    "picture": "Picture looks wrong",
+    "audio": "Sound or subtitles",
+    "wrongfilm": "Wrong film or episode",
+    "episodes": "Missing episodes",
+    "other": "Something else",
+}
+#: ...and with nothing in particular.
+GENERAL_REASONS = {
+    "access": "Can't get in, or nothing plays",
+    "other": "Something else",
+}
+#: A line under each of those, where there's room for one (Discord's picker).
+REASON_HINTS = {
+    "playback": "It won't start, stops, or keeps buffering",
+    "picture": "Washed out, wrong colours, or blurry",
+    "audio": "No sound, out of sync, wrong language, or subtitles",
+    "wrongfilm": "It's a different film, or the wrong episode",
+    "episodes": "Episodes are missing from a season",
+    "access": "You can't get into Plex, or nothing will play at all",
+}
+SUBJECTS = ("request", "title", "general")
+#: Open general tickets one member may have at once.
+MAX_OPEN_GENERAL = 3
+#: How long a solved ticket stays on the member's own list.
+SOLVED_SHOWN_DAYS = 30
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def subject_of(h: dict) -> str:
+    return h.get("subject") if h.get("subject") in SUBJECTS else "request"
+
+
+def reasons_for(subject: str, kind: Optional[str] = None) -> Dict[str, str]:
+    """What a member may pick for a ticket about this: a request, a title (missing
+    episodes only for a show) or nothing in particular."""
+    if subject == "general":
+        return GENERAL_REASONS
+    if subject == "title":
+        return {code: label for code, label in TITLE_REASONS.items() if code != "episodes" or kind == "tv"}
+    return REASONS
+
+
+def named(h: dict) -> str:
+    """The title a ticket is about, with its year when it has one: "Sintel (2010)"."""
+    return f"{h.get('title') or 'Untitled'}" + (f" ({h['year']})" if h.get("year") else "")
 
 
 def owns(rec: dict, user: dict) -> bool:
@@ -57,13 +109,46 @@ def owns(rec: dict, user: dict) -> bool:
     return bool(user.get("plexAccountId")) and str(rec.get("plex_account_id") or "") == str(user["plexAccountId"])
 
 
+def owns_ticket(h: dict, user: dict) -> bool:
+    """Whether a ticket is this signed-in person's: opened by them, or about their request."""
+    if user.get("discordId") and str(h.get("discord_id") or "") == str(user["discordId"]):
+        return True
+    return bool(user.get("plexAccountId")) and str(h.get("plex_account_id") or "") == str(user["plexAccountId"])
+
+
 async def open_for(request_keys: Optional[set] = None) -> Dict[str, dict]:
-    """Open help requests by request key."""
+    """Open help requests by request key (tickets about a request only)."""
     out = {}
     for hid, h in (await kv_get_all(NAMESPACE)).items():
-        if isinstance(h, dict) and h.get("status") == "open" and (request_keys is None or h.get("request") in request_keys):
+        if isinstance(h, dict) and h.get("status") == "open" and subject_of(h) == "request" and h.get("request") \
+                and (request_keys is None or h.get("request") in request_keys):
             out[h["request"]] = {**h, "id": hid}
     return out
+
+
+async def open_on_title(user: dict, kind: str, tmdb: Any = None, rating_key: Any = None) -> Optional[dict]:
+    """This member's open ticket on a film or show (by its TMDB id, or its Plex
+    ratingKey when Plex has no TMDB match for it): one about the title itself, or
+    one on their request for it."""
+    for hid, h in (await kv_get_all(NAMESPACE)).items():
+        if not isinstance(h, dict) or h.get("status") != "open" or not owns_ticket(h, user):
+            continue
+        subject = subject_of(h)
+        if subject == "title" and h.get("kind") == kind and (
+                (tmdb and str(h.get("tmdb") or "") == str(tmdb))
+                or (rating_key and str(h.get("rating_key") or "") == str(rating_key))):
+            return {**h, "id": hid}
+        if subject == "request" and tmdb and str(h.get("request") or "").isdigit():
+            media = (await get_request(int(h["request"])) or {}).get("media") or {}
+            if str(media.get("id")) == str(tmdb) and media.get("media_type") == kind:
+                return {**h, "id": hid}
+    return None
+
+
+async def open_general(user: dict) -> int:
+    """How many general tickets this member has open."""
+    return sum(1 for h in (await kv_get_all(NAMESPACE)).values()
+               if isinstance(h, dict) and h.get("status") == "open" and subject_of(h) == "general" and owns_ticket(h, user))
 
 
 async def all_help() -> List[dict]:
@@ -74,17 +159,24 @@ async def all_help() -> List[dict]:
     return opened + closed
 
 
-async def create(*, request_key: str, slot: int, title: str, kind: str, seasons: Any, user: dict,
-                 reason: str, note: str, status_now: str, offer: Optional[str] = None,
-                 opened_by: Optional[str] = None, quiet: bool = False) -> dict:
+async def create(*, request_key: Optional[str] = None, slot: Optional[int] = None, title: Optional[str] = None,
+                 kind: Optional[str] = None, seasons: Any = None, user: dict, reason: str, note: str, status_now: str,
+                 offer: Optional[str] = None, opened_by: Optional[str] = None, quiet: bool = False,
+                 subject: str = "request", tmdb: Optional[int] = None, year: Optional[str] = None,
+                 rating_key: Optional[str] = None) -> dict:
+    """A new ticket. On a request: its key, number, title and seasons. About a title:
+    its TMDB id (when Plex has one for it), Plex ratingKey, title and year. General:
+    none of those."""
     hid = secrets.token_hex(6)
     rec = {
-        "request": request_key, "slot": slot, "title": title, "kind": kind, "seasons": seasons,
+        "subject": subject, "request": request_key, "slot": slot, "title": title, "kind": kind, "seasons": seasons,
         "who": user["user"].get("name") or "Someone",
         "discord_id": user.get("discordId"), "plex_account_id": user.get("plexAccountId"), "plex_name": user.get("plexName"),
         "reason": reason, "note": note[:600], "status_then": status_now,
         "status": "open", "created_at": _now(),
     }
+    if subject == "title":
+        rec.update(tmdb=tmdb, year=year or None, rating_key=rating_key)
     first = (f"{reason}. {note[:600]}" if note else reason) if not opened_by else (note[:600] or reason)
     rec["thread"] = [_entry("note" if opened_by else "member", opened_by or rec["who"], first, rec["created_at"])]
     if offer:
@@ -94,7 +186,8 @@ async def create(*, request_key: str, slot: int, title: str, kind: str, seasons:
     if quiet:
         rec["quiet"] = True           # ...without telling the person who asked
     await kv_set(NAMESPACE, hid, rec)
-    logger.info(f"Help request {hid} on No. {slot} ({title}) from {rec['who']}: {reason}")
+    about = {"request": f"on No. {slot} ({title})", "title": f"on {named(rec)}", "general": "(general)"}[subject]
+    logger.info(f"Help request {hid} {about} from {rec['who']}: {reason}")
     return {**rec, "id": hid}
 
 
@@ -202,6 +295,35 @@ def member_view(rec: dict) -> dict:
                        if e.get("kind") in MEMBER_SEES or (e.get("kind") == "status" and e.get("text") in MEMBER_STATUSES)]}
 
 
+def member_row(hid: str, rec: dict) -> dict:
+    """One of the member's own tickets, on their list of them: what it's about, and
+    the ticket as they see it."""
+    view = member_view(rec)
+    thread = thread_of(rec)
+    return {
+        "id": hid, "subject": subject_of(rec), "title": rec.get("title") or None, "kind": rec.get("kind") or None,
+        "tmdb": str(rec["tmdb"]) if rec.get("tmdb") else None, "year": rec.get("year") or None,
+        "requestKey": rec.get("request") or None, "slot": rec.get("slot") or None,
+        "seasons": rec.get("seasons"), "reason": rec.get("reason") or "",
+        "status": view["status"] or "open", "waiting": view["waiting"],
+        "createdAt": rec.get("created_at"), "updatedAt": (thread[-1].get("at") if thread else None) or rec.get("created_at"),
+        "thread": view["thread"],
+    }
+
+
+async def tickets_of(user: dict) -> List[dict]:
+    """The member's own tickets, about anything: the open ones (waiting on their answer
+    first), then those solved in the last SOLVED_SHOWN_DAYS days. Not one an admin
+    opened on their request without telling them."""
+    since = (datetime.now(timezone.utc) - timedelta(days=SOLVED_SHOWN_DAYS)).isoformat()
+    rows = [member_row(hid, h) for hid, h in (await kv_get_all(NAMESPACE)).items()
+            if isinstance(h, dict) and owns_ticket(h, user) and not h.get("quiet")
+            and (h.get("status") == "open" or (h.get("resolved_at") or "") >= since)]
+    rows.sort(key=lambda r: r["updatedAt"] or "", reverse=True)
+    rows.sort(key=lambda r: (r["status"] != "open", not r["waiting"]))
+    return rows
+
+
 def needs_action(rec: dict) -> bool:
     """Open, and not waiting on the member: an admin's move."""
     return rec.get("status") == "open" and not rec.get("waiting")
@@ -243,8 +365,26 @@ async def _movie_for(services, rec: dict) -> dict:
     return movie
 
 
-async def search_again(services, request_key: str, on_nothing=None, on_movie=None) -> str:
-    """Search again for this request, by its IDs. Returns what was started.
+def search_target(h: dict) -> Any:
+    """What a ticket's search buttons look for: its request (by key), or the film or
+    show it's about, shaped as a request's record. A general ticket has none."""
+    subject = subject_of(h)
+    if subject == "request" and h.get("request"):
+        return h["request"]
+    if subject == "title" and str(h.get("tmdb") or "").isdigit() and h.get("kind") in ("movie", "tv"):
+        return {"media": {"id": int(h["tmdb"]), "media_type": h["kind"],
+                          "title" if h["kind"] == "movie" else "name": h.get("title") or ""}, "seasons": None}
+    raise LookupError("This ticket isn't about one film or show Plexbie can look up, so there's nothing to search for")
+
+
+async def _record(target: Any) -> dict:
+    """A request's record by its key, or one search_target built."""
+    return target if isinstance(target, dict) else (await get_request(int(target)) or {})
+
+
+async def search_again(services, target: Any, on_nothing=None, on_movie=None) -> str:
+    """Search again for a request (by its key) or a ticket's title (search_target), by
+    its IDs. Returns what was started.
 
     Films: Radarr's search, keeping only releases that really are the film
     (core/verified_search); on_movie hears what happened, as a sentence and
@@ -253,7 +393,7 @@ async def search_again(services, request_key: str, on_nothing=None, on_movie=Non
     on_nothing hears which seasons turned up nothing at all.
     """
     from core import season_search, verified_search
-    rec = await get_request(int(request_key))
+    rec = await _record(target)
     media = (rec or {}).get("media") or {}
     if media.get("media_type") == "movie":
         movie = await _movie_for(services, rec)
@@ -281,10 +421,10 @@ async def search_again(services, request_key: str, on_nothing=None, on_movie=Non
     raise LookupError("Books are searched by an admin in SABnzbd")
 
 
-async def search_episodes(services, request_key: str, on_nothing=None) -> str:
+async def search_episodes(services, target: Any, on_nothing=None) -> str:
     """Skip the season search: look for every missing episode on its own."""
     from core import season_search
-    rec = await get_request(int(request_key))
+    rec = await _record(target)
     media = (rec or {}).get("media") or {}
     if media.get("media_type") != "tv":
         raise LookupError("That's for shows only")
@@ -297,12 +437,12 @@ async def search_episodes(services, request_key: str, on_nothing=None) -> str:
     return f"Sonarr is searching season {', '.join(map(str, seasons))} one episode at a time."
 
 
-async def search_by_name(services, request_key: str, on_done) -> str:
+async def search_by_name(services, target: Any, on_done) -> str:
     """Search NZBHydra by the title's name instead of its IDs, in the background.
     Returns what was started; on_done hears what happened, as a sentence and
     whether something was grabbed."""
     from core import verified_search
-    rec = await get_request(int(request_key))
+    rec = await _record(target)
     media = (rec or {}).get("media") or {}
     if not services.hydra.configured:
         raise LookupError("NZBHydra isn't set up, so Plexbie can't search by name")
@@ -355,6 +495,6 @@ async def name_search_for_help(services, hid: str, actor: str, tell=None) -> str
                 await tell(f"{'✅' if found else '🔎'} **{h.get('title')}**: {text}")
             except Exception as e:
                 logger.warning(f"Could not report the name search for {h.get('title')}: {e}")
-    message = await search_by_name(services, h["request"], done)
+    message = await search_by_name(services, search_target(h), done)
     await note_search(hid, actor, message)
     return message

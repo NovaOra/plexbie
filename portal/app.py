@@ -243,6 +243,10 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
         user = await member(request)
         return web.json_response(await data.my_requests(*ids(user)))
 
+    async def my_tickets(request):
+        from portal import help as helpdesk
+        return web.json_response(await helpdesk.tickets_of(await member(request)))
+
     async def search_all(request):
         user = await member(request)
         if actions is not None:
@@ -357,6 +361,7 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
     r.add_get("/api/search", safe(search))
     r.add_get("/api/titles/{kind}/{id}", safe(title))
     r.add_get("/api/requests", safe(my_requests))
+    r.add_get("/api/tickets", safe(my_tickets))
     r.add_get("/api/community", safe(community))
     r.add_get("/api/watchparty", safe(watchparty))
     r.add_get("/api/popular", safe(popular))
@@ -573,10 +578,21 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             payload = await body(request)
             return web.json_response(await actions.member_reply(await member(request), request.match_info["id"], payload))
 
+        # A member's own tickets that aren't on a request: about a title on Plex, or general.
+        async def post_ticket(request):
+            payload = await body(request)
+            return web.json_response(await actions.open_ticket(await member(request), payload), status=201)
+
+        async def post_ticket_reply(request):
+            payload = await body(request)
+            return web.json_response(await actions.ticket_reply(await member(request), request.match_info["id"], payload))
+
         r.add_post("/api/admin/ticket/{id:[0-9a-f]{12}}/comment", safe(post_ticket_comment))
         r.add_post("/api/admin/ticket/{id:[0-9a-f]{12}}/status", safe(post_ticket_status))
         r.add_post("/api/admin/ticket/{id:[0-9a-f]{12}}/take", safe(post_ticket_take))
         r.add_post("/api/requests/{id}/help/reply", safe(post_member_reply))
+        r.add_post("/api/tickets", safe(post_ticket))
+        r.add_post("/api/tickets/{id:[0-9a-f]{12}}/reply", safe(post_ticket_reply))
         r.add_post("/api/admin/request/{key:\\d+}/search/{how:again|episodes|name}", safe(post_request_search))
         r.add_post("/api/push/subscribe", safe(push_subscribe))
         r.add_post("/api/push/unsubscribe", safe(push_unsubscribe))

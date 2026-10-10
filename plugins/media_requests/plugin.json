@@ -8,6 +8,7 @@
     "commands": [
         "/request - Request a TV show, movie, audiobook or ebook",
         "/my-requests - Your own requests and where each one stands",
+        "/ticket - Something wrong with a film or show on Plex, or anything else: tell the admins",
         "/requests - List requests still awaiting a decision"
     ]
 }

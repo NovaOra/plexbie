@@ -100,7 +100,10 @@ The bot serves its own website from the same container, on port 7979 out of the 
   status so people can ask for the seasons that are still missing.
 - **Trending right now:** the top 15 films and shows this week, with *On Plex* on anything you already have.
 - **Something wrong? Open a ticket:** a member flags a stuck request on the website, in the app, or with the
-  button on Plexbie's approval DM. Admins work it on Manage → Tickets: take it, add notes only admins see,
+  button on Plexbie's approval DM. Anything else gets a ticket too: *Something wrong? Open a ticket* on any film
+  or show that's on Plex, *Need help?* on Home for what isn't about one title, or `/ticket` in Discord. On a
+  title, Plexbie adds what it can see: the file Radarr or Sonarr has (quality, HDR or Dolby Vision, size) and
+  how that member last played it, from Tautulli. Admins work tickets on Manage → Tickets: take it, add notes only admins see,
   reply (the member answers from Discord, the website or the app), search again, and solve it. A reply goes
   as a Discord DM, or as a phone alert or email when their DMs are closed, and Plexbie tells you (and notes on
   the ticket) when it reached nobody, so you can tell them another way.
@@ -140,7 +143,7 @@ without touching anything else.
 |---|---|
 | `user_invites` | `/join-plex` and the approval flow |
 | `user_mgmt` | Account linking, inactivity tracking, removal |
-| `media_requests` | `/request` for TV, film, audiobook and ebook, and `/my-requests` |
+| `media_requests` | `/request` for TV, film, audiobook and ebook, `/my-requests` and `/ticket` |
 | `media_cleanup` | Report and optionally delete unwatched media |
 | `new_media_added` | Announce additions from Plex webhooks |
 | `watch_tracking` | Now watching, leaderboard and streaks |
@@ -288,6 +291,16 @@ who's watching from one place instead of five.
   one's number and stage (and its seasons, download progress or any problem), as
   My requests on the website lists them; the website has the rest, with live
   progress and tickets. It needs the website running.
+- `/ticket` opens a ticket that isn't on one of the member's own requests. As
+  they type, `about` lists the films and shows on Plex, with **General** first
+  for anything else; then they pick what's wrong and add a line (needed for
+  *Something else*). A film or show must be on Plex: what isn't is requested,
+  or asked about in a general ticket. It's for the same people the website
+  lets request: holders of the member role (`PLEX_MEMBER_ROLE_ID`), admins and
+  the bot owner. Each member has at most one open ticket per title (the one on
+  their request for it counts) and three open general tickets, and tickets and
+  answers share five a day. Admins answer the usual way, and the member replies
+  from the DM. It needs the website running.
 - New additions are announced from Plex webhooks, enriched with TMDB metadata,
   and episodes arriving in a batch are collapsed into a single updating message.
   Whoever requested a title is told once it's on Plex (a DM, or a phone alert
@@ -623,9 +636,9 @@ This setting is now INACTIVE.
 
 ## Commands
 
-13 commands are live with the default plugin set (`/cleanup` is one of them, with
+14 commands are live with the default plugin set (`/cleanup` is one of them, with
 five subcommands). **9 are for administrators and hidden from ordinary members**
-by Discord itself, so a regular user sees 4. Every command is guild-only and every
+by Discord itself, so a regular user sees 5. Every command is guild-only and every
 reply is ephemeral unless stated otherwise.
 
 ### Everyone
@@ -635,6 +648,7 @@ reply is ephemeral unless stated otherwise.
 | `/join-plex` | | Request access to the Plex server |
 | `/request` | | Request a TV show, film, audiobook or ebook |
 | `/my-requests` | | Your own requests and where each one stands, newest 10 first |
+| `/ticket` | `about` | Tell the admins something's wrong: a film or show on Plex (picked as you type), or **General** |
 | `/watchparty-stats` | | Your own watch party credit |
 
 ### Administrators
@@ -692,6 +706,10 @@ so the household can do everything above without Discord:
   and turn on phone alerts. When a download has a problem, members see a plain
   sentence; what Sonarr or Radarr actually said (release names, folders) is for
   admins, on Manage → All requests, the request's ticket and the admin channel.
+  A film or show that's on Plex (and isn't on a request of theirs) has
+  *Something wrong? Open a ticket* on its page; Home's *Need help?* opens a
+  general one and lists their tickets (open, and solved in the last 30 days),
+  each with its thread and a box to add to it. The limits are `/ticket`'s.
 - **Admins (Manage):** approve and decline requests and join requests, make
   invite links, manage people and Discord links, change cleanup settings (going
   live, and switching cleanup on live while practice mode is off, take a press
@@ -1010,7 +1028,7 @@ to load and the log names the command.
 |---|---|
 | `user_invites` | `/join-plex` and the approval flow |
 | `user_mgmt` | Account linking, inactivity tracking, removal |
-| `media_requests` | `/request` for TV, film, audiobook, ebook; `/my-requests` |
+| `media_requests` | `/request` for TV, film, audiobook, ebook; `/my-requests`; `/ticket` |
 | `media_cleanup` | Report and optionally delete unwatched media |
 | `new_media_added` | Announce additions from Plex webhooks, with TMDB metadata |
 | `watch_tracking` | Now Watching, leaderboard and streak displays |

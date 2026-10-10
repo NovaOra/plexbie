@@ -34,6 +34,7 @@ MEMBER_FACING = {
     "join-plex",          # request Plex access
     "request",            # request media
     "my-requests",        # your own requests
+    "ticket",             # a ticket about a title on Plex, or general (members only, checked when run)
     "watchparty-stats",   # your own stats
 }
 

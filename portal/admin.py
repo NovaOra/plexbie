@@ -15,6 +15,7 @@ from core.logging import get_logger
 from database.kv_store import kv_get_all, kv_set
 from database.request_store import SEERR_SOURCES
 from database.session import get_session
+from portal import plex as plexdata
 from portal.cleanup import library_keys, skipped_names
 from portal.data import Data, _iso, predates_outcomes, tmdb_art
 from utils.formatting import parse_utc
@@ -85,12 +86,14 @@ def _all_counts(rows: List[dict]) -> dict:
 
 
 def _ticket_row(hid: str, h: dict) -> dict:
-    """A ticket on the Tickets list."""
+    """A ticket on the Tickets list. `subject`: on a request (with its key and number),
+    about a title on Plex (its TMDB id, when Plex has one), or general (no title)."""
     from portal import help as helpdesk
     thread = helpdesk.thread_of(h)
     last = thread[-1] if thread else {}
     return {
-        "id": hid, "requestKey": h.get("request"), "slot": h.get("slot") or 0, "title": h.get("title") or "",
+        "id": hid, "subject": helpdesk.subject_of(h), "requestKey": h.get("request"), "slot": h.get("slot") or 0,
+        "title": h.get("title") or "", "tmdb": str(h["tmdb"]) if h.get("tmdb") else None, "year": h.get("year") or None,
         "kind": h.get("kind") or "", "seasons": h.get("seasons"), "who": h.get("who") or "Someone",
         "reason": h.get("reason") or "", "status": h.get("status") or "open", "waiting": bool(h.get("waiting")),
         "owner": h.get("owner"), "openedBy": h.get("opened_by"), "offer": h.get("offer"),
@@ -288,7 +291,7 @@ class Admin:
         open_by: Dict[str, dict] = {}
         for hid, h in (await kv_get_all(helpdesk.NAMESPACE)).items():
             if isinstance(h, dict) and h.get("status") == "open":
-                row = {"id": hid, "title": h.get("title") or "", "slot": h.get("slot") or 0}
+                row = {"id": hid, "title": h.get("title") or "", "slot": h.get("slot") or 0, "subject": helpdesk.subject_of(h)}
                 for k in (f"d{h['discord_id']}" if h.get("discord_id") else None,
                           f"p{(h.get('plex_name') or '').lower()}" if h.get("plex_name") else None):
                     if k:
@@ -320,7 +323,10 @@ class Admin:
         out = {**_ticket_row(hid, h), "note": h.get("note"), "statusThen": h.get("status_then"),
                "quiet": bool(h.get("quiet")), "thread": helpdesk.thread_of(h), "request": None,
                # A download Sonarr/Radarr won't import by themselves (core/blocked_imports).
-               "blocked": h.get("blocked") if isinstance(h.get("blocked"), dict) else None}
+               "blocked": h.get("blocked") if isinstance(h.get("blocked"), dict) else None,
+               # A title ticket's own page on Plex (app.plex.tv).
+               "plexUrl": plexdata.watch_url(getattr(self.services, "plex_server", None), h.get("rating_key"))
+               if helpdesk.subject_of(h) == "title" else None}
         rec = (await self.data._slots()).get(str(h.get("request")))
         if rec:
             names = await self._names()

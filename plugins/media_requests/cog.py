@@ -1972,6 +1972,19 @@ class MediaRequestsCog(commands.Cog):
             ephemeral=True
         )
     
+    @app_commands.command(name="ticket", description="Open a ticket: something wrong with a film or show on Plex, or anything else")
+    @app_commands.describe(about="A film or show on Plex (start typing its name), or General")
+    @app_commands.guild_only()
+    async def ticket(self, interaction: discord.Interaction, about: str):
+        """A ticket for the admins that isn't on a request of yours (portal/ticket_view)."""
+        from portal import ticket_view
+        await ticket_view.start(interaction, about)
+
+    @ticket.autocomplete("about")
+    async def ticket_about(self, interaction: discord.Interaction, current: str):
+        from portal import ticket_view
+        return await ticket_view.about_choices(interaction, current)
+
     @app_commands.command(name="my-requests", description="Your requests and where each one stands")
     @app_commands.guild_only()
     async def list_my_requests(self, interaction: discord.Interaction):

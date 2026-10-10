@@ -75,6 +75,7 @@ async def start_portal(bot, services) -> Optional[web.AppRunner]:
     auth = Auth(bot, services, cache)
     actions = Actions(bot, services, data, cfg.web_public_url)
     bot.portal_actions = actions     # for webhooks that act like the website (portal/help)
+    bot.portal_auth = auth           # who's a member, as the website decides it (/ticket)
     if hasattr(bot, "add_view"):
         from portal.help_view import HelpByNameView
         bot.add_view(HelpByNameView())   # "Search by name" on help alerts, across restarts

@@ -429,13 +429,18 @@ class Data:
             t["runtime"] = r.get("runtime")
             if kind == "tv":
                 t["seasons"] = await self.tv_seasons(tid, r)
+            rk = None
             try:
-                tvdb = (r.get("externalIds") or {}).get("tvdbId")
+                extern = r.get("externalIds") or {}
                 rk = await self.progress._plex_key("movie" if kind == "movie" else "show", f"tmdb://{tid}",
-                                                   *([f"tvdb://{tvdb}"] if tvdb else []))
+                                                   *(f"{scheme}://{extern[key]}" for scheme, key in
+                                                     (("tvdb", "tvdbId"), ("imdb", "imdbId")) if extern.get(key)))
                 t["plexUrl"] = plexdata.watch_url(self.services.plex_server, rk)
             except Exception as e:
                 logger.info(f"portal: no Plex link for {t.get('title')} ({e})")
+            # What a ticket can be about (portal/actions._on_plex): what Plex lists, or what
+            # Seerr says is there when Plex doesn't match it or can't be asked.
+            t["onPlex"] = bool(rk) or t["availability"] == "available"
             if t["availability"] == "available":
                 try:
                     clock = await self.countdown()
@@ -469,6 +474,14 @@ class Data:
                 t["yourRequest"] = {"slot": hit["slot"], "stage": hit["stage"]}
                 if t["availability"] == "none":
                     t["availability"] = "requested"
+            if kind in ("movie", "tv"):
+                from portal import help as helpdesk
+                me = {"discordId": str(user_id) if user_id else None, "plexAccountId": plex_account_id}
+                ticket = await helpdesk.open_on_title(me, kind, tid)
+                if ticket:
+                    # Their open ticket on it, about the title or on their request for it.
+                    t["yourTicket"] = {"id": ticket["id"], "reason": ticket.get("reason") or "",
+                                       "subject": helpdesk.subject_of(ticket), **helpdesk.member_view(ticket)}
         return t
 
     # ---------------------------------------------------------- requests
