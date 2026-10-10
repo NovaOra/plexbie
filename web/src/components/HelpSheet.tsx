@@ -5,7 +5,7 @@ import { LifeBuoy } from "./icons";
 import { api } from "../api/client";
 import type { HelpReason, MediaRequest, MemberTicket, MyTicket, Title, TicketReason } from "../api/types";
 import { BottomSheet } from "./BottomSheet";
-import { asMemberTicket, ticketHeading } from "./tickets";
+import { asMemberTicket, inLine, ticketHeading } from "./tickets";
 import { formatSlot, seasonsLabel, since } from "./ui";
 
 const REASONS: [HelpReason, string][] = [
@@ -39,7 +39,7 @@ function TicketOpener({ ticket, onOpen }: { ticket: MemberTicket; onOpen: () => 
   return (
     <button type="button" className={`help-open help-ticket${ticket.waiting ? " is-waiting" : ""}`}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpen(); }}>
-      <LifeBuoy size={15} aria-hidden /> {ticket.waiting ? "An admin asked you something" : `Your ticket: ${ticket.reason.toLowerCase()}`}
+      <LifeBuoy size={15} aria-hidden /> {ticket.waiting ? "An admin asked you something" : `Your ticket: ${inLine(ticket.reason)}`}
     </button>
   );
 }
