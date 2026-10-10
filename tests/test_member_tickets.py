@@ -285,6 +285,27 @@ def test_a_request_ticket_is_still_answered_by_its_request_and_now_by_its_id():
     assert listed[0]["subject"] == "request" and listed[0]["requestKey"] == "301" and listed[0]["slot"] == 1
 
 
+def test_a_ticket_an_admin_opened_quietly_is_neither_shown_on_the_title_nor_in_the_way():
+    from database.request_store import mark_resolved, save_request
+    from portal import help as helpdesk
+    actions = _actions()
+    actions.services.plex_server = None
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(302, user_id=7, media={"id": 45745, "media_type": "movie", "title": "Sintel"})
+        await mark_resolved(302, "approved", "Sam")
+        await actions.admin_ticket(ADMIN, "302", {"note": "Checking the release names", "tell": False})
+        page = await actions.data.title("movie", "45745", 7)
+        theirs = await actions.open_ticket(JORDAN, {"kind": "movie", "id": "45745", "reason": "playback"})
+        return page, theirs, await helpdesk.tickets_of(JORDAN)
+
+    with _seen():
+        page, theirs, listed = asyncio.run(scenario())
+    assert "yourTicket" not in page
+    assert theirs["ok"] and [t["subject"] for t in listed] == ["title"]
+
+
 def test_a_title_page_says_whether_a_ticket_can_be_opened_and_shows_yours():
     actions = _actions()
     actions.services.plex_server = None

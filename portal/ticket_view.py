@@ -343,7 +343,8 @@ class AboutModal(discord.ui.Modal, title="Open a ticket"):
         self.person, self.target, self.reason = person, target, reason
         self.note = discord.ui.TextInput(label="What's wrong? (needed for “Something else”)" if reason == "other" else "What's wrong?",
                                          style=discord.TextStyle.paragraph, max_length=600, required=reason == "other",
-                                         placeholder="It looks grey and washed out on my TV")
+                                         placeholder="It looks grey and washed out on my TV" if target
+                                         else "Plex says I don't have access any more")
         self.add_item(self.note)
 
     async def on_submit(self, interaction: discord.Interaction):

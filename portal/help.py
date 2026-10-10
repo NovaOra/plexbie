@@ -129,9 +129,10 @@ async def open_for(request_keys: Optional[set] = None) -> Dict[str, dict]:
 async def open_on_title(user: dict, kind: str, tmdb: Any = None, rating_key: Any = None) -> Optional[dict]:
     """This member's open ticket on a film or show (by its TMDB id, or its Plex
     ratingKey when Plex has no TMDB match for it): one about the title itself, or
-    one on their request for it."""
+    one on their request for it. Not one an admin opened without telling them: they
+    can't see it (tickets_of), so it's neither theirs to open nor in their way."""
     for hid, h in (await kv_get_all(NAMESPACE)).items():
-        if not isinstance(h, dict) or h.get("status") != "open" or not owns_ticket(h, user):
+        if not isinstance(h, dict) or h.get("status") != "open" or h.get("quiet") or not owns_ticket(h, user):
             continue
         subject = subject_of(h)
         if subject == "title" and h.get("kind") == kind and (
