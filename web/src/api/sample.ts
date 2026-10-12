@@ -447,9 +447,15 @@ const helps: Help[] = [
 ];
 export const askHelp = (requestId: string, reason: string) => {
   const r = mine.find((m) => m.id === requestId);
-  const words: Record<string, string> = { stuck: "Stuck downloading", quality: "Wrong version or quality", episodes: "Wrong or missing episodes", playback: "Won't play on Plex", other: "Something else" };
+  const words: Record<string, string> = { stuck: "Stuck downloading", notfound: "Can't be found", notonplex: "Downloaded, but not on Plex", wrongfilm: "Plex says it's a different film",
+    quality: "Wrong version or quality", episodes: "Wrong or missing episodes", playback: "Won't play on Plex", other: "Something else" };
   const help = { id: `h${Date.now()}`, reason: words[reason] ?? "Something else" };
-  if (r) r.help = help;
+  if (r) {
+    // A ticket like any other, as the bot keeps it: on the member's list, to read and add to.
+    helps.unshift({ id: help.id, request: requestId, slot: r.slot, title: r.title.title, kind: r.title.kind, seasons: null, who: "Sam Rivera",
+      reason: help.reason, note: "", status_then: r.stage, status: "open", created_at: new Date().toISOString() });
+    r.help = help;
+  }
   return wait({ ok: true, message: "Sent. An admin will take a look and get back to you.", help }, 500);
 };
 export const helpResolve = (id: string) => {

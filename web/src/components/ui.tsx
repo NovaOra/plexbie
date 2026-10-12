@@ -30,7 +30,9 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = [], refresh
   }, [every]);
   /** Try again after a failure: loads afresh, showing the loading state. */
   const reload = () => { setRound(0); setAttempt((a) => a + 1); };
-  return { ...state, reload };
+  /** Load again in the background (after a change was sent): what's shown stays if it fails. */
+  const refresh = () => setRound((r) => r + 1);
+  return { ...state, reload, refresh };
 }
 
 /** What `useLoad` gives back, for a page that loads something once and hands it to its parts. */

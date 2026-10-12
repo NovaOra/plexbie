@@ -5,6 +5,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { LifeBuoy, Search } from "../components/icons";
 import { api } from "../api/client";
 import { NewTicketSheet, TicketSheet } from "../components/HelpSheet";
+import { afterOverlay } from "../components/overlay";
 import { asMemberTicket, ticketHeading } from "../components/tickets";
 import { useSession } from "../components/Layout";
 import { LiveProgress, RequestSlot, Stage, Stagger, Ticker } from "../components/motion";
@@ -156,10 +157,11 @@ function NeedHelp() {
   const shown = rows.find((t) => t.id === open);
   const close = () => {
     setOpen(null);
-    if (params.get("ticket")) setParams((p) => { p.delete("ticket"); return p; }, { replace: true });
+    // Once the sheet's own history entry is off, or replacing would overwrite it and leave an extra Back.
+    if (params.get("ticket")) afterOverlay(() => setParams((p) => { p.delete("ticket"); return p; }, { replace: true }));
   };
   return (
-    <Section id="help-h" title="Need help?" className="need-help">
+    <Section id="need-help-h" title="Need help?" className="need-help">
       <p className="muted">Something wrong with Plex, or with something you didn’t request? Tell the admins.</p>
       <button type="button" className="btn need-help__open" onClick={() => setMaking(true)}>
         <LifeBuoy size={16} aria-hidden /> Open a ticket
@@ -189,11 +191,11 @@ function NeedHelp() {
         <AnimatePresence>
           {making ? (
             <NewTicketSheet key="new" about={null} onClose={() => setMaking(false)}
-              onSent={(t) => { setAdded((a) => [t, ...a]); setMaking(false); tickets.reload(); }} />
+              onSent={(t) => { setAdded((a) => [t, ...a]); setMaking(false); tickets.refresh(); }} />
           ) : shown ? (
             <TicketSheet key={shown.id} ticket={live(shown)}
               heading={ticketHeading(shown.subject, shown.title, shown.slot)} about={shown.subject === "request" ? shown.title : null}
-              onClose={close} onAnswered={(t) => { setAnswered((a) => ({ ...a, [t.id]: t })); tickets.reload(); }} />
+              onClose={close} onAnswered={(t) => { setAnswered((a) => ({ ...a, [t.id]: t })); tickets.refresh(); }} />
           ) : null}
         </AnimatePresence>,
         document.body,

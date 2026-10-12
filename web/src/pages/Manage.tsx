@@ -2621,7 +2621,8 @@ function TicketsTab() {
   if (!list) return failed.tickets ? null : <p className="muted">Loading…</p>;
   const close = () => {
     setOpen(null);
-    if (params.get("ticket")) setParams((p) => { p.delete("ticket"); return p; }, { replace: true });
+    // Once the sheet's own history entry is off, or replacing would overwrite it and leave an extra Back.
+    if (params.get("ticket")) afterOverlay(() => setParams((p) => { p.delete("ticket"); return p; }, { replace: true }));
   };
   const rows = list.rows.filter((t) =>
     show === "action" ? t.status === "open" && !t.waiting : show === "waiting" ? t.status === "open" && t.waiting

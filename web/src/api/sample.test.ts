@@ -234,6 +234,11 @@ for (const demo of [false, true]) describe(demo ? "the demo's sample household" 
     const rows = (await done(s.admin("tickets")) as AdminTickets).rows;
     expect(rows.find((r) => r.id === made.ticket.id)).toMatchObject({ subject: "general", requestKey: null, slot: 0, title: "" });
     expect((await done(s.myRequests())).every((r) => !r.help || r.help.subject === "request")).toBe(true);
+    // A request's ticket asked for in this visit is on the list too, and takes an answer.
+    const asked = (await done(s.myRequests())).find((r) => r.id && !r.help && r.stage !== "declined")!;
+    const help = (await done(s.askHelp(asked.id!, "stuck"))).help;
+    await done(s.replyTicket(help.id, "Still at 0%"));
+    expect((await done(s.myTickets())).find((t) => t.id === help.id)).toMatchObject({ subject: "request", requestKey: asked.id, slot: asked.slot });
   });
 
   // Only the demo's newest request waits in its first seconds; an answer then must hold once the journey moves on.
