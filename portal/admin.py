@@ -285,18 +285,22 @@ class Admin:
 
     # ------------------------------------------------------------ messages
     async def message_people(self) -> List[dict]:
-        """Manage → Messages: everyone, with their open ticket (for "Add to their ticket")."""
+        """Manage → Messages: everyone, with their open ticket (for "Add to their ticket"):
+        with several open, the one updated last, the one the button puts a DM on
+        (portal/inbox.open_ticket_for)."""
         from core import message_log
         from portal import help as helpdesk
-        open_by: Dict[str, dict] = {}
+        open_by: Dict[str, tuple] = {}
         for hid, h in (await kv_get_all(helpdesk.NAMESPACE)).items():
             if isinstance(h, dict) and h.get("status") == "open":
+                thread = helpdesk.thread_of(h)
+                at = (thread[-1].get("at") if thread else None) or h.get("created_at") or ""
                 row = {"id": hid, "title": h.get("title") or "", "slot": h.get("slot") or 0, "subject": helpdesk.subject_of(h)}
                 for k in (f"d{h['discord_id']}" if h.get("discord_id") else None,
                           f"p{(h.get('plex_name') or '').lower()}" if h.get("plex_name") else None):
-                    if k:
-                        open_by[k] = row
-        return [{**p, "ticket": open_by.get(p["id"])} for p in await message_log.people()]
+                    if k and (k not in open_by or at > open_by[k][0]):
+                        open_by[k] = (at, row)
+        return [{**p, "ticket": open_by[p["id"]][1] if p["id"] in open_by else None} for p in await message_log.people()]
 
     # ------------------------------------------------------------ tickets
     async def tickets(self) -> dict:

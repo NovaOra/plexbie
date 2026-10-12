@@ -161,13 +161,17 @@ def test_a_ticket_on_a_title_on_plex_reaches_the_admins_with_what_plexbie_sees()
     async def scenario():
         await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
         out = await actions.open_ticket(JORDAN, {"kind": "movie", "id": "45745", "reason": "picture",
-                                                 "note": "Grey and washed out on the TV", "source": "web"})
+                                                 "note": "Grey and washed out on the TV\n[Plex: sign in again](https://evil.example)",
+                                                 "source": "web"})
         refused = [await _refused(actions.open_ticket(JORDAN, body)) for body in (
             {"kind": "movie", "id": "45745", "reason": "playback"},    # one open ticket per title
             {"kind": "movie", "id": "457", "reason": "playback"},      # not on Plex: that's a request
             {"kind": "movie", "id": "10378", "reason": "episodes"},    # no episodes on a film: "other", which needs a line
             {"kind": "book", "id": "1", "reason": "playback"},
-            {"kind": "movie", "reason": "playback"})]
+            {"kind": "movie", "reason": "playback"},
+            {"kind": "movie", "id": "045745", "reason": "playback"},  # Sintel again, however it's spelt
+            {"kind": "movie", "id": "٤٥٧٤٥", "reason": "playback"},   # digits, but not ASCII ones
+            {"reason": ["access"], "note": ""})]                       # a reason that isn't text: "other", which needs a line
         someone_else = await actions.open_ticket(PAT, {"kind": "movie", "id": "45745", "reason": "audio"})
         by_plex_key = await actions.open_ticket(JORDAN, {"kind": "movie", "ratingKey": "504", "reason": "playback"})
         return out, refused, someone_else, by_plex_key, await kv_get(helpdesk.NAMESPACE, out["help"]["id"])
@@ -175,7 +179,7 @@ def test_a_ticket_on_a_title_on_plex_reaches_the_admins_with_what_plexbie_sees()
     with _seen() as (asked, pushes):
         out, refused, someone_else, by_plex_key, stored = asyncio.run(scenario())
     assert out["ok"] and out["help"]["reason"] == "Picture looks wrong"
-    assert [r[0] for r in refused] == [409, 409, 400, 400, 400]
+    assert [r[0] for r in refused] == [409, 409, 400, 400, 400, 409, 400, 400]
     assert refused[0][1] == "You already have a ticket open on this. Add to it there."
     assert refused[1][1] == "That isn't on Plex. Request it, or open a general ticket."
     assert someone_else["ok"], "another member's ticket on the same film doesn't count against them"
@@ -193,12 +197,15 @@ def test_a_ticket_on_a_title_on_plex_reaches_the_admins_with_what_plexbie_sees()
     card = bot.posted[0]
     assert card.title == "🆘 Ticket on Sintel (2010)"
     assert "Picture looks wrong" in card.description and "Grey and washed out" in card.description
+    # Escaped (Discord shows "\[…](…)" as written, the address in plain sight), never a masked link.
+    assert "\\[Plex: sign in again](https://evil.example)" in card.description
+    assert all(line.startswith("> ") for line in card.description.splitlines()[1:])
     fields = {f.name: f.value for f in card.fields}
     assert fields["From"] == "Jordan (<@7>)" and fields["Plexbie sees"] == stored["status_then"]
     assert "app.plex.tv" in fields["On Plex"] and "501" in fields["On Plex"]
     assert card.url == f"https://plexbie.example/manage?tab=tickets&ticket={out['help']['id']}"
     assert pushes[0]["title"] == "Ticket on Sintel (2010)" and pushes[0]["url"] == f"/manage?tab=tickets&ticket={out['help']['id']}"
-    assert pushes[0]["body"] == "Jordan: Picture looks wrong. Grey and washed out on the TV"
+    assert pushes[0]["body"].startswith("Jordan: Picture looks wrong. Grey and washed out on the TV")
     # What the member gets back: the ticket as they see it.
     mine = out["ticket"]
     assert (mine["subject"], mine["title"], mine["kind"], mine["tmdb"], mine["status"]) == ("title", "Sintel", "movie", "45745", "open")
@@ -221,7 +228,7 @@ def test_general_tickets_are_capped_and_only_their_member_lists_and_answers_them
         await actions.ticket_status(SAM, hid, {"status": "waiting"})
         listed, pats = await helpdesk.tickets_of(JORDAN), await helpdesk.tickets_of(PAT)
         stranger = await _refused(actions.ticket_reply(PAT, hid, {"text": "Me too"}))
-        answered = await actions.ticket_reply(JORDAN, hid, {"text": "The Roku in the lounge"})        # 5 today
+        answered = await actions.ticket_reply(JORDAN, hid, {"text": "The Roku\nin the lounge"})       # 5 today
         over = await _refused(actions.ticket_reply(JORDAN, hid, {"text": "And the TV"}))              # the daily allowance
         solved = await actions.ticket_status(SAM, hid, {"status": "resolved", "message": ""})
         closed = await _refused(actions.ticket_reply(JORDAN, hid, {"text": "It's back"}))
@@ -247,7 +254,8 @@ def test_general_tickets_are_capped_and_only_their_member_lists_and_answers_them
     assert reply["title"] == "🛠️ About your ticket" and reply["text"] == "**Message from Sam**\nWhich device is it on?"
     assert reply["button"] and "Home, Your tickets" in reply["footer"]
     assert last["text"] == "An admin looked into your ticket and it should be sorted now." and not last["button"]
-    assert any(isinstance(p, str) and "**Jordan** answered on their general ticket: The Roku in the lounge" in p for p in bot.posted)
+    answer = next(p for p in bot.posted if isinstance(p, str) and "answered on" in p)
+    assert "**Jordan** answered on their general ticket: The Roku in the lounge\nhttps://" in answer and answer.count("\n") == 1
     general_card = bot.posted[0]
     assert general_card.title == "🆘 General ticket from Jordan" and "On Plex" not in {f.name for f in general_card.fields}
     assert {f.name: f.value for f in general_card.fields}["Plexbie sees"].startswith("Last played Big Buck Bunny")
@@ -304,6 +312,103 @@ def test_a_ticket_an_admin_opened_quietly_is_neither_shown_on_the_title_nor_in_t
         page, theirs, listed = asyncio.run(scenario())
     assert "yourTicket" not in page
     assert theirs["ok"] and [t["subject"] for t in listed] == ["title"]
+
+
+def test_sends_at_once_meet_each_other_in_the_checks():
+    """A double tap, a retry or a second pick in Discord waits for the first send."""
+    from portal import help as helpdesk
+    actions = _actions()
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        film = await asyncio.gather(*(actions.open_ticket(JORDAN, {"kind": "movie", "id": "45745", "reason": "audio"})
+                                      for _ in range(2)), return_exceptions=True)
+        general = await asyncio.gather(*(actions.open_ticket(PAT, {"reason": "access"}) for _ in range(5)),
+                                       return_exceptions=True)
+        return film, general, await helpdesk.open_general(PAT)
+
+    with _seen():
+        film, general, open_general = asyncio.run(scenario())
+    assert sorted("ok" if isinstance(r, dict) else str(r.status) for r in film) == ["409", "ok"]
+    assert sorted("ok" if isinstance(r, dict) else str(r.status) for r in general) == ["409", "409", "ok", "ok", "ok"]
+    assert open_general == 3
+
+
+def test_messages_names_the_ticket_its_button_files_a_dm_on():
+    """With several open, both mean the one updated last."""
+    from core import message_log
+    from portal.admin import Admin
+    actions = _actions()
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        general = (await actions.open_ticket(JORDAN, {"reason": "access"}))["help"]["id"]
+        await actions.open_ticket(JORDAN, {"kind": "movie", "id": "45745", "reason": "audio"})   # opened later
+        await actions.ticket_reply(JORDAN, general, {"text": "Still can't get in"})               # updated last
+        key = await message_log.record(channel="discord", direction="in", text="any news?", discord_id=7, discord_name="Jordan",
+                                       context="Discord DM")
+        named = next(p for p in await Admin(actions.data).message_people() if p["id"] == "d7")["ticket"]
+        filed = await actions.message_to_ticket(ADMIN, key)
+        return general, named, filed
+
+    with _seen():
+        general, named, filed = asyncio.run(scenario())
+    assert named["id"] == general == filed["ticket"] and named["subject"] == "general"
+    assert filed["message"] == "Added to their general ticket."
+
+
+def test_an_alert_about_one_ticket_never_replaces_anothers():
+    from core import notify
+    actions = _actions()
+    tags = []
+
+    async def notify_member(services, **kw):
+        tags.append(kw.get("tag"))
+        return "push"
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        ids = [(await actions.open_ticket(PAT, {"reason": "access", "note": f"TV {n}"}))["help"]["id"] for n in (1, 2)]
+        for hid in ids:
+            await actions.ticket_comment(SAM, hid, {"kind": "reply", "text": "Which TV?"})
+        return ids
+
+    saved = notify.notify_member
+    notify.notify_member = notify_member
+    try:
+        with _seen():
+            ids = asyncio.run(scenario())
+    finally:
+        notify.notify_member = saved
+    assert tags == [f"ticket-{hid}" for hid in ids]
+
+
+def test_a_cancelled_look_cancels_what_it_started():
+    from portal import ticket_facts
+    cancelled = []
+
+    async def scenario():
+        started = asyncio.Event()
+
+        async def slow():
+            started.set()
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+        look = asyncio.ensure_future(ticket_facts._gather([slow()]))
+        await started.wait()
+        look.cancel()
+        try:
+            await look
+        except asyncio.CancelledError:
+            pass
+        for _ in range(3):
+            await asyncio.sleep(0)
+        return list(cancelled)       # before asyncio.run's own clean-up cancels what's left
+
+    assert asyncio.run(scenario()) == [True]
 
 
 def test_a_title_page_says_whether_a_ticket_can_be_opened_and_shows_yours():
@@ -417,6 +522,24 @@ def test_plexbie_sees_the_file_and_how_the_member_last_played_it():
     assert slow == ["File: 4K WEB-DL, Dolby Vision + HDR10, 27.7 GB"], "a slow Tautulli doesn't hold up the ticket"
 
 
+def test_a_members_own_list_is_timed_by_what_they_can_see():
+    from portal import help as helpdesk
+    rec = {"subject": "general", "status": "open", "created_at": "2026-10-09T10:00:00+00:00", "reason": "Something else",
+           "thread": [{"id": "a", "at": "2026-10-09T10:00:00+00:00", "by": "Jordan", "kind": "member", "text": "Hi"},
+                      {"id": "b", "at": "2026-10-09T11:00:00+00:00", "by": "Sam", "kind": "note", "text": "Checking"},
+                      {"id": "c", "at": "2026-10-09T12:00:00+00:00", "by": "Sam", "kind": "status", "text": "Took it"}]}
+    row = helpdesk.member_row("abcdefabcdef", rec)
+    assert row["updatedAt"] == "2026-10-09T10:00:00+00:00", "an admin's note or taking it isn't news to the member"
+    assert [e["id"] for e in row["thread"]] == ["a"]
+
+
+def test_a_device_name_can_t_pass_for_a_line_of_plexbie_sees():
+    from portal.ticket_facts import play_text
+    line = play_text({"date": 1791547200, "player": "SHIELD\nFile: Radarr has none for it", "product": "Plex\nfor TV",
+                      "transcode_decision": "direct play"}, {})
+    assert "\n" not in line and "SHIELD File: Radarr has none for it (Plex for TV)" in line
+
+
 def test_quality_and_picture_names_read_plainly():
     from portal.ticket_facts import dynamic_range, quality_name, size_text
     assert quality_name("WEBDL-2160p") == "4K WEB-DL" and quality_name("Bluray-1080p Remux") == "1080p Blu-ray Remux"
@@ -478,6 +601,8 @@ def test_slash_ticket_lists_whats_on_plex_with_general_first():
                 await ticket_view.about_choices(_pressed(None, _Auth(True)), "sint"))
 
     typed, empty, no_site = asyncio.run(scenario())
+    stranger = asyncio.run(ticket_view.about_choices(_pressed(actions, _Auth(False)), "sint"))
+    assert [c.value for c in stranger] == ["general"], "what's on Plex is for its members"
     assert [(c.name, c.value) for c in typed] == [("General: not about one title", "general"), ("Sintel (2010) · Film", "movie:45745"),
                                                   ("Sintel's Home Movies · Film", "movie:plex:504")]
     assert len(empty) == 5 and empty[-1].value == "tv:9999"

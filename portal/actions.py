@@ -9,6 +9,7 @@ what a request, a join or an exemption means.
 Safety, in order: a signed-in session (portal.auth); the right role; a custom
 header plus an Origin check against cross-site requests; per-person rate limits.
 """
+import asyncio
 import json
 import re
 import time
@@ -93,6 +94,8 @@ class Actions:
         self.origin = f"{origin.scheme}://{origin.netloc}" if origin.netloc else None
         self.public_url = public_url or ""
         self._hits: Dict[str, Deque[float]] = defaultdict(deque)
+        # One new ticket at a time per member (open_ticket).
+        self._ticket_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     # ------------------------------------------------------------- guards
     def check_request(self, request: web.Request) -> None:
@@ -665,7 +668,7 @@ class Actions:
         """Someone says their request went wrong: tell the admins everything at once."""
         from portal import help as helpdesk
         rec = await self._own_request(user, request_key)
-        reason = body.get("reason") if body.get("reason") in helpdesk.REASONS else "other"
+        reason = body.get("reason") if isinstance(body.get("reason"), str) and body["reason"] in helpdesk.REASONS else "other"
         note = str(body.get("note") or "").strip()
         if reason == "other" and not note:
             raise web.HTTPBadRequest(text='{"error":"Say a little about what\'s wrong."}', content_type="application/json")
@@ -703,11 +706,15 @@ class Actions:
         from portal import ticket_facts
         kind, tid, rk = body.get("kind"), str(body.get("id") or ""), str(body.get("ratingKey") or "")
         subject = "title" if kind or tid or rk else "general"
-        if subject == "title" and (kind not in ("movie", "tv") or not (tid.isdigit() or rk.isdigit())):
+        # ASCII digits of a sane length, one spelling per title ("0603" is 603): nothing else
+        # reaches Seerr's address, the cache or the log.
+        tid = str(int(tid)) if re.fullmatch(r"[0-9]{1,9}", tid) else ""
+        rk = str(int(rk)) if re.fullmatch(r"[0-9]{1,12}", rk) else ""
+        if subject == "title" and (kind not in ("movie", "tv") or not (tid or rk)):
             raise web.HTTPBadRequest(text='{"error":"Pick a film or show that\'s on Plex, or open a general ticket."}',
                                      content_type="application/json")
         reasons = helpdesk.reasons_for(subject, kind)
-        reason = body.get("reason") if body.get("reason") in reasons else "other"
+        reason = body.get("reason") if isinstance(body.get("reason"), str) and body["reason"] in reasons else "other"
         note = str(body.get("note") or "").strip()
         if reason == "other" and not note:
             raise web.HTTPBadRequest(text='{"error":"Say a little about what\'s wrong."}', content_type="application/json")
@@ -715,21 +722,27 @@ class Actions:
         if subject == "title":
             # It asks Seerr and Plex about the title, like opening its page does.
             self.limit(user["user"]["id"], "lookup")
-            found = await self._on_plex(kind, tid if tid.isdigit() else "", rk if rk.isdigit() else "")
-            if await helpdesk.open_on_title(user, kind, found["tmdb"], found["ratingKey"]):
-                raise web.HTTPConflict(text='{"error":"You already have a ticket open on this. Add to it there."}',
-                                       content_type="application/json")
-        elif await helpdesk.open_general(user) >= helpdesk.MAX_OPEN_GENERAL:
-            raise web.HTTPConflict(text=json.dumps({"error": f"You have {helpdesk.MAX_OPEN_GENERAL} general tickets open "
-                                                             "already. Add to one of those."}), content_type="application/json")
-        self.limit(user.get("discordId") or f"plex:{user.get('plexAccountId')}", "help")
-        if subject == "title":
-            facts = await ticket_facts.title_facts(self.services, self.data.progress, user, kind, found["tmdb"], found["ratingKey"])
-        else:
-            facts = await ticket_facts.general_facts(self.services, user)
-        h = await helpdesk.create(subject=subject, title=found.get("title"), kind=kind if subject == "title" else None,
-                                  tmdb=found.get("tmdb"), year=found.get("year"), rating_key=found.get("ratingKey"),
-                                  user=user, reason=reasons[reason], note=note, status_now="\n".join(facts))
+            found = await self._on_plex(kind, tid, rk)
+        who = user.get("discordId") or f"plex:{user.get('plexAccountId')}"
+        # One at a time per member: a double tap, a retry or a second pick in Discord waits for
+        # the first, then meets its ticket in the checks, instead of slipping past them while
+        # the first is still looking things up.
+        async with self._ticket_locks[who]:
+            if subject == "title":
+                if await helpdesk.open_on_title(user, kind, found["tmdb"], found["ratingKey"]):
+                    raise web.HTTPConflict(text='{"error":"You already have a ticket open on this. Add to it there."}',
+                                           content_type="application/json")
+            elif await helpdesk.open_general(user) >= helpdesk.MAX_OPEN_GENERAL:
+                raise web.HTTPConflict(text=json.dumps({"error": f"You have {helpdesk.MAX_OPEN_GENERAL} general tickets open "
+                                                                 "already. Add to one of those."}), content_type="application/json")
+            self.limit(who, "help")
+            if subject == "title":
+                facts = await ticket_facts.title_facts(self.services, self.data.progress, user, kind, found["tmdb"], found["ratingKey"])
+            else:
+                facts = await ticket_facts.general_facts(self.services, user)
+            h = await helpdesk.create(subject=subject, title=found.get("title"), kind=kind if subject == "title" else None,
+                                      tmdb=found.get("tmdb"), year=found.get("year"), rating_key=found.get("ratingKey"),
+                                      user=user, reason=reasons[reason], note=note, status_now="\n".join(facts))
         from core.message_log import record_from_ticket
         await record_from_ticket(h, text=f"{h['reason']}. {note}".strip() if note else h["reason"],
                                  title=f"Ticket on {helpdesk.named(h)}" if subject == "title" else "General ticket",
@@ -800,18 +813,21 @@ class Actions:
         channel = admin_channel(self.bot, self.config)
         if channel:
             title = f"{'🛠️' if opened else '🆘'} {heading}" + (f": {what}" if subject == "request" else "")
+            # What they wrote, as a quote of plain text: no markdown of theirs (a masked link)
+            # renders in the admin channel.
+            said = [f"> {discord.utils.escape_markdown(line)}" for line in str(note or h.get("note") or "").splitlines() if line.strip()]
             embed = discord.Embed(title=title[:256], color=discord.Color.orange(),
-                                  description=f"**{h['reason']}**" + (f"\n> {note or h['note']}" if note or h.get("note") else ""))
+                                  description=f"**{h['reason']}**\n{chr(10).join(said)}".strip()[:4096])
             if opened:
                 embed.add_field(name="Opened by", value=opened, inline=True)
-                embed.add_field(name="Requested by", value=h["who"], inline=True)
+                embed.add_field(name="Requested by", value=discord.utils.escape_markdown(h["who"]), inline=True)
             else:
-                embed.add_field(name="From", value=h["who"] + (f" (<@{h['discord_id']}>)" if h.get("discord_id") else " (Plex sign-in)"), inline=True)
+                embed.add_field(name="From", value=discord.utils.escape_markdown(h["who"]) + (f" (<@{h['discord_id']}>)" if h.get("discord_id") else " (Plex sign-in)"), inline=True)
             if subject == "request":
                 embed.add_field(name="Plexbie sees", value=h.get("status_then") or "Unknown", inline=True)
             elif h.get("status_then"):
                 # Its own lines: what's on disk, and how they last played it.
-                embed.add_field(name="Plexbie sees", value=str(h["status_then"])[:1024], inline=False)
+                embed.add_field(name="Plexbie sees", value=discord.utils.escape_markdown(str(h["status_then"]))[:1024], inline=False)
             plex = plexdata.watch_url(getattr(self.services, "plex_server", None), h.get("rating_key")) if subject == "title" else None
             if plex:
                 embed.add_field(name="On Plex", value=f"[Open it in Plex]({plex})", inline=True)
@@ -931,8 +947,10 @@ class Actions:
                    if subject == "title" else f"About your request: {h['title']}")
         # A request's ticket is on My requests; any other on the member's own list, on Home.
         url = "/schedule" if subject == "request" or not h.get("id") else f"/?ticket={h['id']}"
+        # Tagged by the ticket, so an alert about one never replaces another's on the phone.
         how = await notify_member(self.services, title=heading, body=f"Message from {by}: {text}" if by else text,
-                                  url=url, plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"),
+                                  url=url, tag=f"ticket-{h['id']}" if h.get("id") else None,
+                                  plex_account_id=h.get("plex_account_id"), plex_name=h.get("plex_name"),
                                   discord_id=h.get("discord_id"), context=context, sent_by=by)
         if how in TOLD_BY:
             return how
@@ -1205,8 +1223,10 @@ class Actions:
         if channel:
             try:
                 # A member's words: never a ping, whatever the bot's defaults (and no link previews).
+                # Their answer on one line of plain text, so nothing in it can pass for the link below.
+                answer = discord.utils.escape_markdown(" ".join(text.split())[:300])
                 await channel.send(f"💬 **{discord.utils.escape_markdown(h['who'])}** answered on {discord.utils.escape_markdown(where)}: "
-                                   f"{text[:300]}\n{self.ticket_link(h['id'])}",
+                                   f"{answer}\n{self.ticket_link(h['id'])}",
                                    allowed_mentions=discord.AllowedMentions.none(), suppress_embeds=True)
             except Exception as e:
                 logger.warning(f"Could not post a ticket answer to the admin channel: {e}")

@@ -138,11 +138,12 @@ def play_text(row: dict, stream: dict, title: Optional[str] = None) -> str:
         pass
     what = ""
     if title:
-        what = f" {title}"
+        what = f" {' '.join(str(title).split())}"
     elif row.get("media_type") == "episode" and str(row.get("parent_media_index") or "").isdigit() \
             and str(row.get("media_index") or "").isdigit():
         what = f" S{int(row['parent_media_index']):02d}E{int(row['media_index']):02d}"
-    device, app = row.get("player") or row.get("platform") or "", row.get("product") or ""
+    # Names a member's own device gives itself: one line each, so none can pass for a line of its own.
+    device, app = (" ".join(str(x or "").split()) for x in (row.get("player") or row.get("platform"), row.get("product")))
     on = f" on {device}" + (f" ({app})" if app and app != device else "") if device else ""
     decision = str(row.get("transcode_decision") or stream.get("transcode_decision") or "").lower()
     source = _picture(stream.get("video_full_resolution"), stream.get("video_dynamic_range"))
@@ -185,9 +186,13 @@ async def _gather(jobs: list) -> List[str]:
     tasks = [asyncio.ensure_future(job) for job in jobs]
     if not tasks:
         return []
-    done, pending = await asyncio.wait(tasks, timeout=LOOK_SECONDS)
-    for task in pending:
-        task.cancel()
+    try:
+        done, pending = await asyncio.wait(tasks, timeout=LOOK_SECONDS)
+    finally:
+        # Whatever's still going is dropped, also when the caller itself is cancelled.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
     out = []
     for task in tasks:
         if task not in done or task.cancelled():

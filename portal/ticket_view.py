@@ -209,7 +209,7 @@ LIST_WAIT = 2.0
 MAX_CHOICES = 25
 #: A picked title: a film or show by its TMDB id, or by Plex's ratingKey when Plex has no
 #: TMDB match for it.
-_PICKED = re.compile(r"^(?P<kind>movie|tv):(?:(?P<tmdb>\d{1,9})|plex:(?P<rk>\d{1,12}))$")
+_PICKED = re.compile(r"^(?P<kind>movie|tv):(?:(?P<tmdb>[0-9]{1,9})|plex:(?P<rk>[0-9]{1,12}))$")
 
 NOT_MEMBER = "Tickets are for people on the household's Plex. Ask to join it with `/join-plex`."
 PICK_ONE = ("Pick a film or show from the list as you type: it lists what's on Plex. For anything else, "
@@ -246,7 +246,12 @@ async def about_choices(interaction: discord.Interaction, current: str) -> List[
     with every word typed in their title (those starting with it first)."""
     out = [app_commands.Choice(name="General: not about one title", value=GENERAL)]
     actions = getattr(interaction.client, "portal_actions", None)
-    if actions is None:
+    auth = getattr(interaction.client, "portal_auth", None)
+    if actions is None or auth is None:
+        return out
+    # What's on Plex is for its members, as on the website (anyone in the server could type).
+    u = interaction.user
+    if not (await auth.describe({"id": str(u.id), "via": "discord", "name": getattr(u, "display_name", None) or u.name})).get("member"):
         return out
     words = (current or "").casefold().split()
     items = [i for i in await _plex_titles(actions) if all(w in i["title"].casefold() for w in words)]
@@ -300,6 +305,7 @@ async def _ask(interaction: discord.Interaction, actions, auth, about: str) -> N
         return await interaction.followup.send(PICK_ONE, ephemeral=True)
     if target:
         try:
+            actions.limit(person["user"]["id"], "lookup")     # as opening its page counts
             found = await actions._on_plex(target["kind"], target.get("id", ""), target.get("ratingKey", ""))
         except web.HTTPException as e:
             return await interaction.followup.send(said(e, NOT_OPENED), ephemeral=True)

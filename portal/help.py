@@ -300,14 +300,14 @@ def member_row(hid: str, rec: dict) -> dict:
     """One of the member's own tickets, on their list of them: what it's about, and
     the ticket as they see it."""
     view = member_view(rec)
-    thread = thread_of(rec)
+    seen = view["thread"]      # its time is when something they can see changed, not an admin's note
     return {
         "id": hid, "subject": subject_of(rec), "title": rec.get("title") or None, "kind": rec.get("kind") or None,
         "tmdb": str(rec["tmdb"]) if rec.get("tmdb") else None, "year": rec.get("year") or None,
         "requestKey": rec.get("request") or None, "slot": rec.get("slot") or None,
         "seasons": rec.get("seasons"), "reason": rec.get("reason") or "",
         "status": view["status"] or "open", "waiting": view["waiting"],
-        "createdAt": rec.get("created_at"), "updatedAt": (thread[-1].get("at") if thread else None) or rec.get("created_at"),
+        "createdAt": rec.get("created_at"), "updatedAt": (seen[-1].get("at") if seen else None) or rec.get("created_at"),
         "thread": view["thread"],
     }
 
