@@ -457,7 +457,8 @@ class Admin:
                 "warned": bool(r.warning_sent),
                 # The owner is exempt as the owner, not as one of the top three (whose places
                 # they don't take), though the daily check marks their row exempt too.
-                "topThree": bool(r.is_top_watcher) and r.plex_username != owner,
+                "topThree": (bool(r.is_top_watcher) and r.plex_username.lower() != (owner or "").lower()
+                             and not (self.config.bot_owner_id and r.discord_id == self.config.bot_owner_id)),
                 "removalIn": None if (r.is_top_watcher or r.never_remove) else max(0, remove_after - idle),
                 "neverRemove": bool(r.never_remove),
                 "displayName": r.display_name,

@@ -1032,3 +1032,16 @@ def test_an_owner_who_is_the_only_watcher_still_lets_the_check_run():
     )
     h.run()
     assert h.removed == ["idler"], f"removed={h.removed} warned={h.warned}"
+
+
+def test_an_owner_found_only_by_their_plex_login_is_exempt_as_the_owner():
+    """No account id from plex.tv: the owner is matched by their login in Tautulli, which
+    leaves them out of the ranking, so it must also keep them exempt (as the owner)."""
+    h = _Harness(
+        users=[_user("Omar", 5, 40, warning_sent=True)],
+        tautulli_rows=[{**_u("Omar", 5000), "username": "omarlogin"}, _u("a", 900), _u("b", 800), _u("c", 700)],
+        plex_owner="omarlogin",
+    )
+    rows = h.run()
+    assert h.removed == [] and h.warned == [], f"removed={h.removed} warned={h.warned}"
+    assert rows["Omar"]["is_top_watcher"] == 1

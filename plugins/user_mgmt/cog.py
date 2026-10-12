@@ -644,7 +644,9 @@ class UserMgmtCog(commands.Cog):
                 # up by that (found above by account id), not by Plexbie's name for them:
                 # a rename in Tautulli or Plex must not cost anyone their exemption.
                 primary = resolve_alias(tautulli_user.get('friendly_name') or tracked_user.plex_username, aliases)
-                exempt = (primary in top or self._is_permanently_exempt(tracked_user)
+                # Whoever was left out of the ranking as the owner is exempt as the owner (it may
+                # have been by their Plex login alone, when plex.tv's id for them isn't known).
+                exempt = (primary in top or primary in owners or self._is_permanently_exempt(tracked_user)
                           or self._is_plex_owner(tracked_user, tautulli_user, owner_name, owner_account_id))
                 just_lost_exemption = bool(tracked_user.is_top_watcher) and not exempt
 
