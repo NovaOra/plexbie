@@ -124,6 +124,13 @@
   --deck-shading: inset 0 2px 6px rgb(0 0 0 / 0.45), 0 1px 0 rgb(255 255 255 / 0.15);
   --knob-hi: color-mix(in srgb, var(--panel-raised) 65%, white);
   --knob-shading: 0 3px 6px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.25);
+  --bezel-top: var(--panel-raised);
+  --bezel-bot: color-mix(in srgb, var(--field-deep) 60%, var(--field));
+  --bezel-shading: inset 0 2px 0 rgb(255 255 255 / 0.12), inset 0 -2px 0 rgb(0 0 0 / 0.5), 0 2px 0 rgb(255 255 255 / 0.12);
+  --knob-ridge: rgb(0 0 0 / 0.35);
+  --grille-hole: inset 0 1px 1px rgb(0 0 0 / 0.6), 0 1px 0 rgb(255 255 255 / 0.15);
+  --power-glow: 0 0 8px var(--tally);
+  --floor-shadow: rgb(3 6 18 / 0.7);
   --mascot-glow: 0 0 0 1px rgb(255 255 255 / 0.2), 0 10px 40px color-mix(in srgb, var(--screen) 35%, transparent);
   /* Things that float: menus, sheets, toasts. */
   --shadow-float: 0 10px 30px -12px rgb(3 6 18 / 0.7), 0 2px 6px -2px rgb(3 6 18 / 0.5);
@@ -1052,7 +1059,8 @@ html, body { overflow-x: clip; }
 .studio-clock { color: var(--ink); }
 
 .air-stage {
-  position: relative; isolation: isolate;
+  /* The room glow behind the set may be wider than a phone: it ends at the page's edges. */
+  position: relative; isolation: isolate; overflow-x: clip;
   /* The first screen under the masthead (60px and its 1px rule). */
   min-height: calc(100svh - 61px);
   display: grid; place-items: center;
@@ -1075,16 +1083,21 @@ html, body { overflow-x: clip; }
 .air-tv {
   position: relative; width: 100%;
   display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px);
-  padding: clamp(12px, 0.5rem + 1vw, 16px);
+  padding: clamp(16px, 8px + 1.2vw, 24px);
   /* Lit from the top and a little by its own screen, shaded towards the floor. */
   background:
     radial-gradient(80% 40% at 50% 0%, var(--cab-wash), transparent 70%),
     linear-gradient(180deg, var(--cab-top) 0%, var(--slate) 38%, var(--cab-bot) 100%);
-  border: 1px solid var(--field-deep); border-radius: var(--r-lg);
+  border: 1px solid var(--field-deep); border-radius: 22px;
   box-shadow: var(--cab-shading);
 }
 .air-tv__front { display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px); }
-.air-bezel { padding: 8px; background: var(--field-deep); border-radius: var(--r-md); }
+/* A thick, moulded bezel round the glass. */
+.air-bezel {
+  padding: 12px; border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--bezel-top), var(--bezel-bot));
+  box-shadow: var(--bezel-shading);
+}
 .air-screen {
   display: grid; grid-template-rows: auto 1fr;
   padding: clamp(12px, 0.5rem + 1vw, 16px) clamp(16px, 0.75rem + 1.5vw, 24px) 24px;
@@ -1092,7 +1105,7 @@ html, body { overflow-x: clip; }
   /* Lit from its centre, darker towards the glass's edges, and glowing a little past them. */
   background: radial-gradient(120% 95% at 50% 42%, var(--screen-light) 0%, var(--screen-light-soft) 38%, var(--panel) 70%, var(--field-deep) 100%);
   color: var(--ink);
-  border: 1px solid var(--screen-rim); border-radius: var(--r-md);
+  border: 1px solid var(--screen-rim); border-radius: 18px / 14px;
   box-shadow: var(--screen-shading);
 }
 /* Glare on the glass. */
@@ -1167,9 +1180,11 @@ html, body { overflow-x: clip; }
 .air-side { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
 .air-knobs { display: flex; gap: 12px; }
 .air-knob {
-  position: relative; width: clamp(28px, 4px + 4vw, 44px); aspect-ratio: 1;
-  /* Domed: lit from the top left. */
-  background: radial-gradient(circle at 35% 30%, var(--knob-hi), var(--panel-raised) 45%, var(--field-deep));
+  position: relative; width: clamp(28px, 4px + 4vw, 46px); aspect-ratio: 1;
+  /* Domed, lit from the top left, with grip ridges round it. */
+  background:
+    repeating-conic-gradient(from 0deg, var(--knob-ridge) 0 4deg, transparent 4deg 18deg),
+    radial-gradient(circle at 35% 30%, var(--knob-hi), var(--panel-raised) 50%, var(--field-deep));
   border: 1px solid var(--slate-ink); border-radius: var(--r-full);
   box-shadow: var(--knob-shading);
   transition: transform 260ms var(--ease-out);
@@ -1181,8 +1196,13 @@ html, body { overflow-x: clip; }
 .air-knob--vol { transform: rotate(-40deg); }
 .air-tv[data-ch="2"] .air-knob--ch { transform: rotate(60deg); }
 .air-tv.is-tuning .air-knob--ch { transform: rotate(-35deg); }
-.air-grille { display: flex; gap: 4px; }
-.air-grille i { display: block; width: 2px; height: 16px; border-radius: 1px; background: var(--panel-raised); }
+/* A speaker grille of drilled holes, five by three, and the pink power light. */
+.air-grille { display: grid; grid-template-columns: repeat(5, 6px); gap: 6px; }
+.air-grille i { display: block; width: 6px; height: 6px; border-radius: var(--r-full); background: var(--field-deep); box-shadow: var(--grille-hole); }
+.air-side::after {
+  content: ""; width: 8px; height: 8px; border-radius: var(--r-full);
+  background: var(--tally); box-shadow: var(--power-glow);
+}
 
 /* The deck: the set's own keys, each with its legend printed under it. */
 .air-deck {
@@ -1259,10 +1279,15 @@ html, body { overflow-x: clip; }
   box-shadow: var(--key-lip), var(--key-highlight);
 }
 
-.air-feet { display: flex; justify-content: space-between; width: 76%; }
+.air-feet { display: flex; justify-content: space-between; width: 70%; }
 .air-feet i {
-  display: block; width: 44px; height: 12px;
-  background: var(--cab-bot); border: 1px solid var(--field-deep); border-top: 0; border-radius: 0 0 var(--r) var(--r);
+  display: block; width: 64px; height: 14px;
+  background: var(--cab-bot); border: 1px solid var(--field-deep); border-top: 0; border-radius: 0 0 10px 10px;
+}
+/* Its shadow on the floor. */
+.air-set::after {
+  content: ""; display: block; width: 78%; height: 18px; margin-top: 4px; border-radius: 50%;
+  background: radial-gradient(closest-side, var(--floor-shadow), transparent);
 }
 
 @media (min-width: 720px) {
@@ -1273,8 +1298,6 @@ html, body { overflow-x: clip; }
   .air-ch2[inert] { display: block; }
   .air-side { flex-direction: column; gap: 24px; padding: 12px 0 16px; }
   .air-knobs { flex-direction: column; gap: 16px; }
-  .air-grille { flex-direction: column; gap: 8px; }
-  .air-grille i { width: 36px; height: 2px; }
   /* Side by side, 8px apart, each legend under its own key. */
   .air-seg { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; grid-auto-flow: column; column-gap: 8px; }
   .air-legend { margin: 8px 0 0; }

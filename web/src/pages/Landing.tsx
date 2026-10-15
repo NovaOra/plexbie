@@ -285,7 +285,7 @@ export function Landing() {
                   <span className="air-knob air-knob--ch" />
                   <span className="air-knob air-knob--vol" />
                 </div>
-                <div className="air-grille"><i /><i /><i /><i /><i /></div>
+                <div className="air-grille">{Array.from({ length: 15 }, (_, i) => <i key={i} />)}</div>
               </div>
             </div>
 
