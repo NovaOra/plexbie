@@ -28,8 +28,9 @@ const STEPS = [
   { title: "Accept the invite", body: "Once you’re approved, accept the invitation you’re sent, then come back here and sign in." },
 ];
 
-/** Invite outcomes whose way back is a Plex sign-in, so the Plex key leads. */
-const PLEX_FIRST = ["email", "unconfirmed", "failed"];
+/** Invite outcomes after which the next sign-in is a Plex one, so the Plex key leads:
+ *  the way back from a failed invite, or the account that now has access. */
+const PLEX_FIRST = ["email", "unconfirmed", "failed", "ok", "already"];
 
 type Notice = { role: "alert" | "status"; lead: string; text: string; openPlex: boolean };
 /** discord: Discord leads. plex: Plex leads (pink). plex-only: Discord can't work, Plex is the one sign-in (amber). */
@@ -42,7 +43,10 @@ type KeyProps = Pick<AnchorHTMLAttributes<HTMLAnchorElement>,
 function noticeFor(search: string): Notice | null {
   const login = new URLSearchParams(search).get("login") ?? "";
   if (Object.hasOwn(LOGIN_MESSAGES, login)) {
-    return { role: "alert", lead: "Sign-in problem", text: LOGIN_MESSAGES[login], openPlex: false };
+    // Cancelling is something they did, not something that went wrong.
+    return login === "cancelled"
+      ? { role: "status", lead: "Sign-in cancelled", text: LOGIN_MESSAGES[login], openPlex: false }
+      : { role: "alert", lead: "Sign-in problem", text: LOGIN_MESSAGES[login], openPlex: false };
   }
   const invite = inviteOutcome(search);
   if (!invite) return null;
@@ -98,7 +102,10 @@ export function Landing() {
   const next = signInReturn(pathname, search);
   const notice = noticeFor(search);
   const lead = leadFor(search);
-  const inviteWorked = notice?.openPlex ?? false;
+  const invite = inviteOutcome(search)?.outcome;
+  const lede = invite === "ok" ? "Your invite worked."
+    : invite === "already" ? "You’re already in."
+    : "Plexbie is your household’s Plex helper. Members sign in below.";
 
   const [ch, setCh] = useState<1 | 2>(() => (hash === "#getting-in" ? 2 : 1));
   const [preview, setPreview] = useState<string | null>(null);
@@ -246,7 +253,7 @@ export function Landing() {
                       />
                       <h1 className="air-title">Your household’s Plex, on air.</h1>
                       <p className="air-lede">
-                        {inviteWorked ? "Your invite worked." : "Plexbie is your household’s Plex helper. Members sign in below."}
+                        {lede}
                       </p>
                       {notice ? (
                         <p className={`air-notice air-notice--${notice.role}`} role={notice.role}>
