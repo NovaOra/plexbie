@@ -2583,7 +2583,8 @@ html.has-sheet .m-strip::before, html.has-sheet .m-mon__screen::after { animatio
 .m-filterline { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4); border-radius: var(--r); background: var(--field-deep); border: 1px solid var(--rule); color: var(--slate-ink); }
 .m-filterline b { color: var(--ink); font-weight: 700; }
 .m-filterline .btn { margin-left: auto; }
-.m-queue-col > .m-failed, .m-queue-col > .m-stale { margin-top: var(--space-3); }
+.m-queue__notice { min-height: 88px; }
+.m-queue__notice .m-stale { margin-bottom: 0; }
 
 /* The queue: groups of rows, each row a picture, three lines and two keys. */
 .m-queue { display: grid; gap: var(--space-6); margin-top: var(--space-4); }

@@ -66,6 +66,8 @@ interface ManageState {
   /** A decision from the queue, held back for Undo: its row leaves at once, and `run` sends it
    *  once the toast goes (Undo puts the row back and sends nothing). */
   defer: (key: string, text: string, run: () => Promise<unknown>) => void;
+  /** The blocked imports the page loads with everything else (undefined until answered). */
+  blocked: { rows?: BlockedRow[]; failed: boolean };
 }
 const ManageCtx = createContext<ManageState | null>(null);
 /** What each tab shows (most show only their own section). */
@@ -1583,7 +1585,7 @@ function bytes(n: number): string {
 
 /** Manage → Health: every download waiting for an admin to look at it. */
 function BlockedList({ checks }: { checks: number }) {
-  const { data } = useManage();
+  const { data, blocked } = useManage();
   const [open, setOpen] = useState<string | null>(null);
   // Asked on opening Health and on "Check again" (`checks`), and with the services at most
   // every five minutes while the page stays open: each ask reads Sonarr's and Radarr's queues.
@@ -1591,10 +1593,12 @@ function BlockedList({ checks }: { checks: number }) {
   const res = useKept(() => { asked.current = Date.now(); return api.adminBlocked(); }, [checks]);
   const load = res.reload;
   useEffect(() => { if (Date.now() - asked.current > 300_000) void load(); }, [data.health, load]);
-  if (!res.data) return res.failed ? <section className="section"><LoadFailed text="Couldn’t check for blocked downloads." onRetry={load} /></section> : null;
-  const rows: BlockedRow[] = res.data.rows;
+  // What the page already has shows at once (so Services doesn't jump when this lands), then this view's own answer.
+  const got = res.data ?? (blocked.rows ? { rows: blocked.rows, errors: {} as Partial<Record<BlockedRow["app"], string>> } : undefined);
+  if (!got) return res.failed ? <section className="section"><LoadFailed text="Couldn’t check for blocked downloads." onRetry={load} /></section> : null;
+  const rows: BlockedRow[] = got.rows;
   // Sonarr or Radarr not answering: a download it won't import by itself couldn't show here.
-  const unreachable = (["sonarr", "radarr"] as const).filter((app) => res.data?.errors?.[app]);
+  const unreachable = (["sonarr", "radarr"] as const).filter((app) => got.errors?.[app]);
   if (!rows.length && !unreachable.length && !res.failed) return null;
   return (
     <section className="section" id="m-part-blocked">
@@ -3832,11 +3836,12 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
               <button type="button" className="btn btn--quiet m-btn m-rowbtn" onClick={() => toggle(null)}>Show all</button>
             </div>
           ) : null}
-          {missing.length ? (
-            <LoadFailed text={`Couldn’t load ${listed(missing.map((f) => FEED_NAME[f]))}, so the queue may be missing some of what needs you.`}
-              onRetry={() => onRetry(missing)} />
-          ) : stale ? <Stale at={stale.at} onRetry={() => onRetry("stale")} /> : null}
           <div className="m-queue" aria-busy={loading} onClickCapture={remember} onKeyDownCapture={remember}>
+            {/* A notice takes the slot the loading queue kept for it, so it never pushes the rows down. */}
+            {loading ? null : missing.length ? (
+              <div className="m-queue__notice"><LoadFailed text={`Couldn’t load ${listed(missing.map((f) => FEED_NAME[f]))}, so the queue may be missing some of what needs you.`}
+                onRetry={() => onRetry(missing)} /></div>
+            ) : stale ? <div className="m-queue__notice"><Stale at={stale.at} onRetry={() => onRetry("stale")} /></div> : null}
             {/* Until everything has answered: rows the size of the real ones, swapped in once. */}
             {loading ? (
               <div className="m-group" aria-hidden>
@@ -3877,11 +3882,11 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
                 : up.length ? <span>That’s all. {up.length > 1 ? `${up.slice(0, -1).join(", ")} and ${up[up.length - 1]}` : up[0]} {up.length > 1 ? "are" : "is"} up.</span> : <span>That’s all.</span>}
             </p>
           ) : null}
-          <div className="m-keys m-queue__keys" aria-hidden>
+          {loading ? null : <div className="m-keys m-queue__keys" aria-hidden>
             <span><kbd>J</kbd><kbd>K</kbd> next, previous</span><span><kbd>Enter</kbd> open</span><span><kbd>E</kbd> done (tickets, chats)</span>
             <span><kbd>A</kbd> approve</span><span><kbd>1</kbd>–<kbd>5</kbd> filter</span><span><kbd>/</kbd> menu</span>
             <span>(in the queue, the monitors or the detail)</span>
-          </div>
+          </div>}
         </section>
         {wide ? <div className="m-pane-wrap" onClickCapture={remember}><Detail {...detail} sheet={false} /></div> : null}
       </div>
@@ -4068,7 +4073,8 @@ export function Manage() {
   const facts = [desk.facts.party ? `Watch party: ${desk.facts.party}.` : "",
     desk.facts.cleanup ? `${desk.facts.cleanup}.` : "", loadedAt.health ? `Checked ${clock(loadedAt.health)}, again every minute.` : ""].filter(Boolean).join(" ");
   const label = TABS.find((t) => t.id === tab)?.label ?? "";
-  const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed, freshInvite, setFreshInvite, defer };
+  const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed, freshInvite, setFreshInvite, defer,
+    blocked: { rows: blocked, failed: blockedFailed } };
   // A refresh of this tab failed over what's already on screen: say so, and how old it is.
   const stale = shows(tab).filter((s) => failed[s] && data[s as keyof Store]);
 
@@ -4125,10 +4131,11 @@ export function Manage() {
 
 /** One section in full, as the menu (and a push alert's ?tab=) opens it. */
 function FullView({ tab }: { tab: Section }) {
-  const { data, failed } = useManage();
+  const { data, failed, blocked } = useManage();
   // Until its first answer: cards at their final height, so nothing below jumps when it lands.
   const first = shows(tab)[0] as keyof Store | undefined;
-  if (first && data[first] === undefined && !failed[first as Section]) {
+  const waitBlocked = tab === "health" && blocked.rows === undefined && !blocked.failed;
+  if ((first && data[first] === undefined && !failed[first as Section]) || waitBlocked) {
     return <div className="m-stack" aria-busy="true" aria-label="Loading">{[0, 1, 2].map((n) => <div key={n} className="skeleton m-skel-card" />)}</div>;
   }
   return tab === "requests" ? <RequestsTab /> : tab === "all" ? <AllRequestsTab /> : tab === "tickets" ? <TicketsTab />
