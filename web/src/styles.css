@@ -111,7 +111,8 @@ a, button, summary, select, label { touch-action: manipulation; }
 .m-switch::after { content: ""; position: absolute; inset: -6px -2px; }
 .m-linkbtn::after { content: ""; position: absolute; inset: -6px -2px; }
 .help-open::after { content: ""; position: absolute; inset: -4px -2px; }
-.section__head a, .footer__links a { display: inline-block; padding-block: 11px; margin-block: -11px; }
+.section__head a, .footer__links a { display: inline-block; padding-block: 12px; margin-block: -12px; }
+.footer__links a { padding-inline: 4px; margin-inline: -4px; }
 summary { padding-block: 10px; }
 
 /* Pressed: a small give under the finger (or the mouse), so a press feels taken. */
@@ -227,7 +228,7 @@ html, body { overflow-x: clip; }
   display: flex; align-items: center; gap: 16px;
 }
 .brand {
-  display: inline-flex; align-items: center; gap: 10px;
+  display: inline-flex; align-items: center; gap: 10px; min-height: 44px;
   color: var(--ink); text-decoration: none;
   font-weight: 780; font-size: 1.15rem; letter-spacing: -0.02em; font-stretch: 92%;
 }
