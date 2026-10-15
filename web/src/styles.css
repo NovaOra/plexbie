@@ -639,11 +639,16 @@ html, body { overflow-x: clip; }
 /* A quiet button on its own line lines up with the text, not 12px in. */
 @media (max-width: 559px) { .landing__actions .btn--quiet { padding-inline: 0; } }
 
+/* The footer, the same on every page: body-size words at a comfortable measure,
+   one rule above it, and room at the bottom (more on a phone with the members'
+   tab bar, which would otherwise cover it). */
 .footer {
-  padding-top: 24px; padding-bottom: calc(var(--tabbar) + 28px);
-  margin-top: 0; color: var(--slate-ink); font-size: 0.86rem;
+  padding-top: 24px; padding-bottom: calc(32px + env(safe-area-inset-bottom));
+  margin-top: 0; color: var(--slate-ink); font-size: 1rem;
 }
-@media (min-width: 860px) { .footer { padding-bottom: 28px; } }
+@media (max-width: 859px) {
+  body:has(.tabbar) .footer { padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom) + 32px); }
+}
 .shell.footer { border-top: 0; }
 .shell.footer::before { content: ""; display: block; height: 1px; background: var(--rule); margin-bottom: 24px; }
 
@@ -999,11 +1004,12 @@ html, body { overflow-x: clip; }
 .legal__body ul { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; }
 .legal__body li::marker { color: var(--screen); }
 
-.footer__links { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 10px; }
+.footer__links { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 24px; }
 .footer__links a { color: var(--ink); }
 .footer a { white-space: nowrap; }
-.footer p + p { margin-top: 6px; }
-.footer__credit { font-size: 0.8rem; max-width: 72ch; }
+.footer a:active { color: var(--screen-deep); }
+.footer p { max-width: 32rem; line-height: 1.75; }
+.footer p + p { margin-top: 12px; }
 /* Every install credits the project: small, quiet, always there. */
 .footer__powered a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-weight: 600; color: var(--slate-ink); text-decoration: none; }
 @media (hover: hover) and (pointer: fine) { .footer__powered a:hover { color: var(--screen); } }
@@ -1225,7 +1231,7 @@ html, body { overflow-x: clip; }
    edge to edge; its words line up with the masthead and the footer. */
 .air-band {
   display: grid; gap: 16px; justify-items: start;
-  margin: 8px 0 32px;
+  margin: 8px 0 0;
   padding-block: clamp(24px, 1rem + 2vw, 32px);
   padding-left: max(var(--pad-l), (100% - var(--shell)) / 2 + var(--gutter));
   padding-right: max(var(--pad-r), (100% - var(--shell)) / 2 + var(--gutter));
@@ -1245,13 +1251,10 @@ html, body { overflow-x: clip; }
 .air-band__cta { width: 100%; margin-top: 8px; }
 .air-band__status { color: var(--slate-ink); }
 @media (min-width: 720px) { .air-band__cta { max-width: 320px; } }
-/* The footer under the set reads at body size, as the set's own words do, at a
-   comfortable measure, with room between its lines and its links' hit areas. */
-main:has(.air) + .footer p { max-width: 32rem; font-size: 1rem; }
-main:has(.air) + .footer .footer__links { margin-bottom: 24px; font-size: 1rem; }
-main:has(.air) + .footer p + p { margin-top: 12px; }
-main:has(.air) + .footer .footer__credit { line-height: 1.75; }
-main:has(.air) + .footer a:active, .air-notice a:active { color: var(--screen-deep); }
+.air-notice a:active { color: var(--screen-deep); }
+/* The band already ends in a rule: the footer under it doesn't draw a second. */
+main:has(.air) + .shell.footer { padding-top: 32px; }
+main:has(.air) + .shell.footer::before { display: none; }
 /* Three columns only where each still gets a comfortable measure. */
 @media (min-width: 1280px) {
   .air-band__steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; width: 100%; }
@@ -1395,7 +1398,6 @@ main:has(.air) + .footer a:active, .air-notice a:active { color: var(--screen-de
 .tunein__copy > p { font-size: 1.12rem; color: var(--slate-ink); max-width: 46ch; }
 .support { display: grid; gap: 10px; margin-top: 18px; padding-top: 22px; border-top: 1px solid var(--rule); max-width: 52ch; }
 .support p { color: var(--slate-ink); }
-.footer__support { font-size: 0.85rem; max-width: 72ch; }
 .tunein__logo { width: clamp(140px, 18vw, 220px); height: auto; border-radius: 22%; transform: rotate(6deg); box-shadow: 0 40px 70px -30px rgb(3 6 18 / 0.9); animation: bob 6s ease-in-out infinite; }
 @keyframes bob { 50% { transform: rotate(3deg) translateY(-10px); } }
 .tv__bob { display: block; width: 100%; height: 100%; animation: tv-bob 5s ease-in-out infinite; }
