@@ -2638,6 +2638,8 @@ def test_link_previews_get_a_real_card_and_invites_never_a_name():
     status, home, _, robots_hdr = out["/"]
     assert status == 200 and 'og:image" content="https://plexbie.example/brand/og-card.png"' in home
     assert 'twitter:card" content="summary_large_image"' in home and "<title>Plexbie</title>" in home
+    assert 'og:title" content="Plexbie: your household’s Plex, on air"' in home, "the card names the sign-in page"
+    assert 'og:title" content="Privacy · Plexbie"' in out["/privacy"][1]
     assert robots_hdr == "noindex, nofollow" and 'name="robots" content="noindex, nofollow"' in home, \
         "a household's server stays out of search"
     assert "canonical" not in home and "application/ld+json" not in home, "the project's own site does that"

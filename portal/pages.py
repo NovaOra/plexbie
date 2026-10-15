@@ -26,7 +26,10 @@ HEAD_MARK = "<!--plexbie:head-->"
 CARD = "/brand/og-card.png"
 CARD_ALT = "The Plexbie logo, a small pink television, beside the words: a Discord bot for your household’s Plex server."
 
-APP = ("Plexbie", "The household’s Plex: requests, what’s new, and what’s on.")
+#: Signed out (as every link preview is), each of the household's pages is the sign-in
+#: page, a TV set "on air"; the card's title says so, the tab keeps the plain name.
+APP = ("Plexbie", "Your household’s Plex, on air. Members sign in here.")
+APP_CARD_TITLE = "Plexbie: your household’s Plex, on air"
 #: The household's pages (the website's routes), and the pages anyone may read.
 HOUSEHOLD = ("library", "search", "schedule", "channel", "manage", "alerts")
 OPEN = {
@@ -58,6 +61,7 @@ def route_of(path: str) -> Tuple[str, Optional[Tuple[str, str]]]:
 def head_tags(path: str, origin: str, *, operator: str = "", contact: str = "") -> Tuple[int, str, str]:
     """(status, <title>, the tags for HEAD_MARK) for one address."""
     kind, (title, description) = route_of(path)
+    card_title = APP_CARD_TITLE if kind == "app" else title
     e = lambda s: html.escape(s, quote=True)
     card = f"{origin}{CARD}"
     site = json.dumps({"operator": operator, "contact": contact}, ensure_ascii=False)
@@ -65,7 +69,7 @@ def head_tags(path: str, origin: str, *, operator: str = "", contact: str = "") 
         f'<meta name="description" content="{e(description)}" />',
         '<meta property="og:type" content="website" />',
         '<meta property="og:site_name" content="Plexbie" />',
-        f'<meta property="og:title" content="{e(title)}" />',
+        f'<meta property="og:title" content="{e(card_title)}" />',
         f'<meta property="og:description" content="{e(description)}" />',
         f'<meta property="og:image" content="{e(card)}" />',
         '<meta property="og:image:type" content="image/png" />',
@@ -73,7 +77,7 @@ def head_tags(path: str, origin: str, *, operator: str = "", contact: str = "") 
         '<meta property="og:image:height" content="630" />',
         f'<meta property="og:image:alt" content="{e(CARD_ALT)}" />',
         '<meta name="twitter:card" content="summary_large_image" />',
-        f'<meta name="twitter:title" content="{e(title)}" />',
+        f'<meta name="twitter:title" content="{e(card_title)}" />',
         f'<meta name="twitter:description" content="{e(description)}" />',
         f'<meta name="twitter:image" content="{e(card)}" />',
         '<meta name="robots" content="noindex, nofollow" />',
