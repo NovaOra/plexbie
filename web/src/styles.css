@@ -1825,7 +1825,7 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 }
 .m-card.is-busy { opacity: 0.6; }
 /* A card of lines and a key, no poster (a blocked import): one column. */
-.m-card--stack { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+.m-card.m-card--stack { grid-template-columns: minmax(0, 1fr); justify-items: start; }
 .m-card--stack > * { margin: 0; max-width: 100%; }
 .m-card__poster { width: 68px; aspect-ratio: 2 / 3; border-radius: 8px; overflow: hidden; background: var(--panel-raised); }
 .m-card__poster img { width: 100%; height: 100%; object-fit: cover; -webkit-user-drag: none; pointer-events: none; }
@@ -2749,10 +2749,13 @@ html.has-sheet .m-strip::before, html.has-sheet .m-mon__screen::after { animatio
 .m-health__item.is-down span.muted { font-size: var(--fs-small); line-height: 1.5; }
 .m-health__state { font-size: var(--fs-small); font-weight: 640; color: var(--slate-ink); }
 .m-health__item.is-down .m-health__state { color: var(--ink); }
-/* In the detail every journey step is named (on two short lines where they need them). */
-.m-pane .journey .journey__step .journey__label { visibility: visible; white-space: normal; width: max-content; max-width: 76px; text-align: center; line-height: 1.15; }
-.m-pane .journey .journey__step:first-child .journey__label { text-align: left; }
-.m-pane .journey .journey__step:last-child .journey__label { text-align: right; }
+/* In the detail every journey step is named (on two short lines where they need them) where
+   the track has room for six; a phone's narrower track names the step it's at. */
+@container (min-width: 440px) {
+  .m-pane .journey .journey__step .journey__label { visibility: visible; white-space: normal; width: max-content; max-width: 76px; text-align: center; line-height: 1.15; }
+  .m-pane .journey .journey__step:first-child .journey__label { text-align: left; }
+  .m-pane .journey .journey__step:last-child .journey__label { text-align: right; }
+}
 .m-pane .journey:not(.journey--compact) { padding-bottom: 40px; }
 .m-pane .m-ticket__take { margin-left: 0; }
 .m-blocked__how { margin: 0; font-size: var(--fs-small); }
