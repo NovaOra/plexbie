@@ -2308,7 +2308,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-blocked__note { color: var(--tally); font-size: 0.85rem; }
 .m-blocked__folder { margin: 0; font-size: 0.82rem; overflow-wrap: anywhere; }
 .m-blocked__done { display: flex; gap: 6px; align-items: center; margin: 0; font-weight: 700; }
-.m-blocked__nope { margin: 0; font-weight: 600; color: var(--tally); }
+.m-blocked__nope { margin: 0; font-weight: 600; color: var(--tally); overflow-wrap: anywhere; }
 .m-blocked__owner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .m-blocked__edit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 6px; }
 .m-blocked__field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.9rem; }
@@ -2661,8 +2661,11 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-pane .m-ticket__tags .m-pill--hot::before { content: ""; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--tally); display: inline-block; }
 .m-pane .m-ticket__tags .m-pill { display: inline-flex; align-items: center; text-transform: none; letter-spacing: 0; }
 .m-pane .m-reqsheet__fixes .m-btn { flex: 0 0 auto; }
+.m-pane .m-reqsheet__open { width: auto; justify-self: start; }
 .m-pane__where b { color: var(--ink); font-weight: 760; }
 .m-pane .m-chat { border: 1px solid var(--rule); border-radius: var(--r); overflow: hidden; }
+/* The pane's header already names them: the conversation keeps its counts and Done. */
+.m-pane .m-chat__head > .m-avatar, .m-pane .m-chat__head h3 { display: none; }
 
 /* The detail's header: the poster (or an icon), the eyebrow, a big title. */
 .m-hero { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 18px; align-items: center; }

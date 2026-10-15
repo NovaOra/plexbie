@@ -96,7 +96,8 @@ export const DONE_HOURS = 48;
 /** "8 min", "5 h", "2 days": how long, as the queue says it. */
 export function span(ms: number) {
   const m = Math.max(0, ms) / 60_000;
-  if (m < 120) return `${Math.max(1, Math.round(m))}${NB}min`;
+  // Minutes up to an hour and a half, so "90 min" and "2 h" both read naturally.
+  if (m < 100) return `${Math.max(1, Math.round(m))}${NB}min`;
   const h = m / 60;
   if (h < 48) return `${Math.round(h)}${NB}h`;
   return `${Math.round(h / 24)}${NB}days`;
