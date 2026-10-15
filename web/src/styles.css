@@ -3,13 +3,18 @@
 /* Nearly every page only needs basic Latin and typographic punctuation, at the
    weights (400-900) and widths (62-100%) the site uses: a 37 KB cut of Archivo
    (src/fonts, made with fonttools). Declared after the full faces, so it wins for
-   these characters; anything else still comes from the full Latin file. */
+   these characters; anything else still comes from the full Latin file. It claims
+   the full faces' weight and width ranges (the file itself stops at 400-900 and
+   62-100%): with narrower ones Chrome counted it as a different face and never
+   used it. Its kerning has no pairs with the space: Archivo pulls "k", "K", "F",
+   "P", "Y" and "r" into a following space by up to 0.05em, which at 16px closed
+   "ask to" into "askto". */
 @font-face {
   font-family: "Archivo Variable";
   font-style: normal;
   font-display: swap;
-  font-weight: 400 900;
-  font-stretch: 62% 100%;
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
   src: url("./fonts/archivo-core.woff2") format("woff2-variations");
   unicode-range: U+0020-007E, U+00A0, U+00A9, U+00AB, U+00B7, U+00BB, U+00D7, U+00E9, U+2013-2014, U+2018-2019,
     U+201C-201D, U+2022, U+2026, U+2122, U+2190, U+2192, U+2212, U+25C6;
