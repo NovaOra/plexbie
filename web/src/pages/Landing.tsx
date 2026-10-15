@@ -4,7 +4,6 @@ import { useLocation } from "react-router-dom";
 import { PlayCircle } from "../components/icons";
 import { loginUrl, signInReturn } from "../api/client";
 import { EASE_OUT } from "../components/motion";
-import { useStudioClock } from "../components/studioClock";
 import { inviteOutcome } from "./inviteOutcome";
 import { DiscordMark, useTitle } from "../components/ui";
 import { PlexSignIn } from "../components/PlexSignIn";
@@ -96,7 +95,6 @@ function Steps({ className }: { className: string }) {
 
 export function Landing() {
   useTitle("Sign in");
-  useStudioClock();
   const reduced = useReducedMotion();
   const { pathname, search, hash } = useLocation();
   const next = signInReturn(pathname, search);

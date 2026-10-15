@@ -7,7 +7,6 @@ import type { ServerStatus, Session } from "../api/types";
 import { PROJECT_SITE, SITE } from "../site";
 import { OffAir, useLoad } from "./ui";
 import { useBackToClose } from "./overlay";
-import { StudioClockContext } from "./studioClock";
 
 /* ---------------------------------------------------------------- session */
 
@@ -21,7 +20,7 @@ interface SessionState {
 const SessionContext = createContext<SessionState>({ session: null });
 export const useSession = () => useContext(SessionContext);
 
-/** The time, as a studio wall clock shows it, to the minute. */
+/** The time, as a studio wall clock shows it, to the minute: in the masthead on every page. */
 const clockNow = () => new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 const clockTicks = (tick: () => void) => {
   const t = window.setInterval(tick, 10_000);
@@ -204,7 +203,6 @@ export function Layout({ children }: { children?: ReactNode }) {
   // Only a 401 means signed out (api.session); anything else is Plexbie not answering,
   // which isn't a reason to show a member the sign-in page.
   const unreachable = inApp && !!session.error;
-  const [clock, setClock] = useState(false);
 
   // The household's pages need to know who's signed in before they can show anything;
   // the open pages don't, so they draw at once (the account corner fills in after).
@@ -212,7 +210,6 @@ export function Layout({ children }: { children?: ReactNode }) {
 
   return (
     <SessionContext.Provider value={{ session: s, status: status.data, statusFailed: !!status.error, retryStatus: status.reload }}>
-    <StudioClockContext.Provider value={setClock}>
       {s?.preview && inApp ? (
         <div className="preview-ribbon" role="note">Preview with your real data. Read-only: requesting and joining are switched off.</div>
       ) : null}
@@ -232,7 +229,7 @@ export function Layout({ children }: { children?: ReactNode }) {
             </nav>
           ) : null}
           <div className="masthead__end">
-            {clock ? <StudioClock /> : null}
+            <StudioClock />
             {member && status.data ? (
               <span className={`tally caps${status.data.online ? "" : " tally--off"}`}>
                 {status.data.online ? "On air" : "Off air"}
@@ -304,7 +301,6 @@ export function Layout({ children }: { children?: ReactNode }) {
       ) : null}
 
       {SAMPLE ? <SampleSwitch /> : null}
-    </StudioClockContext.Provider>
     </SessionContext.Provider>
   );
 }
