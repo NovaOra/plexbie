@@ -1,12 +1,12 @@
 import {
-  createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState,
+  Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
 } from "react";
 import {
   AnimatePresence, LayoutGroup, animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useTransform,
 } from "motion/react";
 import {
-  Archive, ArrowLeft, Bell, Check, CircleDot, Download, LifeBuoy, CircleAlert, CircleCheck, Copy, Hourglass, Inbox, Link2, List, ListOrdered, Lock, LogOut, Mail, Megaphone, Menu, MessageCircle, MessageSquare, MonitorPlay, Radio, Plus, RefreshCw, Search, Server, Settings, Share2, ShieldCheck, Ticket, Trash2, UserPlus, Users, X,
+  Archive, ArrowLeft, Bell, Check, ChevronDown, ChevronUp, Download, LifeBuoy, CircleAlert, Copy, Hourglass, Link2, List, ListOrdered, Lock, LogOut, Mail, Megaphone, Menu, MessageCircle, MessageSquare, MonitorPlay, Radio, Plus, RefreshCw, Search, Server, Settings, Share2, ShieldCheck, Ticket, Trash2, UserPlus, Users, X,
 } from "../components/icons";
 import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
@@ -20,7 +20,7 @@ import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
 import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
 import { afterOverlay, useBackToClose, useSheet } from "../components/overlay";
 import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
-import { deriveDesk, type DeskData } from "./manageQueue";
+import { AREAS, deriveDesk, type Area, type Desk, type DeskData, type Group, type Item } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
 
 /* ================================================================== store */
@@ -180,8 +180,10 @@ function useKept<T>(load: () => Promise<T>, deps: unknown[]) {
  * assistive tech that "clicks" without a press gets a two-step confirm instead,
  * said out loud when armed and disarmed again after a few seconds.
  */
-function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail }: {
+function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail, quiet = false }: {
   label: string; icon?: ReactNode; onConfirm: () => void; disabled?: boolean; ms?: number;
+  /** A hollow pill (Manage's queue rows), not a key. */
+  quiet?: boolean;
   /** What the button says through the hold, evenly spaced (instead of "Keep holding…"). */
   stages?: string[];
   /** Shown for a moment after letting go early. */
@@ -269,7 +271,7 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail 
       <button
         ref={self}
         type="button"
-        className={`btn m-btn m-hold${holding ? " is-holding" : ""}${armed ? " is-armed" : ""}`}
+        className={`btn${quiet ? " btn--quiet" : ""} m-btn m-hold${holding ? " is-holding" : ""}${armed ? " is-armed" : ""}`}
         style={{ "--hold": `${ms}ms` } as CSSProperties}
         disabled={disabled}
         // The name starts with the words on the button, so "click Hold to remove" works
@@ -508,10 +510,32 @@ function SwipeHint() {
   return <p className="m-hint muted"><span aria-hidden>←</span> Swipe a card: right for yes, left for no <span aria-hidden>→</span></p>;
 }
 
-function RequestsTab() {
-  const { data, patch, toast, readOnly } = useManage();
-  const part = usePart();
+/** Approve or decline a request: here, and from Manage's queue. */
+function useDecideRequest() {
+  const { patch, toast } = useManage();
+  const { session } = useSession();
   const { busy, act, later } = useAct();
+  const decide = async (r: AdminRequest, approve: boolean, quiet = false) => {
+    const out = await act(r.id, () => api.decide("requests", r.id, approve), { buzzOnFail: true });
+    if (!out) return false;
+    buzz(12);
+    if (!quiet) toast({ text: approve ? `Approved ${r.title}` : `Declined ${r.title}`, detail: out.message });
+    patch("requests", (d) => ({
+      ...d,
+      pending: d.pending.filter((p) => p.id !== r.id),
+      recent: [{ ...r, status: approve ? "approved" : "declined", resolvedBy: session?.user.name ?? "you", resolvedAt: new Date().toISOString() }, ...d.recent],
+    }));
+    later("requests", 2500);
+    later("all", 2500);
+    return true;
+  };
+  return { busy, decide };
+}
+
+function RequestsTab() {
+  const { data, readOnly } = useManage();
+  const part = usePart();
+  const { busy, decide } = useDecideRequest();
   const res = data.requests;
   if (!res) {
     return (
@@ -521,20 +545,6 @@ function RequestsTab() {
     );
   }
   const { pending, older, recent } = res;
-
-  const decide = async (r: AdminRequest, approve: boolean) => {
-    const out = await act(r.id, () => api.decide("requests", r.id, approve), { buzzOnFail: true });
-    if (!out) return false;
-    buzz(12);
-    toast({ text: approve ? `Approved ${r.title}` : `Declined ${r.title}`, detail: out.message });
-    patch("requests", (d) => ({
-      ...d,
-      pending: d.pending.filter((p) => p.id !== r.id),
-      recent: [{ ...r, status: approve ? "approved" : "declined", resolvedBy: "you", resolvedAt: new Date().toISOString() }, ...d.recent],
-    }));
-    later("requests", 2500);
-    return true;
-  };
 
   return (
     <div className="m-stack">
@@ -616,23 +626,29 @@ function RequestsTab() {
   );
 }
 
-function JoinsTab() {
-  const { data, patch, toast, readOnly } = useManage();
+/** Invite someone who asked to join, or deny them: here, and from Manage's queue. */
+function useDecideJoin() {
+  const { patch, toast } = useManage();
   const { busy, act, later } = useAct();
-  const rows = data.joins;
-  if (!rows) return <div className="skeleton" style={{ height: 240 }} />;
-  const pending = rows.filter((j) => j.status === "pending");
-  const earlier = rows.filter((j) => j.status !== "pending");
-
-  const decide = async (j: AdminJoin, approve: boolean) => {
+  const decide = async (j: AdminJoin, approve: boolean, quiet = false) => {
     const out = await act(j.key, () => api.decide("joins", j.messageId, approve), { buzzOnFail: true });
     if (!out) return false;
     buzz(12);
-    toast({ text: approve ? `Invited ${j.name}` : `Denied ${j.name}`, detail: out.message });
+    if (!quiet) toast({ text: approve ? `Invited ${j.name}` : `Denied ${j.name}`, detail: out.message });
     patch("joins", (d) => d.map((x) => (x.key === j.key ? { ...x, status: approve ? "approved" : "denied" } : x)));
     later("joins", 2500);
     return true;
   };
+  return { busy, decide };
+}
+
+function JoinsTab() {
+  const { data, readOnly } = useManage();
+  const { busy, decide } = useDecideJoin();
+  const rows = data.joins;
+  if (!rows) return <div className="skeleton" style={{ height: 240 }} />;
+  const pending = rows.filter((j) => j.status === "pending");
+  const earlier = rows.filter((j) => j.status !== "pending");
 
   return (
     <div className="m-stack">
@@ -690,9 +706,27 @@ function JoinsTab() {
   );
 }
 
+/** "Never remove" on someone, with Undo: on People, and from Manage's queue. */
+function useKeepPerson() {
+  const { patch, toast } = useManage();
+  const { act, later } = useAct();
+  const keep = async (p: AdminPerson, on: boolean) => {
+    patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, neverRemove: on, warned: on ? false : x.warned } : x)));
+    const out = await act(null, () => api.keepPerson(p.plexName, on));
+    if (!out) {
+      patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, neverRemove: !on } : x)));
+      return;
+    }
+    toast({ text: out.message, undo: () => void keep(p, !on) });
+    later("people", 1200);
+  };
+  return keep;
+}
+
 function PeopleTab() {
   const { data, patch, toast, readOnly } = useManage();
   const { busy, act, later } = useAct();
+  const keep = useKeepPerson();
   const [query, setQuery] = useState("");
   const [linking, setLinking] = useState<AdminPerson | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -730,16 +764,6 @@ function PeopleTab() {
     later("people", 1200);
   };
 
-  const keep = async (p: AdminPerson, on: boolean) => {
-    patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, neverRemove: on, warned: on ? false : x.warned } : x)));
-    const out = await act(null, () => api.keepPerson(p.plexName, on));
-    if (!out) {
-      patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, neverRemove: !on } : x)));
-      return;
-    }
-    toast({ text: out.message, undo: () => void keep(p, !on) });
-    later("people", 1200);
-  };
 
   const match = async (p: AdminPerson, account: string) => {
     const out = await act(p.plexName, () => api.matchPerson(p.plexName, account));
@@ -1202,14 +1226,10 @@ function KeepSearch({ kept, onKeep }: { kept: Set<string>; onKeep: (m: CleanupMa
   );
 }
 
-function CleanupTab() {
-  const { data, patch, toast, readOnly } = useManage();
+/** Keep a title forever (or put it back on the clock), with Undo: in Cleanup, and from Manage's queue. */
+function useKeepTitle() {
+  const { patch, toast } = useManage();
   const { act, later } = useAct();
-  const [view, setView] = useState<CleanupView>("soon");
-  const res = data.cleanup;
-  if (!res) return <div className="skeleton" style={{ height: 300 }} />;
-  const { settings, warning, upcoming, exempt } = res;
-
   const keep = async (row: { ratingKey: string; title: string; type?: string | null; year?: number | null }, on: boolean, quiet = false) => {
     // Move it straight away; the server confirms, and a failure puts it back.
     patch("cleanup", (d) => on
@@ -1229,6 +1249,16 @@ function CleanupTab() {
     }
     later("cleanup", 900);
   };
+  return keep;
+}
+
+function CleanupTab() {
+  const { data, readOnly } = useManage();
+  const keep = useKeepTitle();
+  const [view, setView] = useState<CleanupView>("soon");
+  const res = data.cleanup;
+  if (!res) return <div className="skeleton" style={{ height: 300 }} />;
+  const { settings, warning, upcoming, exempt } = res;
 
   const row = (c: AdminCleanupRow) => (
     <motion.li key={c.ratingKey} {...fold}>
@@ -1713,6 +1743,35 @@ function FreshLink({ made, onAnother }: { made: NewInvite; onAnother: () => void
   );
 }
 
+/** Take back a Plex invite nobody accepted: under Waiting on Plex, and from Manage's queue. */
+function useCancelPlexInvite() {
+  const { patch, toast } = useManage();
+  const { busy, act } = useAct();
+  const cancel = async (i: PlexInvite, quiet = false) => {
+    const out = await act(i.email, () => api.plexInviteCancel(i.email));
+    if (!out) return false;
+    if (!quiet) toast({ text: out.message });
+    patch("plexinvites", (d) => d.filter((x) => x.email !== i.email));
+    return true;
+  };
+  return { busy, cancel };
+}
+
+/** Cancel an open invite link: under Invites, and from Manage's queue. */
+function useRevokeInvite() {
+  const { patch, toast } = useManage();
+  const { busy, act, later } = useAct();
+  const revoke = async (i: AdminInvite, quiet = false) => {
+    const out = await act(i.id, () => api.revokeInvite(i.id));
+    if (!out) return false;
+    if (!quiet) toast({ text: `Cancelled ${i.label}’s invite`, detail: out.message });
+    patch("invites", (d) => d.map((x) => (x.id === i.id ? { ...x, status: "revoked" } : x)));
+    later("invites", 1500);
+    return true;
+  };
+  return { busy, revoke };
+}
+
 /** Invites sent on plex.tv that nobody has accepted: fix a wrong address, or take one back. */
 function PlexInvites() {
   const { data, patch, toast, readOnly } = useManage();
@@ -1720,6 +1779,7 @@ function PlexInvites() {
   const [editing, setEditing] = useState<string | null>(null);
   const [next, setNext] = useState("");
   const { busy, act, later } = useAct();
+  const { busy: cancelling, cancel } = useCancelPlexInvite();
   if (!rows || !rows.length) return null;
 
   const change = async (i: PlexInvite) => {
@@ -1731,12 +1791,6 @@ function PlexInvites() {
     setNext("");
     patch("plexinvites", (d) => d.map((x) => (x.email === i.email ? { ...x, email: next.trim(), sentAt: new Date().toISOString() } : x)));
     later("plexinvites", 1500);
-  };
-  const cancel = async (i: PlexInvite) => {
-    const out = await act(i.email, () => api.plexInviteCancel(i.email));
-    if (!out) return;
-    toast({ text: out.message });
-    patch("plexinvites", (d) => d.filter((x) => x.email !== i.email));
   };
 
   return (
@@ -1760,7 +1814,7 @@ function PlexInvites() {
                     <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => { setEditing(i.email); setNext(""); }}>
                       <Mail size={16} aria-hidden /> Change email
                     </button>
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || busy.has(i.email)} onConfirm={() => void cancel(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || busy.has(i.email) || cancelling.has(i.email)} onConfirm={() => void cancel(i)} />
                   </div>
                 )}
                   {i.email && editing === i.email ? (
@@ -1816,13 +1870,7 @@ function InvitesTab() {
     }
   };
 
-  const revoke = async (i: AdminInvite) => {
-    const out = await act(i.id, () => api.revokeInvite(i.id));
-    if (!out) return;
-    toast({ text: `Cancelled ${i.label}’s invite`, detail: out.message });
-    patch("invites", (d) => d.map((x) => (x.id === i.id ? { ...x, status: "revoked" } : x)));
-    later("invites", 1500);
-  };
+  const { busy: revoking, revoke } = useRevokeInvite();
 
   const top = useRef<HTMLElement>(null);
   const [renewing, setRenewing] = useState<string | null>(null);
@@ -1922,7 +1970,7 @@ function InvitesTab() {
                   </div>
                   <div className="m-person__actions m-person__actions--two">
                     {renewButton(i)}
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || acting.has(i.id)} onConfirm={() => void revoke(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || acting.has(i.id) || revoking.has(i.id)} onConfirm={() => void revoke(i)} />
                   </div>
                 </article>
               </motion.li>
@@ -2133,7 +2181,13 @@ function dayLabel(iso: string) {
 
 /** One person's messages with Plexbie, Discord style: newest at the bottom, a day line
  *  between days, and what they sent Plexbie (tinted) between Plexbie's messages. */
-function Conversation({ person, onBack }: { person: MessagePerson; onBack: () => void }) {
+function Conversation({ person, onBack, inPane = false, reply = 0 }: {
+  person: MessagePerson; onBack: () => void;
+  /** In Manage's detail pane: no Back of its own, and the page isn't scrolled to its end. */
+  inPane?: boolean;
+  /** A new value puts the cursor in the reply box (Reply on a queue row). */
+  reply?: number;
+}) {
   const { refresh, toast, readOnly } = useManage();
   const { session } = useSession();
   const { busy, act } = useAct();
@@ -2171,14 +2225,16 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
     if (out) { toast({ text: "Added to their ticket", detail: out.message }); reload(); void refresh("tickets"); }
   };
   // On a phone the conversation covers the list: Back returns to the list, not off the page.
-  useBackToClose(true, onBack);
+  useBackToClose(!inPane, onBack);
   const end = useRef<HTMLDivElement>(null);
-  useEffect(() => { end.current?.scrollIntoView({ block: "end" }); }, [res.data]);
+  useEffect(() => { if (!inPane) end.current?.scrollIntoView({ block: "end" }); }, [res.data, inPane]);
+  const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (reply) box.current?.focus(); }, [reply]);
   let lastDay = "";
   return (
     <section className="m-chat" aria-label={`Messages with ${person.name}`}>
       <header className="m-chat__head">
-        <button type="button" className="m-chat__back" onClick={onBack} aria-label="Back to everyone"><ArrowLeft size={20} aria-hidden /></button>
+        {inPane ? null : <button type="button" className="m-chat__back" onClick={onBack} aria-label="Back to everyone"><ArrowLeft size={20} aria-hidden /></button>}
         <Initial name={person.name} big />
         <div><h3 className="m-card__title">{person.name}</h3>
           <span className="muted m-person__meta">{person.count} message{person.count === 1 ? "" : "s"} from Plexbie{person.received ? ` · ${person.received} from ${person.name}` : ""} · by {person.via.map((v) => VIA[v].label.toLowerCase()).join(", ")}</span>
@@ -2226,7 +2282,7 @@ function Conversation({ person, onBack }: { person: MessagePerson; onBack: () =>
       </div>
       <form className="m-chat__composer" onSubmit={send}>
         <label className="visually-hidden" htmlFor={`m-reply-${person.id}`}>Message to {person.name}</label>
-        <textarea id={`m-reply-${person.id}`} className="m-textarea m-textarea--reply" rows={2} maxLength={1500} value={text}
+        <textarea ref={box} id={`m-reply-${person.id}`} className="m-textarea m-textarea--reply" rows={2} maxLength={1500} value={text}
           readOnly={sending} onChange={(e) => setText(e.target.value)} placeholder={`Message ${person.name} as Plexbie`}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.repeat) void send(e); }} />
         <div className="m-chat__send">
@@ -2888,60 +2944,6 @@ function BlockedSummary({ row, onLook }: { row: BlockedRow; onLook: () => void }
   );
 }
 
-/* ============================================================== overview */
-
-/** What's waiting on an admin: the overview tiles and the tab badges both count from this. */
-function waiting(data: Store) {
-  return {
-    requests: data.requests?.pending.length,
-    tickets: data.tickets?.counts.action ?? 0,
-    messages: data.messages?.filter((p) => (p.unread ?? 0) > 0).length ?? 0,
-    joins: data.joins?.filter((j) => j.status === "pending").length,
-    leaving: data.cleanup?.warning.length,
-    down: data.health?.filter((h) => !h.ok).length,
-  };
-}
-
-function Overview({ go, failed }: { go: (t: Section) => void; failed: Partial<Record<Section, boolean>> }) {
-  const { data } = useManage();
-  const services = data.health;
-  const { down = 0, joins, tickets } = waiting(data);
-  // Pink and pulsing ("hot") only for what's wrong right now: a service down, or
-  // someone asking for help. Waiting work gets a quiet dot, so the tiles still rank.
-  // A failed check says so, never the last answer ("Services up 5/5" from an hour ago).
-  const health = failed.health
-    ? { label: "Couldn’t check services", value: "?", hot: true, icon: <CircleAlert size={18} aria-hidden /> }
-    : services === undefined
-      ? { label: "Services", value: undefined, hot: false, icon: <CircleDot size={18} aria-hidden /> }
-    : !services.length
-      ? { label: "No services set up", value: "–", hot: false, icon: <CircleDot size={18} aria-hidden /> }
-      : down
-        ? { label: "Services down", value: down, hot: true, icon: <CircleAlert size={18} aria-hidden /> }
-        : { label: "Services up", value: `${services.length}/${services.length}`, hot: false, icon: <CircleCheck size={18} aria-hidden /> };
-  const counted: { id: Section; label: string; value: number | string | undefined; hot: boolean; waiting?: boolean; icon: ReactNode }[] = [
-    { id: "requests", label: "Requests waiting", value: data.requests?.pending.length, hot: false, waiting: !!data.requests?.pending.length,
-      icon: <Inbox size={18} aria-hidden /> },
-    { id: "tickets", label: "Open tickets", value: data.tickets ? tickets : undefined, hot: !!tickets, icon: <LifeBuoy size={18} aria-hidden /> },
-    { id: "joins", label: "Want to join", value: joins, hot: false, waiting: !!joins, icon: <UserPlus size={18} aria-hidden /> },
-    { id: "cleanup", label: "Leaving this week", value: data.cleanup?.warning.length, hot: false, waiting: !!data.cleanup?.warning.length, icon: <Hourglass size={18} aria-hidden /> },
-    { id: "health", ...health },
-  ];
-  const tiles = counted.map((t) => (t.id !== "health" && failed[t.id] && t.value !== undefined
-    // Its refresh failed: not the last count (an hour-old "Requests waiting 3"), but that it's unknown.
-    ? { ...t, value: "?", hot: false, waiting: false, label: `${t.label} · couldn’t refresh` } : t));
-  return (
-    <div className="m-overview">
-      {tiles.map((t) => (
-        <button key={t.id} type="button" className={`m-tile${t.hot ? " is-hot" : ""}`} onClick={() => go(t.id)}>
-          <span className="m-tile__top">{t.icon}{t.hot || t.waiting ? <span className={`m-tile__dot${t.hot ? "" : " m-tile__dot--quiet"}`} aria-hidden /> : null}</span>
-          <b className="m-tile__n">{t.value === undefined ? "–" : <Tick value={t.value} />}</b>
-          <span className="m-tile__label">{t.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /** Each menu row's icon. */
 const MENU_ICON: Record<string, Icon> = {
   all: List, older: Archive, tickets: LifeBuoy, blocked: Download, messages: MessageCircle,
@@ -3159,6 +3161,490 @@ function ToastHost({ register }: { register: (push: (t: ToastIn) => void) => voi
 
 /* ================================================================== page */
 
+/* ================================================================== desk */
+
+type DeskView = "needs" | "waiting" | "done";
+const VIEW_LABEL: Record<DeskView, string> = { needs: "Needs you", waiting: "Waiting on them", done: "Done" };
+const GROUP_HEAD: Record<Group, { label: string; rule: string }> = {
+  urgent: { label: "Urgent", rule: "Can’t wait" },
+  today: { label: "Today", rule: "Longest wait first" },
+  soon: { label: "Coming up", rule: "Soonest deadline first" },
+  waiting: { label: "Waiting on them", rule: "They owe you an answer" },
+  done: { label: "Done · last 2 days", rule: "Newest first" },
+};
+/** Wide enough for the queue and its detail side by side (styles.css). */
+const WIDE = "(min-width: 1000px)";
+
+function useMedia(query: string) {
+  const [on, setOn] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const q = window.matchMedia(query);
+    const change = () => setOn(q.matches);
+    change();
+    q.addEventListener("change", change);
+    return () => q.removeEventListener("change", change);
+  }, [query]);
+  return on;
+}
+
+/** A row's picture: its poster (or a drawn cover), an icon, or the person's initial. */
+function ItemArt({ item, big = false }: { item: Item; big?: boolean }) {
+  if (item.art) return <span className={big ? "m-hero__art" : "m-thumb"}><Art title={{ ...item.art, kind: item.art.kind as never }} size={big ? "w342" : "w185"} /></span>;
+  if (item.initial) return <span className={big ? "m-hero__who" : "m-who"} aria-hidden>{item.initial.trim().charAt(0).toUpperCase()}</span>;
+  const I = item.kind === "down" ? Server : item.kind === "join" ? UserPlus : item.kind === "link" ? Link2 : item.kind === "invite" ? Mail
+    : item.kind === "import" ? Download : LifeBuoy;
+  return <span className={big ? "m-hero__tile" : "m-tile2"} aria-hidden><I size={20} /></span>;
+}
+
+/** Every action the queue offers, the same ones the full views use. */
+function useDeskActions() {
+  const { refresh, toast, readOnly } = useManage();
+  const { busy, act } = useAct();
+  const requests = useDecideRequest();
+  const joins = useDecideJoin();
+  const keepPerson = useKeepPerson();
+  const keepTitle = useKeepTitle();
+  const plex = useCancelPlexInvite();
+  const links = useRevokeInvite();
+  const after = (...sections: Section[]) => window.setTimeout(() => sections.forEach((s) => void refresh(s)), 600);
+  const say = async (key: string, call: () => Promise<Ack>, done: string, ...sections: Section[]) => {
+    const out = await act(key, call);
+    if (!out) return false;
+    toast(out.told === false ? { tone: "error", text: "Not delivered", detail: out.message } : { text: done, detail: out.message });
+    after(...sections);
+    return true;
+  };
+  return {
+    readOnly,
+    busy: (key: string) => busy.has(key) || requests.busy.has(key.replace(/^request:/, "")) || joins.busy.has(key.replace(/^join:/, ""))
+      || plex.busy.size > 0 && key.startsWith("plex:") || links.busy.size > 0 && key.startsWith("link:"),
+    approve: (r: AdminRequest, yes: boolean) => requests.decide(r, yes),
+    invite: (j: AdminJoin, yes: boolean) => joins.decide(j, yes),
+    take: (t: AdminTicketRow, mine: boolean) => say(`ticket:${t.id}`, () => api.ticketTake(t.id), mine ? "Let go" : "It’s yours", "tickets"),
+    searchTicket: (t: AdminTicketRow) => say(`ticket:${t.id}`, () => api.helpSearch(t.id), SEARCHING.again, "tickets", "all"),
+    searchRequest: (r: AdminRequestRow) => say(`stuck:${r.id}`, () => api.requestSearch(r.id!, "again"), SEARCHING.again, "all"),
+    reopen: (t: AdminTicketRow) => say(`ticket:${t.id}`, () => api.ticketStatus(t.id, "open"), t.status === "open" ? "Back with the admins" : "Reopened", "tickets"),
+    chatDone: (p: MessagePerson, done: boolean) => say(`chat:${p.id}`, () => api.messageDone(p.id, done), done ? "Marked done" : "Marked unread", "messages"),
+    keepPerson: (p: AdminPerson) => keepPerson(p, true),
+    keepTitle: (c: AdminCleanupRow) => keepTitle(c, true),
+    cancelPlex: (i: PlexInvite) => plex.cancel(i),
+    cancelLink: (i: AdminInvite) => links.revoke(i),
+    checkAgain: async () => {
+      await refresh("health");
+      toast({ text: "Checked again" });
+    },
+  };
+}
+type DeskActions = ReturnType<typeof useDeskActions>;
+
+/** Opens a full view (a new page of history, so Back returns to the queue). */
+function useOpenFull() {
+  const [, setParams] = useSearchParams();
+  return (tab: Section, extra: Record<string, string> = {}) => afterOverlay(() =>
+    setParams(() => new URLSearchParams({ tab, ...extra })));
+}
+
+/** A row's two keys: what you'd most likely do, and the next thing. */
+function RowActions({ item, a, open, look, reply }: {
+  item: Item; a: DeskActions; open: () => void; look: () => void; reply: () => void;
+}) {
+  const { session } = useSession();
+  const full = useOpenFull();
+  const off = a.readOnly || a.busy(item.key);
+  const key = (label: ReactNode, onClick: () => void, quiet = false, disabled = off) => (
+    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn m-rowbtn`} disabled={disabled}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}>{label}</button>
+  );
+  const openKey = key("Open", open, true, false);
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={off} onConfirm={run} />;
+  const src = item.src;
+  switch (src.type) {
+    case "ticket": {
+      const t = src.t;
+      if (item.group === "done") return <>{key("Open", open, false, false)}{key("Reopen", () => void a.reopen(t), true)}</>;
+      if (item.group === "waiting") return <>{key("Open", open, false, false)}{key("Back to open", () => void a.reopen(t), true)}</>;
+      const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
+      if (src.blocked) return <>{key("Look inside", look, false, false)}{key("Search again", () => void a.searchTicket(t), true)}</>;
+      if (t.owner && t.owner === session?.user.name) return <>{video ? key("Search again", () => void a.searchTicket(t)) : null}{openKey}</>;
+      return <>{key(t.owner ? "Take it over" : "Take it", () => void a.take(t, false))}{openKey}</>;
+    }
+    case "import": return <>{key("Look inside", look, false, false)}{key("Open", () => full("health", { part: "blocked" }), true, false)}</>;
+    case "stuck": return <>{["tv", "movie"].includes(src.r.title.kind) ? key("Search again", () => void a.searchRequest(src.r)) : null}{openKey}</>;
+    case "request":
+      if (item.group === "done") return <>{key("Open", open, false, false)}{key("All requests", () => full("all"), true, false)}</>;
+      return <>{key(<><Check size={18} aria-hidden /> Approve</>, () => void a.approve(src.r, true))}{hold("Decline", () => void a.approve(src.r, false))}</>;
+    case "chat":
+      if (item.group === "done") return <>{key("Open", open, false, false)}{key("Mark unread", () => void a.chatDone(src.p, false), true)}</>;
+      return <>{key("Reply", reply, false, false)}{openKey}</>;
+    case "join":
+      if (!src.j.messageId) return openKey;
+      return <>{key(<><Check size={18} aria-hidden /> Invite to Plex</>, () => void a.invite(src.j, true))}{hold("Deny", () => void a.invite(src.j, false))}</>;
+    case "person": return <>{src.chat ? key("Reply", reply, false, false) : key("Open", open, false, false)}{key("Never remove", () => void a.keepPerson(src.p), true)}</>;
+    case "leaving": return <>{key("Keep", () => void a.keepTitle(src.c))}{openKey}</>;
+    case "link": return <>{key("Open", () => full("invites", { part: "links" }), false, false)}{hold("Cancel", () => void a.cancelLink(src.i))}</>;
+    case "plexinvite":
+      if (!src.i.email) return openKey;
+      return <>{key("Change email", () => full("invites", { part: "plex" }), false, false)}{hold("Cancel", () => void a.cancelPlex(src.i))}</>;
+    case "down": return <>{key("Check again", () => void a.checkAgain())}{openKey}</>;
+  }
+}
+
+/** One queue row: its picture, three lines, and two keys. */
+function QueueRow({ item, selected, onSelect, actions }: {
+  item: Item; selected: boolean; onSelect: () => void; actions: ReactNode;
+}) {
+  return (
+    <li className={`m-row${selected ? " is-selected" : ""}`} data-key={item.key} onClick={onSelect}>
+      <button type="button" className="m-row__main" aria-current={selected ? "true" : undefined} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
+        <ItemArt item={item} />
+        <span className="m-row__text">
+          <span className="m-row__kind"><span className="caps">{item.eyebrow}</span>{item.age ? <span className="m-row__age">{item.age}</span> : null}</span>
+          <span className="m-row__title">{item.title}{item.sub ? <span className="muted"> · {item.sub}</span> : null}</span>
+          <span className="m-row__meta">{item.meta}</span>
+        </span>
+      </button>
+      <div className="m-row__acts">{actions}</div>
+    </li>
+  );
+}
+
+/** A ticket in the detail: the ticket's own insides, as Tickets shows it. */
+function TicketPane({ item, look, solve }: { item: Item & { src: { type: "ticket" } }; look: boolean; solve: number }) {
+  const res = useKept<AdminTicketDetail>(() => api.adminTicket(item.src.t.id), [item.src.t.id]);
+  return <TicketBody key={String(look)} id={item.src.t.id} res={res} head={false} blockedRow={look ? undefined : item.src.blocked} solve={solve} />;
+}
+
+/** A request in the detail: RequestSheet's insides (journey, fixes, Open a ticket, history). */
+function RequestPane({ id }: { id: string }) {
+  const res = useKept<AdminRequestDetail>(() => api.adminRequest(id), [id]);
+  return <RequestBody id={id} res={res} head={false} />;
+}
+
+/** What the detail says about an item, top to bottom, and how to act on it. */
+function DetailBody({ item, a, look, solve, reply }: { item: Item; a: DeskActions; look: boolean; solve: number; reply: number }) {
+  const full = useOpenFull();
+  const src = item.src;
+  const off = a.readOnly || a.busy(item.key);
+  const facts = (rows: [string, ReactNode][]) => (
+    <dl className="m-facts">{rows.filter(([, v]) => v !== null && v !== "").map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>
+  );
+  const acts = (children: ReactNode) => <div className="m-pane__acts">{children}</div>;
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={off} onConfirm={run} />;
+  const btn = (label: ReactNode, onClick: () => void, quiet = false, disabled = off) =>
+    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn`} disabled={disabled} onClick={onClick}>{label}</button>;
+  switch (src.type) {
+    case "ticket":
+      return (
+        <>
+          {acts(btn("Open the full ticket", () => full("tickets", { ticket: src.t.id }), true, false))}
+          <TicketPane item={item as Item & { src: { type: "ticket" } }} look={look} solve={solve} />
+        </>
+      );
+    case "import":
+      return (
+        <>
+          {look ? <BlockedImport target={src.b} /> : <BlockedSummaryLook row={src.b} />}
+          {acts(btn("Open blocked imports", () => full("health", { part: "blocked" }), true, false))}
+        </>
+      );
+    case "request":
+      if (item.group === "done") {
+        return (
+          <>
+            {facts([["Asked", `${since(src.r.requestedAt)} by ${src.r.requester}`], [src.r.status === "approved" ? "Approved" : "Declined", src.r.resolvedAt ? `${since(src.r.resolvedAt)}${src.r.resolvedBy ? ` by ${src.r.resolvedBy}` : ""}` : null]])}
+            {acts(btn("All requests", () => full("all"), true, false))}
+          </>
+        );
+      }
+      return (
+        <>
+          {acts(<>{btn(<><Check size={18} aria-hidden /> Approve</>, () => void a.approve(src.r, true))}{hold("Decline", () => void a.approve(src.r, false))}</>)}
+          <RequestPane id={src.r.id} />
+        </>
+      );
+    case "stuck": return <RequestPane id={src.r.id!} />;
+    case "chat":
+      return <Conversation key={src.p.id} person={src.p} onBack={() => undefined} inPane reply={reply} />;
+    case "join":
+      return (
+        <>
+          {facts([["Asked", since(src.j.askedAt)], ["How", src.j.via === "plex" ? "Signed in with Plex" : "On Discord"], ["Plex invite to", src.j.email || (src.j.via === "plex" ? "Their Plex account" : null)]])}
+          {src.j.messageId
+            ? acts(<>{btn(<><Check size={18} aria-hidden /> Invite to Plex</>, () => void a.invite(src.j, true))}{hold("Deny", () => void a.invite(src.j, false))}</>)
+            : <p className="muted">Answer this one in Discord.</p>}
+          {acts(btn("Join requests", () => full("joins"), true, false))}
+        </>
+      );
+    case "person": {
+      const p = src.p;
+      const total = p.removalIn === null ? null : p.daysIdle + p.removalIn;
+      return (
+        <>
+          <div className="m-meter m-meter--hot">
+            <span className="m-meter__track"><span className="m-meter__fill" style={{ transform: `scaleX(${total ? Math.min(1, p.daysIdle / total) : 1})` }} /></span>
+            <span className="m-meter__label">{p.removalIn ? `${p.removalIn} days until removal · idle ${p.daysIdle}` : "Due for removal"}</span>
+          </div>
+          {facts([["Last watched", p.lastWatched ? since(p.lastWatched) : "No watch recorded"], ["Discord", p.discordName], ["Warned", p.warned ? "Yes" : null]])}
+          {acts(<>{btn(<><ShieldCheck size={16} aria-hidden /> Never remove</>, () => void a.keepPerson(p))}{btn("People", () => full("people"), true, false)}</>)}
+          {src.chat ? <Conversation key={src.chat.id} person={src.chat} onBack={() => undefined} inPane reply={reply} /> : null}
+        </>
+      );
+    }
+    case "leaving":
+      return (
+        <>
+          {facts([["Leaves in", `${src.c.daysLeft === 1 ? "1 day" : `${src.c.daysLeft} days`}`], ["Why", clockText(src.c.reason, src.c.lastActivity)], ["Type", src.c.type === "show" ? "TV" : "Film"]])}
+          {acts(<>{btn(<><ShieldCheck size={16} aria-hidden /> Keep it</>, () => void a.keepTitle(src.c))}{btn("Leaving soon", () => full("cleanup"), true, false)}</>)}
+        </>
+      );
+    case "link":
+      return (
+        <>
+          {facts([["Made", `${since(src.i.createdAt)} by ${src.i.createdBy ?? "an admin"}`], ["Ends", daysUntil(src.i.expiresAt)], ["Locked to", src.i.email]])}
+          <p className="muted">The link itself is only shown once, when it’s made. To send it again, make a new one under Invites.</p>
+          {acts(<>{btn("Invite links", () => full("invites", { part: "links" }), false, false)}{hold("Cancel", () => void a.cancelLink(src.i))}</>)}
+        </>
+      );
+    case "plexinvite":
+      return (
+        <>
+          {facts([["Sent", since(src.i.sentAt)], ["To", src.i.email || src.i.name]])}
+          {src.i.email
+            ? acts(<>{btn("Change email", () => full("invites", { part: "plex" }), false, false)}{hold("Cancel", () => void a.cancelPlex(src.i))}</>)
+            : <p className="muted">Sent to a Plex username, so change or cancel it on plex.tv.</p>}
+        </>
+      );
+    case "down":
+      return (
+        <>
+          <p className="m-pane__text">{src.h.detail ?? "Not answering."}</p>
+          {acts(<>{btn(<><RefreshCw size={16} aria-hidden /> Check again</>, () => void a.checkAgain())}{btn("Services", () => full("health"), true, false)}</>)}
+        </>
+      );
+  }
+}
+
+/** The blocked import with no ticket: the summary, opened from the row's Look inside. */
+function BlockedSummaryLook({ row }: { row: BlockedRow }) {
+  const [look, setLook] = useState(false);
+  return look ? <BlockedImport target={row} /> : <BlockedSummary row={row} onLook={() => setLook(true)} />;
+}
+
+/** The selected item in full: beside the queue on a wide screen, a full-height sheet on a phone. */
+function Detail({ item, where, a, sheet, look, solve, reply, onStep, onClose }: {
+  item: Item | null; where: { group: string; place: string }; a: DeskActions; sheet: boolean; look: boolean; solve: number; reply: number;
+  onStep: (by: 1 | -1) => void; onClose: () => void;
+}) {
+  const box = useRef<HTMLElement>(null);
+  const [more, setMore] = useState({ has: false, end: true });
+  // "More below" and the fade only when the pane really runs past the screen.
+  useEffect(() => {
+    const el = box.current;
+    if (!el || sheet) return;
+    const check = () => setMore({ has: el.scrollHeight > el.clientHeight + 1, end: el.scrollTop + el.clientHeight >= el.scrollHeight - 4 });
+    check();
+    const seen = new ResizeObserver(check);
+    seen.observe(el);
+    if (el.firstElementChild) [...el.children].forEach((c) => seen.observe(c));
+    el.addEventListener("scroll", check, { passive: true });
+    return () => { seen.disconnect(); el.removeEventListener("scroll", check); };
+  }, [sheet, item?.key]);
+  useEffect(() => { box.current?.scrollTo({ top: 0 }); }, [item?.key]);
+  const done = item && (item.kind === "ticket" || item.kind === "chat") && item.group !== "done";
+  return (
+    <aside ref={box} className={`m-pane${sheet ? " is-sheet" : ""}${more.has ? " has-more" : ""}${more.end ? " at-end" : ""}`}
+      aria-label={item ? `Selected: ${item.title}` : "Nothing selected"}>
+      <div className="m-pane__top">
+        <span className="m-pane__where"><b>{where.group}</b> · {where.place}</span>
+        <div className="m-pane__nav">
+          {sheet ? null : <>
+            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Previous (K)" onClick={() => onStep(-1)}><ChevronUp size={20} aria-hidden /></button>
+            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Next (J)" onClick={() => onStep(1)}><ChevronDown size={20} aria-hidden /></button>
+          </>}
+          {sheet ? <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Back to the queue" onClick={onClose} data-autofocus><X size={20} aria-hidden /></button> : null}
+        </div>
+      </div>
+      {item ? (
+        <div className="m-pane__body" key={item.key}>
+          <div className={`m-hero${item.art ? "" : " m-hero--plain"}`}>
+            <ItemArt item={item} big />
+            <div>
+              <p className="caps m-hero__eyebrow">{item.eyebrow}</p>
+              <h2 className="m-hero__title">{item.title}</h2>
+              {item.sub ? <p className="m-hero__sub">{item.sub}</p> : null}
+              <p className="m-hero__meta">{[item.meta, item.age && item.group !== "soon" ? `${item.age}${/^\d/.test(item.age) ? " ago" : ""}` : ""].filter(Boolean).join(" · ")}</p>
+            </div>
+          </div>
+          <DetailBody item={item} a={a} look={look} solve={solve} reply={reply} />
+        </div>
+      ) : (
+        <div className="m-pane__body">
+          <AllClear title="All clear">Nothing here right now.</AllClear>
+        </div>
+      )}
+      {sheet ? null : (
+        <div className="m-keys m-pane__keys" aria-hidden>
+          <span><kbd>J</kbd> next</span><span><kbd>K</kbd> previous</span>{done ? <span><kbd>E</kbd> done</span> : null}<span><kbd>Esc</kbd> back</span>
+          <span className="m-pane__more">More below <ChevronDown size={16} /></span>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+/** The phone's detail: a full-height sheet over the queue (Back, Escape or × closes it). */
+function DetailSheet(props: Parameters<typeof Detail>[0]) {
+  const panel = useRef<HTMLDivElement>(null);
+  useSheet(panel, props.onClose);
+  return <div ref={panel} className="m-pane-sheet" role="dialog" aria-label={props.item ? props.item.title : "Detail"}><Detail {...props} /></div>;
+}
+
+/**
+ * Manage's front page: the lit monitor strip (tap one, or 1 to 5, to show only its part
+ * of the queue), what needs you (Urgent, Today, Coming up), Waiting and Done, and the
+ * selected item in full beside it (on a phone, in a sheet).
+ */
+function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | null; menu: ReactNode }) {
+  const { data } = useManage();
+  const facts = desk.facts;
+  const [params] = useSearchParams();
+  const first = params.get("view");
+  const [view, setView] = useState<DeskView>(first === "waiting" || first === "done" ? first : "needs");
+  const shown = params.get("show");
+  const [filter, setFilter] = useState<Area | null>(AREAS.some((x) => x.id === shown) ? shown as Area : null);
+  const [sel, setSel] = useState<{ key: string | null; at: number }>({ key: params.get("item"), at: 0 });
+  const wide = useMedia(WIDE);
+  const [sheet, setSheet] = useState(() => !!params.get("item") && !window.matchMedia(WIDE).matches);
+  // Look inside, Solve… (E) and Reply, each asked for one item.
+  const [look, setLook] = useState<string | null>(null);
+  const [solve] = useState({ key: "", n: 0 });
+  const [reply, setReply] = useState({ key: "", n: 0 });
+  const list = view === "needs" ? (filter ? desk.needs.filter((i) => i.area === filter) : desk.needs) : view === "waiting" ? desk.waiting : desk.done;
+  const found = list.findIndex((i) => i.key === sel.key);
+  // An item acted on leaves the list: the next one takes its place.
+  const index = found >= 0 ? found : list.length ? Math.min(sel.at, list.length - 1) : -1;
+  const current = index >= 0 ? list[index] : null;
+  const select = (item: Item, open = false) => {
+    setSel({ key: item.key, at: list.indexOf(item) });
+    if (open && !wide) setSheet(true);
+  };
+  const a = useDeskActions();
+  const step = (by: 1 | -1) => {
+    if (!list.length) return;
+    const next = list[Math.max(0, Math.min(list.length - 1, index + by))];
+    select(next);
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`.m-row[data-key="${CSS.escape(next.key)}"] .m-row__main`)?.focus({ preventScroll: !wide }));
+  };
+  const toggle = (area: Area | null) => { setView("needs"); setFilter((f) => (f === area ? null : area)); };
+  const groups = view === "needs" ? (["urgent", "today", "soon"] as Group[]) : [view as Group];
+  const label = AREAS.find((x) => x.id === filter)?.label;
+  const where = current ? { group: GROUP_HEAD[current.group].label.replace(" · last 2 days", ""), place: `${index + 1}\u00a0of ${list.length}` }
+    : { group: VIEW_LABEL[view], place: "nothing here" };
+  const up = (data.health ?? []).filter((h) => h.ok).map((h) => h.name);
+  const detail = {
+    item: current, where, a, look: !!current && look === current.key,
+    solve: current && solve.key === current.key ? solve.n : 0, reply: current && reply.key === current.key ? reply.n : 0,
+    onStep: step, onClose: () => setSheet(false),
+  };
+
+  return (
+    <>
+      <div className="m-dhead">
+        <div className="m-dhead__text">
+          <h1 className="m-h1">Manage</h1>
+          <p className="m-headline">
+            <span className="m-headline__long"><b>{desk.needs.length === 1 ? "1 thing needs" : `${desk.needs.length} things need`} you.</b>{desk.urgent ? <> <b>{desk.urgent} {desk.urgent === 1 ? "is" : "are"} urgent.</b></> : null}</span>
+            <span className="m-headline__short"><b>{desk.needs.length} need you</b>{desk.urgent ? <> · <b>{desk.urgent} urgent</b></> : null}</span>
+            {" "}<span className="m-headline__more">Most you can handle from here.</span>
+          </p>
+        </div>
+        {menu}
+      </div>
+
+      <section className="m-strip" aria-label="At a glance. Press a monitor to show only that part of the queue">
+        <div className={`m-monitors${filter ? " is-filtered" : ""}`} role="group" aria-label="Filter the queue">
+          {desk.monitors.map((m, n) => (
+            <button key={m.area} type="button" className={`m-mon${m.hot ? " is-urgent" : ""}`} aria-pressed={filter === m.area} onClick={() => toggle(m.area)}
+              aria-keyshortcuts={String(n + 1)}
+              aria-label={`${m.label}: ${m.known ? m.count : "not loaded yet"}, ${m.makeup}${m.hot ? ", urgent" : ""}${m.first ? `. First: ${m.first.title}, ${m.first.top}` : ""}`}>
+              <span className="m-mon__label"><span className="m-lamp" aria-hidden /><span className="caps">{m.label}</span></span>
+              <span className="m-mon__screen">
+                <span className="m-mon__num">{m.known ? m.count : "–"}</span>
+                <span className="m-mon__top"><b>{m.first?.title ?? (m.area === "services" ? "All up" : "Nothing waiting")}</b><span>{m.first?.top ?? "All clear"}</span></span>
+                <span className="m-mon__make">{m.known ? m.makeup : "Loading…"}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+      <p className="m-facts-line">
+        {facts.party ? <span>Watch party:<b>{facts.party}</b></span> : null}
+        {facts.cleanup ? <span>{facts.cleanup}</span> : null}
+        {checked ? <span className="m-facts-line__checked">Checked {checked}</span> : null}
+      </p>
+
+      <div className="m-panes">
+        <section className="m-queue-col" aria-labelledby="m-queue-h">
+          <h2 id="m-queue-h" className="visually-hidden">{VIEW_LABEL[view]}</h2>
+          <div className="m-seg3" role="group" aria-label="Show">
+            {(["needs", "waiting", "done"] as DeskView[]).map((v) => (
+              <button key={v} type="button" aria-pressed={view === v} onClick={() => { setView(v); setSel({ key: null, at: 0 }); }}>
+                {v === "needs" ? "Needs you" : v === "waiting" ? "Waiting" : "Done"}
+                {v === "done" ? null : <span className="m-seg3__n">{v === "needs" ? desk.needs.length : desk.waiting.length}</span>}
+              </button>
+            ))}
+          </div>
+          <p className="visually-hidden" aria-live="polite">{filter ? `Showing ${label} only, ${list.length} items.` : ""}</p>
+          {filter && view === "needs" ? (
+            <div className="m-filterline">
+              <span>Showing <b>{label}</b> only</span>
+              <button type="button" className="btn btn--quiet m-btn m-rowbtn" onClick={() => toggle(null)}>Show all</button>
+            </div>
+          ) : null}
+          <div className="m-queue">
+            {groups.map((g) => {
+              const rows = list.filter((i) => i.group === g);
+              if (!rows.length) return null;
+              return (
+                <section key={g} className={`m-group m-group--${g}`} aria-labelledby={`m-group-${g}`}>
+                  <div className="m-group__head"><h3 id={`m-group-${g}`}>{GROUP_HEAD[g].label}</h3><span className="m-group__count">{rows.length}</span><span className="m-group__rule">{GROUP_HEAD[g].rule}</span></div>
+                  <ul className="m-rows2">
+                    {rows.map((item) => (
+                      <QueueRow key={item.key} item={item} selected={wide && current?.key === item.key} onSelect={() => select(item, true)}
+                        actions={<RowActions item={item} a={a} open={() => select(item, true)}
+                          look={() => { select(item, true); setLook(item.key); }}
+                          reply={() => { select(item, true); setReply((r) => ({ key: item.key, n: r.n + 1 })); }} />} />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+            {!list.length ? (
+              <AllClear title="All clear">
+                {view === "waiting" ? "Nobody owes you an answer." : view === "done" ? "Nothing decided, solved or marked done in the last two days."
+                  : filter ? `Nothing in ${label} needs you.` : "Nothing needs you right now."}
+              </AllClear>
+            ) : null}
+          </div>
+          {view === "needs" && list.length ? (
+            <p className="m-queue__end">
+              <Check size={18} aria-hidden />
+              {filter ? <span>That’s all for {label}. {desk.needs.length - list.length}{" "}more in the full queue.</span>
+                : up.length ? <span>That’s all. {up.length > 1 ? `${up.slice(0, -1).join(", ")} and ${up[up.length - 1]}` : up[0]} {up.length > 1 ? "are" : "is"} up.</span> : <span>That’s all.</span>}
+            </p>
+          ) : null}
+          <div className="m-keys m-queue__keys" aria-hidden>
+            <span><kbd>J</kbd><kbd>K</kbd> next, previous</span><span><kbd>Enter</kbd> open</span><span><kbd>E</kbd> done (tickets, chats)</span>
+            <span><kbd>A</kbd> approve</span><span><kbd>1</kbd>–<kbd>5</kbd> filter</span><span><kbd>/</kbd> menu</span>
+          </div>
+        </section>
+        {wide ? <Detail {...detail} sheet={false} /> : null}
+      </div>
+      {!wide && sheet && current ? createPortal(<DetailSheet {...detail} sheet />, document.body) : null}
+    </>
+  );
+}
+
 /** The clock the queue's ages are told by, a little behind at most. */
 function useNow(ms = 30_000) {
   const [now, setNow] = useState(() => Date.now());
@@ -3177,9 +3663,11 @@ export function Manage() {
   const [params, setParams] = useSearchParams();
   const asked = params.get("tab") ?? "";
   const part = params.get("part");
-  // Only the tabs: a section loaded behind one (plexinvites) isn't a page of its own.
-  const tab: Section = TABS.find((t) => t.id === asked)?.id ?? "requests";
-  useTitle(`Manage: ${TABS.find((t) => t.id === tab)?.label ?? "Overview"}`);
+  // Only the tabs: a section loaded behind one (plexinvites) isn't a page of its own. With
+  // none asked for, the front page: what needs you.
+  const full = TABS.find((t) => t.id === asked)?.id ?? null;
+  const tab: Section = full ?? "requests";
+  useTitle(full ? `Manage: ${TABS.find((t) => t.id === tab)?.label}` : "Manage");
   const panel = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const reduced = useReducedMotion();
@@ -3292,14 +3780,10 @@ export function Manage() {
     return <div className="shell page"><p className="muted">This page is for admins.</p></div>;
   }
 
-  const go = (t: Section, scroll = false) => {
-    setParams((p) => { p.set("tab", t); p.delete("part"); return p; }, { replace: true });
-    if (scroll) panel.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
-  };
   // From the menu: a new page of history (Back returns), at the top of the view, or its part.
   const pick = (row: MenuRow) => {
     const t = row.tab as Section;
-    if (t === tab && (row.part ?? null) === part) { requestAnimationFrame(land); return; }
+    if (full && t === tab && (row.part ?? null) === part) { requestAnimationFrame(land); return; }
     parted.current = "";
     if (!row.part) landing.current = t;
     setParams(() => { const p = new URLSearchParams(); p.set("tab", t); if (row.part) p.set("part", row.part); return p; });
@@ -3314,19 +3798,31 @@ export function Manage() {
   // A refresh of this tab failed over what's already on screen: say so, and how old it is.
   const stale = shows(tab).filter((s) => failed[s] && data[s as keyof Store]);
 
+  const menu = <EverythingElse groups={groups} dot={desk.needs.length > 0} hot={desk.urgent > 0} facts={facts} onPick={pick}
+    open={menuOpen} setOpen={setMenuOpen} />;
+
+  if (!full) {
+    return (
+      <ManageCtx.Provider value={ctx}>
+        <div className="shell page m-page m-page--desk">
+          <ManageDesk desk={desk} checked={loadedAt.health ? clock(loadedAt.health) : null} menu={menu} />
+        </div>
+        <ToastHost register={registerToasts} />
+      </ManageCtx.Provider>
+    );
+  }
+
   return (
     <ManageCtx.Provider value={ctx}>
       <div className="shell page m-page">
         <div className="page-head">
           <div className="m-titlebar">
             <h1 className="display page-title">Manage</h1>
-            <EverythingElse groups={groups} dot={desk.needs.length > 0} hot={desk.urgent > 0} facts={facts} onPick={pick}
-              open={menuOpen} setOpen={setMenuOpen} />
+            {menu}
           </div>
+          <Link to="/manage" className="m-back"><ArrowLeft size={16} aria-hidden /> What needs you</Link>
           <h2 id="m-section" ref={heading} tabIndex={-1} className="m-section">{label}</h2>
         </div>
-
-        <Overview go={(t) => go(t, true)} failed={failed} />
 
         <div role="region" id="m-panel" ref={panel} aria-labelledby="m-section">
           {failed[tab] && !data[tab as keyof Store] ? (

@@ -147,7 +147,7 @@ function ticketMeta(t: AdminTicketRow, me: string | null, now: number) {
   const last = t.last;
   if (last?.kind === "member") {
     const said = last.text.startsWith(`${t.reason}. `) ? last.text.slice(t.reason.length + 2) : last.text;
-    return `${mine}“${clamp(said, 60)}”`;
+    return `${mine}“${clamp(said, mine ? 30 : 38)}”`;
   }
   if (last?.kind === "reply") return `${mine}${last.by} answered`;
   if (last?.kind === "note") return `${mine}${last.by} left a note`;
@@ -202,7 +202,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
     out.push({
       key: `stuck:${r.id}`, kind: "stuck", area: "requests", group: "today",
       eyebrow: `Request · stuck ${span(wait)}`, age: `No.${NB}${slot(r.slot)}`, title: r.title.title, sub: whatLabel(r.title.kind, r.seasons),
-      meta: clamp(r.stuck.join(" · "), 64), top: `Stuck · ${span(wait)}`,
+      meta: clamp(r.stuck.join(" · "), 42), top: `Stuck · ${span(wait)}`,
       art: { poster: r.title.poster, title: r.title.title, kind: r.title.kind }, wait, src: { type: "stuck", r },
     });
   }
@@ -219,7 +219,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
     out.push({
       key: `import:${b.app}:${b.downloadId}`, kind: "import", area: "help", group: "urgent",
       eyebrow: `${app} · import blocked`, title: b.title, sub: b.episodes.length ? b.episodes.join(", ") : b.year ? String(b.year) : undefined,
-      meta: clamp(b.messages[0] ?? `${app} won’t import it by itself`, 64), top: "Import blocked",
+      meta: clamp(b.messages[0] ?? `${app} won’t import it by itself`, 42), top: "Import blocked",
       art: { poster: null, title: b.title, kind: b.app === "sonarr" ? "tv" : "movie" }, wait: 0, src: { type: "import", b },
     });
   }
@@ -238,7 +238,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
     out.push({
       key: `chat:${p.id}`, kind: "chat", area: "help", group: "today",
       eyebrow: n ? `Messages · ${n}${NB}new` : "Messages · not delivered", age: span(wait), title: p.name,
-      meta: p.last.direction === "in" ? `“${clamp(p.last.text, 60)}”` : `Plexbie: ${clamp(p.last.text, 56)}`,
+      meta: p.last.direction === "in" ? `“${clamp(p.last.text, 40)}”` : `Plexbie: ${clamp(p.last.text, 32)}`,
       top: `${n ? plural(n, "new message", "new messages") : "Not delivered"} · ${span(wait)}`, initial: p.name, wait, src: { type: "chat", p },
     });
   }
@@ -258,7 +258,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
     if (!nearRemoval(p)) continue;
     const chat = (d.messages ?? []).find((m) => personOf(m) === p);
     const said = [chat?.unread ? (chat.unread === 1 ? "New message" : `${chat.unread}${NB}new messages`) : "",
-      chat && !chat.last.delivered ? "last message not delivered" : ""].filter(Boolean);
+      chat && !chat.last.delivered ? "not delivered" : ""].filter(Boolean);
     const left = p.removalIn ?? 0;
     out.push({
       key: `person:${p.plexName}`, kind: "warned", area: "people", group: "soon",
@@ -310,7 +310,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
     const said = (h.detail ?? "").split(/(?<=[.!?])\s/)[0];
     out.push({
       key: `down:${h.name}`, kind: "down", area: "services", group: "urgent",
-      eyebrow: "Services · check failing", title: h.name, meta: said ? clamp(said, 64) : "Not answering",
+      eyebrow: "Services · check failing", title: h.name, meta: said ? clamp(said, 42) : "Not answering",
       top: "Check failing", wait: 0, src: { type: "down", h },
     });
   }

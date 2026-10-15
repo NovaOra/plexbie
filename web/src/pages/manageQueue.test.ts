@@ -77,7 +77,7 @@ describe("the Manage queue, from the sample household", () => {
 
   it("puts Marcus's unread message on his removal row, and leaves grandpa_j (marked done after the failure) out", () => {
     const marcus = desk.needs.find((i) => i.title === "Marcus T.")!;
-    expect(marcus.meta).toBe("New message · last message not delivered");
+    expect(marcus.meta).toBe("New message · not delivered");
     expect(desk.needs.filter((i) => i.kind === "chat").map((i) => i.title)).toEqual(["Alex Kim"]);
     expect(desk.needs.some((i) => i.title === "grandpa_j")).toBe(false);
   });
