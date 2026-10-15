@@ -1127,7 +1127,7 @@ html, body { overflow-x: clip; }
 .air-key--pink:active { background: var(--screen-deep); }
 .air-key--amber:active { background: var(--note-deep); }
 /* Pressed and under way: it stays down, a step darker, until the sign-in leaves the page. */
-.air-key[aria-busy="true"] { transform: translateY(1px); cursor: progress; pointer-events: none; }
+.air-key[aria-busy="true"] { transform: translateY(1px); cursor: progress; }
 .air-key--plain[aria-busy="true"] { background: var(--rule); }
 .air-key--pink[aria-busy="true"] { background: var(--screen-deep); }
 .air-key--amber[aria-busy="true"] { background: var(--note-deep); }

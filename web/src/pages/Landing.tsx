@@ -200,7 +200,12 @@ export function Landing() {
     },
     onFocus: () => setPreview(names[id]),
     onBlur: () => setPreview(null),
-    onClick: () => {
+    onClick: (e) => {
+      // Already under way: a second click or Enter doesn't start it again.
+      if (busy === id) {
+        e.preventDefault();
+        return;
+      }
       setBusy(id);
       if (id !== "discord") setPlexStatus(null);
     },

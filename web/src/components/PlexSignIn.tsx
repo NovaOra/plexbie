@@ -22,7 +22,7 @@ export function PlexSignIn({ className, next = "/", invite = false, children, on
         href={href}
         onClick={(e) => {
           onClick?.(e);
-          plexSignIn(e, next, invite, onStatus ?? setStatus);
+          if (!e.defaultPrevented) plexSignIn(e, next, invite, onStatus ?? setStatus);
         }}
       >
         {children}
