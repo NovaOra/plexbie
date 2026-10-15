@@ -24,7 +24,7 @@ from typing import Optional, Tuple
 #: The marker in web/index.html where the per-page tags go.
 HEAD_MARK = "<!--plexbie:head-->"
 CARD = "/brand/og-card.png"
-CARD_ALT = "The Plexbie logo, a small pink television, beside the words: a Discord bot for your household’s Plex server."
+CARD_ALT = "Plexbie, a small retro TV with a pink screen, on air beside the words: Your household’s Plex, on air."
 
 #: Signed out (as every link preview is), each of the household's pages is the sign-in
 #: page, a TV set "on air"; the card's title says so, the tab keeps the plain name.
@@ -83,6 +83,7 @@ def head_tags(path: str, origin: str, *, operator: str = "", contact: str = "") 
         f'<meta name="twitter:title" content="{e(card_title)}" />',
         f'<meta name="twitter:description" content="{e(description)}" />',
         f'<meta name="twitter:image" content="{e(card)}" />',
+        f'<meta name="twitter:image:alt" content="{e(CARD_ALT)}" />',
         '<meta name="robots" content="noindex, nofollow" />',
         f'<meta name="plexbie-site" content="{e(site)}" />',
     ]

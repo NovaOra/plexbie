@@ -2642,6 +2642,7 @@ def test_link_previews_get_a_real_card_and_invites_never_a_name():
     assert 'og:title" content="Plexbie: your household’s Plex, on air"' in home, "the card names the sign-in page"
     assert 'og:title" content="Privacy · Plexbie"' in out["/privacy"][1]
     assert 'og:url" content="https://plexbie.example/"' in home
+    assert 'twitter:image:alt" content="Plexbie, a small retro TV' in home
     assert 'og:url" content="https://plexbie.example/privacy"' in out["/privacy"][1]
     assert 'og:url" content="https://plexbie.example/invite"' in head_tags("invite/secret-code", "https://plexbie.example")[2]
     assert robots_hdr == "noindex, nofollow" and 'name="robots" content="noindex, nofollow"' in home, \
