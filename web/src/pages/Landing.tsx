@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type AnchorHTMLAttributes, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type AnchorHTMLAttributes, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { useLocation } from "react-router-dom";
 import { PlayCircle } from "../components/icons";
@@ -103,9 +103,10 @@ export function Landing() {
   const notice = noticeFor(search);
   const lead = leadFor(search);
   const invite = inviteOutcome(search)?.outcome;
-  const lede = invite === "ok" ? "Your invite worked."
-    : invite === "already" ? "You’re already in."
-    : "Plexbie is your household’s Plex helper. Members sign in below.";
+  // One sentence per span, so a line breaks between them rather than inside one.
+  const lede = invite === "ok" ? ["Your invite worked."]
+    : invite === "already" ? ["You’re already in."]
+    : ["Plexbie is your household’s Plex helper.", "Members sign in below."];
 
   const [ch, setCh] = useState<1 | 2>(() => (hash === "#getting-in" ? 2 : 1));
   const [preview, setPreview] = useState<string | null>(null);
@@ -234,8 +235,8 @@ export function Landing() {
       <section className="air-stage" aria-label="Sign in">
         <motion.div
           className="air-set"
-          initial={reduced ? false : { opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={reduced ? false : { y: 16 }}
+          animate={{ y: 0 }}
           transition={{ duration: 0.4, ease: EASE_OUT }}
         >
           <Antennae />
@@ -250,6 +251,8 @@ export function Landing() {
                       <span aria-live="polite">{busy ? "Tuning in" : "Standby"}</span>
                     </span>
                   </div>
+                  {/* Channel 2 leaves channel 1 (and its heading) inert: the page keeps its name. */}
+                  {ch === 2 ? <h1 className="visually-hidden">Your household’s Plex, on air.</h1> : null}
                   <div className="air-channels" ref={channels}>
                     <div className={`air-ch air-ch1${notice ? " has-notice" : ""}`} inert={ch !== 1}>
                       <img
@@ -258,7 +261,9 @@ export function Landing() {
                       />
                       <h1 className="air-title">Your household’s Plex, on air.</h1>
                       <p className="air-lede">
-                        {lede}
+                        {lede.map((sentence, i) => (
+                          <Fragment key={sentence}>{i ? " " : null}<span>{sentence}</span></Fragment>
+                        ))}
                       </p>
                       {notice ? (
                         <p className={`air-notice air-notice--${notice.role}`} role={notice.role}>
@@ -289,7 +294,7 @@ export function Landing() {
             <div className="air-deck">
               <div className="air-seg" role="group" aria-label="Sign in">
                 {discordTone === "off" ? (
-                  <a className="air-key air-key--off" aria-disabled="true" aria-describedby="air-leg-discord">
+                  <a className="air-key air-key--off" role="link" aria-disabled="true" aria-describedby="air-leg-discord">
                     {discordIcon} Sign in with Discord
                   </a>
                 ) : (
