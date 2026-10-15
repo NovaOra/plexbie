@@ -1,51 +1,71 @@
-import { describe, expect, it } from "vitest";
-import { menuItems, menuLabel, waitingElsewhere } from "./manageMenu";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { BlockedRow } from "../api/types";
+import { deriveDesk, type DeskData } from "./manageQueue";
+import { menuGroups, type MenuGroup } from "./manageMenu";
 
-const TABS = [
-  { id: "requests", label: "Requests" },
-  { id: "all", label: "All requests" },
-  { id: "tickets", label: "Tickets" },
-  { id: "invites", label: "Invites" },
-  { id: "people", label: "People" },
-  { id: "cleanup", label: "Cleanup" },
-  { id: "messages", label: "Messages" },
-  { id: "health", label: "Health" },
-] as const;
+/** "Everything else": grouped like the monitors, with the same counts. */
 
-describe("the Manage sections menu", () => {
-  it("lists every section in order, with what each one counts", () => {
-    const items = menuItems(TABS, "requests", { requests: 3, all: 2, tickets: 2, invites: 1, cleanup: 4, messages: 1, health: 1 }, {});
-    expect(items.map((i) => i.id)).toEqual(TABS.map((t) => t.id));
-    expect(Object.fromEntries(items.map((i) => [i.id, i.note]))).toEqual({
-      requests: "3 waiting", all: "2 stuck", tickets: "2 open", invites: "1 ready", people: "",
-      cleanup: "4 waiting", messages: "1 new", health: "1 down",
-    });
+const NB = " ";
+const SECTIONS = ["requests", "all", "tickets", "joins", "invites", "plexinvites", "people", "cleanup", "discord", "messages", "health"] as const;
+let groups: MenuGroup[];
+let data: DeskData;
+
+beforeAll(async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("location", { search: "?as=member", origin: "https://plexbie.example" });
+  vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => undefined });
+  vi.stubEnv("VITE_DEMO", "0");
+  vi.resetModules();
+  const s = await import("../api/sample");
+  const asked = Promise.all([...SECTIONS.map((x) => s.admin(x)), s.adminBlocked()]);
+  await vi.advanceTimersByTimeAsync(1000);
+  const got = await asked;
+  data = Object.fromEntries(SECTIONS.map((x, i) => [x, got[i]])) as DeskData;
+  data.blocked = (got[SECTIONS.length] as { rows: BlockedRow[] }).rows;
+  groups = menuGroups(deriveDesk(data, Date.now(), { me: "Sam Rivera" }), data);
+});
+afterAll(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+const row = (id: string) => groups.flatMap((g) => g.rows).find((r) => r.id === id)!;
+
+describe("the Everything else menu", () => {
+  it("groups the full views by job, every one once", () => {
+    expect(groups.map((g) => [g.label, g.rows.map((r) => r.label)])).toEqual([
+      ["Requests", ["All requests", "Older requests"]],
+      ["Help", ["All tickets", "Blocked imports", "Messages"]],
+      ["People", ["Join requests", "People", "Waiting on Plex", "Invite links", "Who brought whom"]],
+      ["Library", ["Leaving soon", "Keep forever", "Cleanup settings"]],
+      ["Services", ["Services", "Sign-ins"]],
+      ["Discord", ["Watch party", "Say something as Plexbie", "DMs to Plexbie"]],
+    ]);
   });
 
-  it("marks the section that's open", () => {
-    const items = menuItems(TABS, "tickets", {}, {});
-    expect(items.filter((i) => i.current).map((i) => i.id)).toEqual(["tickets"]);
+  it("counts each group as its monitor does, and each row as the queue rows it covers", () => {
+    expect(groups.map((g) => g.count)).toEqual([3, 6, 5, 2, 1, undefined]);
+    for (const g of groups) if (g.count !== undefined) expect(g.rows.reduce((n, r) => n + (r.count ?? 0), 0)).toBe(g.count);
+    expect(row("all")).toMatchObject({ count: 3, desc: `3${NB}waiting · 3${NB}look stuck` });
+    expect(row("tickets")).toMatchObject({ count: 5, urgent: 2, desc: `5${NB}need an admin · 1${NB}waiting` });
+    expect(row("messages")).toMatchObject({ count: 1, desc: "Alex Kim unread · Marcus T. under People" });
+    expect(row("plex")).toMatchObject({ count: 1, desc: `1 from 40${NB}days ago · 2${NB}more not accepted` });
+    expect(row("links")).toMatchObject({ count: 1, desc: `Aunt Rosa’s ends in 5${NB}days` });
+    expect(row("leaving").count).toBe(2);
+    expect(row("services")).toMatchObject({ count: 1, tally: "down" });
   });
 
-  it("shows pink only for Health and Cleanup, and only when they have something", () => {
-    const hot = (counts: Record<string, number>) => menuItems(TABS, "requests", counts, {}).filter((i) => i.hot).map((i) => i.id);
-    expect(hot({ requests: 3, tickets: 2, health: 1, cleanup: 2 })).toEqual(["cleanup", "health"]);
-    expect(hot({ requests: 3 })).toEqual([]);
+  it("marks blocked imports urgent and a live watch party live, without counting them twice", () => {
+    expect(row("blocked")).toMatchObject({ hot: true, desc: "Radar Men from the Moon" });
+    expect(row("blocked").count).toBeUndefined();
+    expect(row("party")).toMatchObject({ tally: "live", desc: `Alex Kim · Tears of Steel · 3${NB}watching` });
   });
 
-  it("says a count is in doubt when its refresh failed, except a ready invite link", () => {
-    const items = menuItems(TABS, "requests", { requests: 3, invites: 1 }, { requests: true, invites: true });
-    expect(items.find((i) => i.id === "requests")?.note).toBe("couldn’t refresh");
-    expect(items.find((i) => i.id === "invites")?.note).toBe("1 ready");
-  });
-
-  it("names the button by what's waiting in the other sections", () => {
-    expect(menuLabel(menuItems(TABS, "requests", {}, {}))).toBe("Sections");
-    // The open section's count is in its heading already.
-    expect(menuLabel(menuItems(TABS, "requests", { requests: 3 }, {}))).toBe("Sections");
-    const items = menuItems(TABS, "requests", { requests: 3, tickets: 2, health: 1 }, {});
-    expect(waitingElsewhere(items).map((i) => i.id)).toEqual(["tickets", "health"]);
-    expect(menuLabel(items)).toBe("Sections, 2 need you");
-    expect(menuLabel(menuItems(TABS, "requests", { health: 1 }, {}))).toBe("Sections, 1 needs you");
+  it("sends each row to its full view", () => {
+    expect(groups.flatMap((g) => g.rows).map((r) => (r.part ? `${r.tab}#${r.part}` : r.tab))).toEqual([
+      "all", "requests#older", "tickets", "health#blocked", "messages", "joins", "people", "invites#plex", "invites", "invites#who",
+      "cleanup", "cleanup#keep", "cleanup#settings", "health", "security", "discord#party", "discord#say", "discord#dms",
+    ]);
   });
 });

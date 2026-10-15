@@ -6,7 +6,7 @@ import {
   AnimatePresence, LayoutGroup, animate, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useTransform,
 } from "motion/react";
 import {
-  ArrowLeft, Bell, Check, CircleDot, LifeBuoy, CircleAlert, CircleCheck, Copy, Hourglass, Inbox, Link2, ListOrdered, Lock, LogOut, Mail, Menu, MessageCircle, MessageSquare, Radio, Plus, RefreshCw, Search, Share2, ShieldCheck, Ticket, Trash2, UserPlus, X,
+  Archive, ArrowLeft, Bell, Check, CircleDot, Download, LifeBuoy, CircleAlert, CircleCheck, Copy, Hourglass, Inbox, Link2, List, ListOrdered, Lock, LogOut, Mail, Megaphone, Menu, MessageCircle, MessageSquare, MonitorPlay, Radio, Plus, RefreshCw, Search, Server, Settings, Share2, ShieldCheck, Ticket, Trash2, UserPlus, Users, X,
 } from "../components/icons";
 import type { Icon } from "../components/icons";
 import { createPortal } from "react-dom";
@@ -18,13 +18,14 @@ import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
 import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
-import { afterOverlay, useBackToClose } from "../components/overlay";
-import { menuItems, menuLabel, waitingElsewhere, type MenuItem } from "./manageMenu";
+import { afterOverlay, useBackToClose, useSheet } from "../components/overlay";
+import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
+import { deriveDesk, type DeskData } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
 
 /* ================================================================== store */
 
-type Section = "requests" | "all" | "tickets" | "joins" | "invites" | "plexinvites" | "people" | "cleanup" | "discord" | "messages" | "health";
+type Section = "requests" | "all" | "tickets" | "joins" | "invites" | "plexinvites" | "people" | "cleanup" | "discord" | "messages" | "health" | "security";
 type Store = {
   requests?: AdminRequests; all?: AdminAllRequests; tickets?: AdminTickets; joins?: AdminJoin[]; invites?: AdminInvite[]; plexinvites?: PlexInvite[]; people?: AdminPerson[]; cleanup?: AdminCleanup;
   discord?: DiscordOverview; messages?: MessagePerson[]; health?: HealthCheck[];
@@ -44,12 +45,13 @@ const TABS: { id: Section; label: string }[] = [
   { id: "discord", label: "Discord" },
   { id: "messages", label: "Messages" },
   { id: "health", label: "Health" },
+  { id: "security", label: "Sign-ins" },
 ];
 
 interface ManageState {
   data: Store;
   refresh: (s: Section) => Promise<void>;
-  patch: <K extends Section>(s: K, fn: (d: NonNullable<Store[K]>) => NonNullable<Store[K]>) => void;
+  patch: <K extends keyof Store>(s: K, fn: (d: NonNullable<Store[K]>) => NonNullable<Store[K]>) => void;
   toast: (t: ToastIn) => void;
   readOnly: boolean;
   failed: Partial<Record<Section, boolean>>;
@@ -59,11 +61,13 @@ interface ManageState {
 }
 const ManageCtx = createContext<ManageState | null>(null);
 /** What each tab shows (most show only their own section). */
-const SHOWS: Partial<Record<Section, Section[]>> = { invites: ["invites", "plexinvites"] };
+const SHOWS: Partial<Record<Section, Section[]>> = { invites: ["invites", "plexinvites", "discord"], security: [] };
 const shows = (t: Section) => SHOWS[t] ?? [t];
-/** What the overview and the tab bar count, kept fresh whichever tab is open. */
-const COUNTED: Section[] = ["requests", "all", "tickets", "joins", "cleanup", "messages", "health"];
+/** What the queue, the monitors and the menu count, kept fresh whichever view is open. */
+const COUNTED: Section[] = ["requests", "all", "tickets", "joins", "invites", "people", "cleanup", "discord", "messages", "health"];
 const useManage = () => useContext(ManageCtx)!;
+/** The part of a full view the menu asked for (?part=keep): it's scrolled to, or opened. */
+const usePart = () => useSearchParams()[0].get("part");
 
 /** A tiny tap on phones that support it; silence everywhere else. */
 function buzz(ms = 8) {
@@ -506,6 +510,7 @@ function SwipeHint() {
 
 function RequestsTab() {
   const { data, patch, toast, readOnly } = useManage();
+  const part = usePart();
   const { busy, act, later } = useAct();
   const res = data.requests;
   if (!res) {
@@ -587,7 +592,7 @@ function RequestsTab() {
       ) : null}
 
       {older.length ? (
-        <details className="m-older">
+        <details className="m-older" id="m-part-older" open={part === "older" || undefined}>
           <summary>{older.length} older requests from before outcomes were recorded (30 September)</summary>
           <p className="muted">
             These can’t tell “approved months ago” from “never answered”. Open one in Discord: if it still has
@@ -997,7 +1002,8 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
 }) {
   const { patch, refresh, toast, readOnly } = useManage();
   const { act, later } = useAct();
-  const [open, setOpen] = useState(false);
+  const part = usePart();
+  const [open, setOpen] = useState(part === "settings");
   const [days, setDays] = useState(settings.inactivityDays);
   const [warn, setWarn] = useState(settings.warnDaysBefore);
   const [scanning, setScanning] = useState(false);
@@ -1048,7 +1054,7 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
   };
 
   return (
-    <section className={`m-mode m-mode--card${live ? " is-live" : ""}`}>
+    <section className={`m-mode m-mode--card${live ? " is-live" : ""}`} id="m-part-settings">
       <button type="button" className="m-mode__head" aria-expanded={open} aria-controls="m-cleanup-settings" onClick={() => setOpen((o) => !o)}>
         <span className="m-mode__dot" aria-hidden />
         <span className="m-mode__text">
@@ -1159,7 +1165,7 @@ function KeepSearch({ kept, onKeep }: { kept: Set<string>; onKeep: (m: CleanupMa
   const words = !readOnly && q.trim().length >= 2 ? q.trim() : "";
   const { found, searching, failed, retry } = useDebouncedSearch(words, (w) => api.cleanupSearch(w), 300);
   return (
-    <section className="section">
+    <section className="section" id="m-part-keep">
       <h2>Keep a title forever</h2>
       <p className="muted">Search Plex for any film or show, even one nowhere near the clock, and cleanup will never touch it.</p>
       {readOnly
@@ -1550,7 +1556,7 @@ function BlockedList({ checks }: { checks: number }) {
   const unreachable = (["sonarr", "radarr"] as const).filter((app) => res.data?.errors?.[app]);
   if (!rows.length && !unreachable.length && !res.failed) return null;
   return (
-    <section className="section">
+    <section className="section" id="m-part-blocked">
       <div className="m-head"><h2>Waiting for you to look</h2></div>
       {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
       {unreachable.map((app) => (
@@ -1594,8 +1600,8 @@ function SignOutOthers() {
       detail: `${ended === 1 ? "1 app sign-in" : `${ended} app sign-ins`} ended, and every other website sign-in, with the alerts they had on. You’re still signed in here.` });
   };
   return (
-    <section className="section">
-      <div className="m-head"><h2>Sign-ins</h2></div>
+    <section className="section" id="m-part-security">
+      <div className="m-head"><h2>Sign out everywhere else</h2></div>
       <div className="m-set-row">
         <span><b>Sign out every other session</b><span className="muted">For a sign-in that wasn’t you: every website and app sign-in ends except this one, alerts turned on elsewhere stop, and the rest of the household signs in again.</span></span>
         <HoldButton label="Sign out others" icon={<LogOut size={16} aria-hidden />} ms={1400} disabled={readOnly || busy.has("sign-out")} onConfirm={() => void go()} />
@@ -1642,7 +1648,6 @@ function HealthTab() {
         ))}
       </ul>
     </section>
-    <SignOutOthers />
     </>
   );
 }
@@ -1735,7 +1740,7 @@ function PlexInvites() {
   };
 
   return (
-    <section className="section">
+    <section className="section" id="m-part-plex">
       <h2>Waiting on Plex <span className="m-count"><Tick value={rows.length} /></span></h2>
       <p className="muted">Plex invites nobody has accepted yet. Sent to the wrong address? Change it and the invite goes to the right one.</p>
       <ul className="m-rows">
@@ -1896,7 +1901,7 @@ function InvitesTab() {
 
       <PlexInvites />
 
-      <section className="section">
+      <section className="section" id="m-part-links">
         <h2>Open invites <span className="m-count"><Tick value={active.length} /></span></h2>
         {!rows ? <div className="skeleton" style={{ height: 120 }} /> : null}
         <ul className="m-rows">
@@ -1960,6 +1965,8 @@ function InvitesTab() {
           </ul>
         </section>
       ) : null}
+
+      <WhoBroughtWhom />
     </div>
   );
 }
@@ -1976,7 +1983,6 @@ function DiscordTab() {
   const [text, setText] = useState("");
   const [pings, setPings] = useState(false);
   const [sending, setSending] = useState(false);
-  const [query, setQuery] = useState("");
   if (!d) return <div className="skeleton" style={{ height: 300 }} />;
   const chosen = channel || d.channels[0]?.id || "";
 
@@ -1993,12 +1999,9 @@ function DiscordTab() {
     setPings(false);
   };
 
-  const q = query.trim().toLowerCase();
-  const joins = q ? d.joins.filter((j) => `${j.who} ${j.by} ${j.code ?? ""}`.toLowerCase().includes(q)) : d.joins;
-
   return (
     <div className="m-stack">
-      <section className="section">
+      <section className="section" id="m-part-party">
         <h2>Watch party</h2>
         {d.party ? (
           <div className="m-party">
@@ -2015,7 +2018,7 @@ function DiscordTab() {
         <button type="button" className="btn btn--quiet m-btn" style={{ justifySelf: "start" }} onClick={() => void refresh("discord")}><RefreshCw size={16} aria-hidden /> Check again</button>
       </section>
 
-      <section className="section">
+      <section className="section" id="m-part-dms">
         <h2>DMs to Plexbie</h2>
         <p className="muted">When someone DMs Plexbie, admins get an alert and it lands in Messages, and in their own thread under the admin channel. Reply from Messages, or in the thread with Reply or <code>/reply</code>.</p>
         {d.inbox ? (
@@ -2035,7 +2038,7 @@ function DiscordTab() {
         ) : null}
       </section>
 
-      <section className="section">
+      <section className="section" id="m-part-say">
         <h2>Say something as Plexbie</h2>
         <form className="m-invite-form" onSubmit={send}>
           <div className="field">
@@ -2060,7 +2063,21 @@ function DiscordTab() {
         </form>
       </section>
 
-      <section className="section">
+    </div>
+  );
+}
+
+
+/** Who brought whom: the Discord invites and Plexbie invite links people joined with. */
+function WhoBroughtWhom() {
+  const { data } = useManage();
+  const d = data.discord;
+  const [query, setQuery] = useState("");
+  if (!d) return null;
+  const q = query.trim().toLowerCase();
+  const joins = q ? d.joins.filter((j) => `${j.who} ${j.by} ${j.code ?? ""}`.toLowerCase().includes(q)) : d.joins;
+  return (
+      <section className="section" id="m-part-who">
         <div className="m-head">
           <h2>Who brought whom</h2>
           <SearchField value={query} onChange={setQuery} />
@@ -2079,7 +2096,6 @@ function DiscordTab() {
         </ul>
         {!joins.length ? <p className="muted">{q ? "Nobody matches." : "No invites recorded yet."}</p> : null}
       </section>
-    </div>
   );
 }
 
@@ -2926,124 +2942,94 @@ function Overview({ go, failed }: { go: (t: Section) => void; failed: Partial<Re
   );
 }
 
-/** Phone widths, where ☰ opens a drawer that pushes the page aside (styles.css). */
-const PHONE = "(max-width: 719px)";
-/** How long the drawer and the page take to slide (styles.css). */
-const PUSH_MS = 240;
+/** Each menu row's icon. */
+const MENU_ICON: Record<string, Icon> = {
+  all: List, older: Archive, tickets: LifeBuoy, blocked: Download, messages: MessageCircle,
+  joins: UserPlus, people: Users, plex: Mail, links: Link2, who: Share2,
+  leaving: Hourglass, keep: ShieldCheck, settings: Settings,
+  services: Server, security: Lock, party: MonitorPlay, say: Megaphone, dms: MessageSquare,
+};
 
-function usePhone() {
-  const [phone, setPhone] = useState(() => window.matchMedia(PHONE).matches);
-  useEffect(() => {
-    const q = window.matchMedia(PHONE);
-    const on = () => setPhone(q.matches);
-    on();
-    q.addEventListener("change", on);
-    return () => q.removeEventListener("change", on);
-  }, []);
-  return phone;
+/** A group's sum, like its monitor's: "3 waiting", "6 · 5 tickets · 1 chat". */
+function GroupSum({ g }: { g: MenuGroup }) {
+  if (g.count === undefined || !g.makeup) return null;
+  const n = `${g.count}`;
+  const single = !g.makeup.includes(" · ") && g.makeup.startsWith(`${n}\u00a0`);
+  return <span className="m-mgroup__sum">{g.count ? <b>{n}</b> : null}{single ? g.makeup.slice(n.length + 1) : g.makeup}</span>;
 }
 
 /**
- * The sections, behind ☰ at the top right: a panel under the button on wide
- * screens; on phones a drawer from the right that pushes the whole screen (top
- * bar, page and tab bar) left with it, like an app's navigation drawer
- * (styles.css). Opening puts focus on the open section; the arrow keys move
- * between sections and Tab stays inside. Escape, Back, a tap outside or ☰ again
- * closes it and hands focus back to ☰. On a phone the drawer is modal: the page
- * behind is out of reach and doesn't scroll. A dot on ☰ says another section has
- * something waiting, pink when it's hot.
+ * "Everything else": every full view, grouped by job like the monitors and with the same
+ * counts, in a drawer from the right (two columns on a wide screen). Escape, Back, the
+ * close button or a tap outside closes it, and focus goes back to the button.
  */
-function SectionMenu({ items, onPick }: { items: MenuItem<Section>[]; onPick: (t: Section) => void }) {
-  const [open, setOpen] = useState(false);
-  const phone = usePhone();
-  const button = useRef<HTMLButtonElement>(null);
+function MenuDrawer({ groups, facts, onClose, onPick }: {
+  groups: MenuGroup[]; facts: string; onClose: () => void; onPick: (row: MenuRow) => void;
+}) {
   const panel = useRef<HTMLDivElement>(null);
-  const id = useId();
-  // Focus goes back to ☰ once it's closed, after the page behind is reachable again.
-  const refocus = useRef(false);
-  const close = useCallback(() => {
-    refocus.current = true;
-    setOpen(false);
-  }, []);
-  useBackToClose(open, close);
-  // A phone's drawer pushes the screen aside: the page (all of #root; toasts and
-  // sheets live outside it) slides left in the same frame the drawer starts in,
-  // is inert (the backdrop still takes the tap that closes it) and doesn't scroll.
-  // "menu-push" stays on until the slide back is over.
-  const settle = useRef(0);
-  useLayoutEffect(() => {
-    const sheet = panel.current;
-    if (!open || !phone || !sheet) return;
-    const html = document.documentElement;
-    const root = document.getElementById("root");
-    window.clearTimeout(settle.current);
-    sheet.setAttribute("aria-modal", "true");
-    root?.setAttribute("inert", "");
-    html.classList.add("has-menu", "menu-push");
-    return () => {
-      sheet.removeAttribute("aria-modal");
-      root?.removeAttribute("inert");
-      html.classList.remove("has-menu");
-      settle.current = window.setTimeout(() => html.classList.remove("menu-push"), PUSH_MS);
-    };
-  }, [open, phone]);
-  useEffect(() => () => {
-    window.clearTimeout(settle.current);
-    document.documentElement.classList.remove("menu-push");
-  }, []);
-  useEffect(() => {
-    if (!open) {
-      if (refocus.current) button.current?.focus({ preventScroll: true });
-      refocus.current = false;
-      return;
-    }
-    (panel.current?.querySelector<HTMLElement>("[aria-current]") ?? panel.current?.querySelector<HTMLElement>("button"))?.focus({ preventScroll: true });
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, close, phone]);
-  const move = (e: ReactKeyboardEvent) => {
-    const all = [...(panel.current?.querySelectorAll<HTMLButtonElement>(".m-menu__item") ?? [])];
-    // -1 when focus is on the panel itself (a click between the items): Tab goes to the first.
-    const at = all.indexOf(document.activeElement as HTMLButtonElement);
-    const back = e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey);
-    const to = e.key === "Home" ? 0 : e.key === "End" ? all.length - 1
-      : back ? (at < 0 ? -1 : at - 1) : e.key === "ArrowDown" || e.key === "Tab" ? at + 1 : null;
-    if (to === null || !all.length) return;
-    e.preventDefault();
-    all[(to + all.length) % all.length].focus();
-  };
-  const elsewhere = waitingElsewhere(items);
-  // Always there, hidden when closed, so closing can slide and fade out. On a
-  // phone it lives outside #root, so it stays put while the page moves.
-  const sheet = (
-    <>
-      <div className="m-menu__scrim" hidden={!open} aria-hidden onClick={close} />
-      <div ref={panel} id={id} className="m-menu__panel" role="dialog" aria-label="Sections" hidden={!open} tabIndex={-1} onKeyDown={move}>
-        <p className="m-menu__title" aria-hidden>Sections</p>
-        <ul className="m-menu__list">
-          {items.map((i) => (
-            <li key={i.id}>
-              <button type="button" className={`m-menu__item${i.hot ? " is-hot" : ""}`} aria-current={i.current ? "page" : undefined}
-                onClick={() => { setOpen(false); afterOverlay(() => onPick(i.id)); }}>
-                <span>{i.label}</span>
-                {i.note ? <span className="m-menu__note"><span className="visually-hidden">, </span>{i.note}</span> : null}
+  useSheet(panel, onClose);
+  const titleId = useId();
+  const group = (g: MenuGroup) => (
+    <section key={g.id} className="m-mgroup" aria-labelledby={`${titleId}-${g.id}`}>
+      <h3 className="m-mgroup__head" id={`${titleId}-${g.id}`}><span className="caps">{g.label}</span><GroupSum g={g} /></h3>
+      <ul className="m-mlist">
+        {g.rows.map((r) => {
+          const I = MENU_ICON[r.id] ?? Menu;
+          return (
+            <li key={r.id}>
+              <button type="button" className="m-mitem" onClick={() => onPick(r)}>
+                <I size={20} aria-hidden />
+                <span className="m-mitem__t">{r.label}<span className="m-mitem__d">{r.desc}</span></span>
+                <span className="m-mends">
+                  {r.urgent ? <span className="m-mtag">{`${r.urgent}\u00a0urgent`}</span> : r.hot ? <span className="m-mtag">Urgent</span> : null}
+                  {r.tally === "down" ? <span className="m-mcount m-mcount--hot">{`${r.count}\u00a0down`}</span>
+                    : r.tally === "live" ? <span className="m-mcount m-mcount--live">Live</span>
+                      : r.count ? <span className="m-mcount">{r.count}</span> : null}
+                </span>
               </button>
             </li>
-          ))}
-        </ul>
-      </div>
-    </>
+          );
+        })}
+      </ul>
+    </section>
   );
+  const col = (ids: MenuGroup["id"][]) => groups.filter((g) => ids.includes(g.id)).map(group);
   return (
-    <div className="m-menu">
-      <button ref={button} type="button" className="m-menu__open" aria-label={menuLabel(items)}
-        aria-haspopup="dialog" aria-expanded={open} aria-controls={id} onClick={() => (open ? close() : setOpen(true))}>
-        <Menu size={22} aria-hidden />
-        {elsewhere.length ? <span className={`m-menu__dot${elsewhere.some((i) => i.hot) ? " is-hot" : ""}`} aria-hidden /> : null}
-      </button>
-      {phone ? createPortal(sheet, document.body) : sheet}
+    <div className="m-drawer-wrap">
+      <div className="m-drawer__scrim" aria-hidden onClick={onClose} />
+      <div ref={panel} className="m-drawer" role="dialog" aria-labelledby={titleId}>
+        <div className="m-drawer__top">
+          <div><h2 id={titleId} tabIndex={-1}>Everything else</h2><p>Grouped like the monitors, with the same counts</p></div>
+          <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Close the menu" onClick={onClose} data-autofocus><X size={20} aria-hidden /></button>
+        </div>
+        <div className="m-drawer__cols">
+          <div>{col(["requests", "help", "people"])}</div>
+          <div>{col(["library", "services", "discord"])}</div>
+        </div>
+        {facts ? <p className="m-drawer__foot">{facts}</p> : null}
+      </div>
     </div>
+  );
+}
+
+/** The menu's button, with a dot when anything needs you (pink when something is urgent). */
+function EverythingElse({ groups, dot, hot, facts, onPick, open, setOpen }: {
+  groups: MenuGroup[]; dot: boolean; hot: boolean; facts: string; onPick: (row: MenuRow) => void;
+  open: boolean; setOpen: (open: boolean) => void;
+}) {
+  return (
+    <>
+      <button type="button" className="btn m-menu-btn" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}
+        aria-label={`Everything else${dot ? (hot ? ", something urgent" : ", things waiting") : ""}`}>
+        <Menu size={20} aria-hidden /><span className="m-menu-btn__label">Everything else</span>
+        {dot ? <span className={`m-menu-btn__dot${hot ? " is-hot" : ""}`} aria-hidden /> : null}
+      </button>
+      {open ? createPortal(
+        <MenuDrawer groups={groups} facts={facts} onClose={() => setOpen(false)}
+          onPick={(r) => { setOpen(false); afterOverlay(() => onPick(r)); }} />,
+        document.body,
+      ) : null}
+    </>
   );
 }
 
@@ -3173,18 +3159,34 @@ function ToastHost({ register }: { register: (push: (t: ToastIn) => void) => voi
 
 /* ================================================================== page */
 
+/** The clock the queue's ages are told by, a little behind at most. */
+function useNow(ms = 30_000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), ms);
+    return () => window.clearInterval(t);
+  }, [ms]);
+  return now;
+}
+
+/** "19:53", as the studio clock in the masthead says it. */
+const clock = (at: number) => new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
 export function Manage() {
   const { session } = useSession();
   const [params, setParams] = useSearchParams();
   const asked = params.get("tab") ?? "";
+  const part = params.get("part");
   // Only the tabs: a section loaded behind one (plexinvites) isn't a page of its own.
   const tab: Section = TABS.find((t) => t.id === asked)?.id ?? "requests";
   useTitle(`Manage: ${TABS.find((t) => t.id === tab)?.label ?? "Overview"}`);
   const panel = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const reduced = useReducedMotion();
-  // A section picked from ☰, landed once it's rendered: focus on its heading (now
-  // naming it), the page at the top of its content.
+  const now = useNow();
+  const [menuOpen, setMenuOpen] = useState(false);
+  // A view picked from the menu, landed once it's rendered: focus on its heading, the
+  // page at the top of its content (or at the part asked for).
   const landing = useRef<Section | null>(null);
   const land = useCallback(() => {
     landing.current = null;
@@ -3214,7 +3216,7 @@ export function Manage() {
     asks.current[s] = { n, at: Date.now() };
     const latest = () => asks.current[s]?.n === n;
     try {
-      const d = await api.admin<unknown>(s);
+      const d = await api.admin<unknown>(s as Exclude<Section, "security">);
       if (!latest()) return;
       setData((prev) => ({ ...prev, [s]: d }));
       setFailed((f) => ({ ...f, [s]: false }));
@@ -3223,10 +3225,20 @@ export function Manage() {
       if (latest()) setFailed((f) => ({ ...f, [s]: true }));
     }
   }, []);
-  const patch = useCallback(<K extends Section>(s: K, fn: (d: NonNullable<Store[K]>) => NonNullable<Store[K]>) => {
+  const patch = useCallback(<K extends keyof Store>(s: K, fn: (d: NonNullable<Store[K]>) => NonNullable<Store[K]>) => {
     const ask = asks.current[s];
     if (ask) ask.n += 1;
     setData((prev) => (prev[s] ? { ...prev, [s]: fn(prev[s] as NonNullable<Store[K]>) } : prev));
+  }, []);
+
+  // Blocked imports: on opening, and with the services at most every five minutes while
+  // the page stays open (each ask reads Sonarr's and Radarr's queues).
+  const [blocked, setBlocked] = useState<BlockedRow[] | undefined>(undefined);
+  const blockedAt = useRef(0);
+  const loadBlocked = useCallback(() => {
+    blockedAt.current = Date.now();
+    // A failure keeps the last answer; Health says when it can't ask.
+    return api.adminBlocked().then((b) => setBlocked(b.rows), () => undefined);
   }, []);
 
   const admin = !!session?.admin;
@@ -3238,7 +3250,8 @@ export function Manage() {
   useEffect(() => {
     if (!admin) return;
     SECTIONS.forEach((s) => void refresh(s));
-    // Kept current while it's open: what's on screen and what the overview and tab bar
+    void loadBlocked();
+    // Kept current while it's open: what's on screen and what the queue, monitors and menu
     // count, every minute while the page is visible, and again on coming back to it.
     // Pending Plex invites mean signing in to plex.tv: asked on opening Invites and on
     // coming back, not every minute.
@@ -3252,59 +3265,71 @@ export function Manage() {
       document.removeEventListener("visibilitychange", tick);
       window.removeEventListener("focus", tick);
     };
-  }, [admin, refresh, freshen]);
+  }, [admin, refresh, freshen, loadBlocked]);
+  useEffect(() => { if (admin && data.health && Date.now() - blockedAt.current > 300_000) void loadBlocked(); }, [admin, data.health, loadBlocked]);
   // A tab opened later shows what's true now, not what was true when the page loaded.
   useEffect(() => {
     shown.current = tab;
     if (admin) freshen(shows(tab));
   }, [admin, tab, freshen]);
+  // The part of a view the menu asked for, once it's on the page.
+  const parted = useRef("");
+  // Once everything the view shows has loaded, so nothing above it still grows.
+  const ready = shows(tab).every((s) => data[s as keyof Store] !== undefined || failed[s]);
+  useEffect(() => {
+    const want = `${tab}|${part}`;
+    if (!part || !ready || parted.current === want) return;
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(`m-part-${part}`);
+      if (!el) return;
+      parted.current = want;
+      el.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" });
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [tab, part, ready, data, reduced]);
 
   if (!admin) {
     return <div className="shell page"><p className="muted">This page is for admins.</p></div>;
   }
 
   const go = (t: Section, scroll = false) => {
-    setParams((p) => { p.set("tab", t); return p; }, { replace: true });
+    setParams((p) => { p.set("tab", t); p.delete("part"); return p; }, { replace: true });
     if (scroll) panel.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
   };
-  // From the menu: to the top of the section, with focus on its heading.
-  const pick = (t: Section) => {
-    // The same one: a frame later, after Back's own scroll restore for the menu's entry.
-    if (t === tab) { requestAnimationFrame(land); return; }
-    landing.current = t;
-    go(t);
+  // From the menu: a new page of history (Back returns), at the top of the view, or its part.
+  const pick = (row: MenuRow) => {
+    const t = row.tab as Section;
+    if (t === tab && (row.part ?? null) === part) { requestAnimationFrame(land); return; }
+    parted.current = "";
+    if (!row.part) landing.current = t;
+    setParams(() => { const p = new URLSearchParams(); p.set("tab", t); if (row.part) p.set("part", row.part); return p; });
   };
-  const w = waiting(data);
-  const counts: Partial<Record<Section, number>> = {
-    requests: w.requests || undefined, all: data.all?.counts?.stuck || undefined, tickets: w.tickets || undefined,
-    joins: w.joins, cleanup: w.leaving, health: w.down, messages: w.messages || undefined,
-    invites: freshInvite ? 1 : undefined,
-  };
-  const items = menuItems(TABS, tab, counts, failed);
-  const here = items.find((i) => i.current)!;
+  const deskData: DeskData = { ...data, blocked };
+  const desk = deriveDesk(deskData, now, { me: session?.user.name ?? null });
+  const groups = menuGroups(desk, deskData);
+  const facts = [desk.facts.party ? `Watch party: ${desk.facts.party}.` : "",
+    desk.facts.cleanup ? `${desk.facts.cleanup}.` : "", loadedAt.health ? `Checked ${clock(loadedAt.health)}, again every minute.` : ""].filter(Boolean).join(" ");
+  const label = TABS.find((t) => t.id === tab)?.label ?? "";
   const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed, freshInvite, setFreshInvite };
   // A refresh of this tab failed over what's already on screen: say so, and how old it is.
-  const stale = shows(tab).filter((s) => failed[s] && data[s]);
+  const stale = shows(tab).filter((s) => failed[s] && data[s as keyof Store]);
 
   return (
     <ManageCtx.Provider value={ctx}>
       <div className="shell page m-page">
-        {/* The sections behind ☰ beside the title; the open one names what's below. */}
         <div className="page-head">
           <div className="m-titlebar">
             <h1 className="display page-title">Manage</h1>
-            <SectionMenu items={items} onPick={pick} />
+            <EverythingElse groups={groups} dot={desk.needs.length > 0} hot={desk.urgent > 0} facts={facts} onPick={pick}
+              open={menuOpen} setOpen={setMenuOpen} />
           </div>
-          <h2 id="m-section" ref={heading} tabIndex={-1} className="m-section">
-            {here.label}{here.note ? <span className={here.hot ? "is-hot" : undefined}> · {here.note}</span> : null}
-          </h2>
-          <p className="muted">Everything the admin commands do in Discord, in one place. Discord keeps working as before.</p>
+          <h2 id="m-section" ref={heading} tabIndex={-1} className="m-section">{label}</h2>
         </div>
 
         <Overview go={(t) => go(t, true)} failed={failed} />
 
         <div role="region" id="m-panel" ref={panel} aria-labelledby="m-section">
-          {failed[tab] && !data[tab] ? (
+          {failed[tab] && !data[tab as keyof Store] ? (
             <LoadFailed text="Couldn’t load this. Plexbie may be restarting." onRetry={() => refresh(tab)} />
           ) : (
             <>
@@ -3315,7 +3340,7 @@ export function Manage() {
               animate={reduced ? { opacity: 1 } : { opacity: 1, transform: "translateY(0px)" }}
               transition={{ duration: 0.2, ease: EASE_OUT }}
             >
-              {tab === "requests" ? <RequestsTab /> : tab === "all" ? <AllRequestsTab /> : tab === "tickets" ? <TicketsTab /> : tab === "joins" ? <JoinsTab /> : tab === "invites" ? <InvitesTab /> : tab === "people" ? <PeopleTab /> : tab === "cleanup" ? <CleanupTab /> : tab === "discord" ? <DiscordTab /> : tab === "messages" ? <MessagesTab /> : <HealthTab />}
+              <FullView tab={tab} />
             </motion.div>
             </>
           )}
@@ -3324,4 +3349,12 @@ export function Manage() {
       <ToastHost register={registerToasts} />
     </ManageCtx.Provider>
   );
+}
+
+/** One section in full, as the menu (and a push alert's ?tab=) opens it. */
+function FullView({ tab }: { tab: Section }) {
+  return tab === "requests" ? <RequestsTab /> : tab === "all" ? <AllRequestsTab /> : tab === "tickets" ? <TicketsTab />
+    : tab === "joins" ? <JoinsTab /> : tab === "invites" ? <InvitesTab /> : tab === "people" ? <PeopleTab />
+      : tab === "cleanup" ? <CleanupTab /> : tab === "discord" ? <DiscordTab /> : tab === "messages" ? <MessagesTab />
+        : tab === "security" ? <SignOutOthers /> : <HealthTab />;
 }

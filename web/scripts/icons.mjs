@@ -24,6 +24,7 @@ const ICONS = {
   Pause: "Pause", Plus: "Plus", Power: "Power", Radio: "Broadcast", RefreshCw: "ArrowsClockwise", Search: "MagnifyingGlass",
   Settings: "GearSix", Share: "Export", Share2: "ShareNetwork", ShieldCheck: "ShieldCheck", SquarePlus: "PlusSquare",
   Star: "Star", Ticket: "Ticket", Trash2: "Trash", Tv: "Television", UserPlus: "UserPlus", X: "X",
+  Users: "Users", Server: "HardDrives", List: "ListBullets", Megaphone: "Megaphone",
 };
 
 const defs = new URL("../node_modules/@phosphor-icons/react/dist/defs/", import.meta.url);
