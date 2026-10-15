@@ -104,7 +104,7 @@ export function Landing() {
   const [preview, setPreview] = useState<string | null>(null);
   // The key pressed, while its sign-in is under way: the tally is live only then.
   const [busy, setBusy] = useState<KeyId | null>(null);
-  const [plexStatus, setPlexStatus] = useState<{ from: KeyId; text: string } | null>(null);
+  const [plexStatus, setPlexStatus] = useState<{ from: KeyId; text: string; error: boolean } | null>(null);
 
   const tv = useRef<HTMLDivElement>(null);
   const channels = useRef<HTMLDivElement>(null);
@@ -200,7 +200,8 @@ export function Landing() {
   });
   /** A Plex sign-in in its own window reports here; when it stops waiting, its key comes back up. */
   const plexReport = (from: KeyId) => (text: string, waiting?: boolean) => {
-    setPlexStatus(text ? { from, text } : null);
+    // Anything it says once it has stopped waiting is why it stopped: a failure.
+    setPlexStatus(text ? { from, text, error: !waiting } : null);
     if (!waiting) setBusy((b) => (b === from ? null : b));
   };
 
@@ -210,8 +211,8 @@ export function Landing() {
   };
   const discordTone = tone("discord");
   const plexTone = tone("plex");
-  const plexHere = plexStatus?.from === "plex" ? plexStatus.text : null;
-  const plexBelow = plexStatus?.from === "cta" ? plexStatus.text : null;
+  const plexHere = plexStatus?.from === "plex" ? plexStatus : null;
+  const plexBelow = plexStatus?.from === "cta" ? plexStatus : null;
 
   const discordIcon = <DiscordMark />;
   const plexIcon = <PlayCircle size={22} aria-hidden />;
@@ -296,7 +297,12 @@ export function Landing() {
                 >
                   {plexIcon} Sign in with Plex
                 </PlexSignIn>
-                <p className="air-legend" id="air-leg-plex" role="status">{plexHere ?? "Already watching on Plex"}</p>
+                {/* A failure is a new alert (so it's read out at once); progress updates the legend in place. */}
+                {plexHere?.error ? (
+                  <p className="air-legend is-error" id="air-leg-plex" role="alert" key="error">{plexHere.text}</p>
+                ) : (
+                  <p className="air-legend" id="air-leg-plex" role="status" key="status">{plexHere?.text ?? "Already watching on Plex"}</p>
+                )}
               </div>
               <div className="air-status">
                 <button
@@ -320,7 +326,12 @@ export function Landing() {
         <Steps className="air-band__steps" />
         <CtaKey lead={lead} next={next} keyProps={keyProps("cta")} onStatus={plexReport("cta")}
           icon={lead === "discord" ? discordIcon : plexIcon} />
-        {plexBelow ? <p className="air-band__status" role="status">{plexBelow}</p> : null}
+        {plexBelow ? (
+          <p className={`air-band__status${plexBelow.error ? " is-error" : ""}`} role={plexBelow.error ? "alert" : "status"}
+            key={plexBelow.error ? "error" : "status"}>
+            {plexBelow.text}
+          </p>
+        ) : null}
       </section>
     </div>
   );

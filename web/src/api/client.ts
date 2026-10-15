@@ -275,7 +275,7 @@ export function plexSignIn(e: { preventDefault(): void }, next = "/", invite = f
           window.location.assign(got.next || next);
           return;
         }
-        if (!c.ok && i > 3) throw new Error(got.error || "That sign-in didn’t work.");
+        if (!c.ok && i > 3) throw new Error(got.error || "That sign-in didn’t work. Press Sign in with Plex again.");
         // Closed without finishing. A few more checks (about 5 s) first: Plex may
         // have been approved just as it closed, or in the Plex app on a phone.
         if (win.closed && ++closedFor > 3) throw new Error("Sign-in window closed. Press Sign in with Plex again.");
@@ -283,7 +283,7 @@ export function plexSignIn(e: { preventDefault(): void }, next = "/", invite = f
       throw new Error("That took too long. Press Sign in with Plex again.");
     } catch (err) {
       if (watch.signal.aborted) return;
-      onStatus?.(err instanceof Error ? err.message : "That sign-in didn’t work.");
+      onStatus?.(err instanceof Error ? err.message : "That sign-in didn’t work. Press Sign in with Plex again.");
     }
   })();
 }

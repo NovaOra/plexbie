@@ -1136,6 +1136,11 @@ html, body { overflow-x: clip; }
   color: var(--slate-ink); font-weight: 520; text-align: center; text-wrap: balance;
 }
 .air-legend:last-child { margin-bottom: 0; }
+/* A Plex sign-in that stopped: why, and what to do, where the key's legend was. */
+.air-legend.is-error, .air-band__status.is-error {
+  padding-left: 8px; border-left: 3px solid var(--tally);
+  color: var(--ink); text-align: left;
+}
 
 .air-status {
   display: flex; align-items: center; min-height: 44px; padding: 0 12px 0 4px;
@@ -1199,7 +1204,7 @@ html, body { overflow-x: clip; }
 }
 .air-band__steps p { color: var(--slate-ink); }
 .air-band__cta { width: 100%; margin-top: 8px; }
-.air-band__status { color: var(--slate-ink); font-size: 0.86rem; }
+.air-band__status { color: var(--slate-ink); }
 @media (min-width: 720px) { .air-band__cta { max-width: 320px; } }
 /* The footer under the set reads at body size, as the set's own words do. */
 main:has(.air) + .footer p { font-size: 1rem; }
