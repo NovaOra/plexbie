@@ -73,6 +73,21 @@ REASON_HINTS = {
     "access": "You can't get into Plex, or nothing will play at all",
 }
 SUBJECTS = ("request", "title", "general")
+
+
+def reason_code(h: dict) -> str:
+    """A ticket's reason as a fixed code ("access", "blocked", "playback"…), for code to read
+    while the words stay free to change: the code it was opened with, or, for a ticket from
+    before codes were kept, the code its words belong to ("" for words no code has, such as
+    an admin's own ticket)."""
+    if h.get("reason_code"):
+        return str(h["reason_code"])
+    words = h.get("reason") or ""
+    for table in (GENERAL_REASONS, PLEXBIE_REASONS, TITLE_REASONS, REASONS):
+        for code, label in table.items():
+            if label == words:
+                return code
+    return ""
 #: Open general tickets one member may have at once.
 MAX_OPEN_GENERAL = 3
 #: How long a solved ticket stays on the member's own list.
@@ -173,7 +188,7 @@ async def create(*, request_key: Optional[str] = None, slot: Optional[int] = Non
         "subject": subject, "request": request_key, "slot": slot, "title": title, "kind": kind, "seasons": seasons,
         "who": user["user"].get("name") or "Someone",
         "discord_id": user.get("discordId"), "plex_account_id": user.get("plexAccountId"), "plex_name": user.get("plexName"),
-        "reason": reason, "note": note[:600], "status_then": status_now,
+        "reason": reason, "reason_code": reason_code({"reason": reason}), "note": note[:600], "status_then": status_now,
         "status": "open", "created_at": _now(),
     }
     if subject == "title":

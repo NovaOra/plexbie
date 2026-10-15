@@ -212,6 +212,22 @@ def test_a_ticket_on_a_title_on_plex_reaches_the_admins_with_what_plexbie_sees()
     assert [(e["kind"], e["by"]) for e in mine["thread"]] == [("member", "You")]
 
 
+def test_a_tickets_reason_has_a_fixed_code_older_tickets_included():
+    from portal import help as helpdesk
+    from portal.admin import _ticket_row
+    # Opened now: kept with the ticket, so new words for a reason never change what it is.
+    assert helpdesk.reason_code({"reason": "Whatever the words are now", "reason_code": "access"}) == "access"
+    # Opened before codes were kept: worked out from the words it was opened with.
+    assert helpdesk.reason_code({"reason": "Can't get in, or nothing plays"}) == "access"
+    assert helpdesk.reason_code({"reason": "Downloaded, but won't import"}) == "blocked"
+    assert helpdesk.reason_code({"reason": "Picture looks wrong"}) == "picture"
+    # An admin's own ticket has words no code has.
+    assert helpdesk.reason_code({"reason": "Opened by an admin"}) == ""
+    row = _ticket_row("h1", {"subject": "general", "reason": "Can't get in, or nothing plays", "who": "Jordan",
+                             "status": "open", "created_at": "2026-10-09T10:00:00+00:00"})
+    assert row["reason"] == "Can't get in, or nothing plays" and row["reasonCode"] == "access"
+
+
 def test_general_tickets_are_capped_and_only_their_member_lists_and_answers_them():
     from portal import help as helpdesk
     from portal.admin import Admin
@@ -261,6 +277,9 @@ def test_general_tickets_are_capped_and_only_their_member_lists_and_answers_them
     assert {f.name: f.value for f in general_card.fields}["Plexbie sees"].startswith("Last played Big Buck Bunny")
     # Manage says what each is about, and the search buttons only work for a title.
     assert {r["subject"] for r in tickets["rows"]} == {"general", "title"} and all(r["requestKey"] is None for r in tickets["rows"])
+    # Each carries its reason as a fixed code beside the words: what Manage reads to put
+    # "can't get in" first, whatever the words say.
+    assert {r["reasonCode"] for r in tickets["rows"]} == {"access", "episodes"}
     assert detail["subject"] == "general" and detail["request"] is None and detail["plexUrl"] is None
     assert searched[0] == {"ok": False, "message": "This ticket isn't about one film or show Plexbie can look up, so there's nothing to search for"}
     assert searched[1] == {"ok": False, "message": "Sonarr isn't set up"}
