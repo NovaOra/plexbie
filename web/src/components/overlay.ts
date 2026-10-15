@@ -89,3 +89,23 @@ export function useSheet(panel: RefObject<HTMLElement | null>, onClose: () => vo
     };
   }, [panel]);
 }
+
+/** Tab and Shift+Tab go round inside a sheet: from the last control to the first, never out to the page. */
+export function useTabWrap(panel: { current: HTMLElement | null }) {
+  useEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const all = [...el.querySelectorAll<HTMLElement>("a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])")]
+        .filter((x) => x.offsetParent !== null);
+      if (!all.length) return;
+      const first = all[0], last = all[all.length - 1];
+      const at = document.activeElement;
+      if (e.shiftKey && (at === first || !el.contains(at))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (at === last || !el.contains(at))) { e.preventDefault(); first.focus(); }
+    };
+    el.addEventListener("keydown", on);
+    return () => el.removeEventListener("keydown", on);
+  }, [panel]);
+}

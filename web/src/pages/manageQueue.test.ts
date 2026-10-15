@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BlockedRow } from "../api/types";
-import { clamp, deriveDesk, listFor, seasonsWords, span, type Desk, type DeskData } from "./manageQueue";
+import { clamp, deriveDesk, listFor, seasonsWords, span, ticketKeys, type Desk, type DeskData } from "./manageQueue";
 
 /** The sample household's Manage page: the numbers the approved design shows for it. */
 
@@ -192,6 +192,23 @@ describe("the Manage queue, from the sample household", () => {
     expect(undersea.title).toBe("Undersea Kingdom");
     expect(undersea.area).toBe("requests");
     expect(alone.monitors[0].makeup).toBe(`3${NB}waiting · 1${NB}stuck`);
+  });
+});
+
+describe("a ticket's keys", () => {
+  it("never offers two pink keys, a blocked import's included, in any state", () => {
+    const flags = [true, false];
+    for (const pane of flags) for (const open of flags) for (const blocked of flags) for (const looking of flags) for (const text of flags) {
+      const k = ticketKeys({ pane, open, blocked, looking, text });
+      expect(Object.values(k).filter((v) => v === "primary").length, JSON.stringify({ pane, open, blocked, looking, text })).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("leads a blocked ticket's pane with Look inside, and a plain one with Take it", () => {
+    expect(ticketKeys({ pane: true, open: true, blocked: true, looking: false, text: false })).toEqual({ look: "primary", take: "quiet", summary: "none", send: "quiet" });
+    expect(ticketKeys({ pane: true, open: true, blocked: true, looking: true, text: false })).toMatchObject({ look: "none", take: "quiet" });
+    expect(ticketKeys({ pane: true, open: true, blocked: false, looking: false, text: false }).take).toBe("primary");
+    expect(ticketKeys({ pane: true, open: true, blocked: false, looking: false, text: true })).toMatchObject({ take: "quiet", send: "primary" });
   });
 });
 

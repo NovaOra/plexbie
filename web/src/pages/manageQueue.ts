@@ -483,3 +483,22 @@ export function seasonsWords(s?: number[] | "all" | "latest" | null) {
   if (s.length === 1) return `Season ${s[0]}`;
   return `Seasons ${s.slice(0, -1).join(", ")} and ${s[s.length - 1]}`;
 }
+
+/** How a ticket's keys look: one pink key at most, in every state. */
+export type KeyLook = "primary" | "quiet" | "none";
+export function ticketKeys(o: {
+  /** In the detail beside the queue (or the phone's sheet of it), not a Tickets sheet. */
+  pane: boolean; open: boolean;
+  /** A blocked import is on it, and whether it's open (Look inside pressed). */
+  blocked: boolean; looking: boolean;
+  /** Something is typed in the note or reply box. */
+  text: boolean;
+}): { look: KeyLook; take: KeyLook; summary: KeyLook; send: KeyLook } {
+  const live = o.open && o.blocked && !o.looking;
+  // Typing makes Send the one pink key; at rest it's Look inside, else Take it (in the pane).
+  const look: KeyLook = o.pane && live ? (o.text ? "quiet" : "primary") : "none";
+  const summary: KeyLook = !o.pane && live ? (o.text ? "quiet" : "primary") : "none";
+  const take: KeyLook = !o.open ? "none" : o.pane && !o.blocked && !o.text ? "primary" : "quiet";
+  const send: KeyLook = o.text ? "primary" : "quiet";
+  return { look, take, summary, send };
+}

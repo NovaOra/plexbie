@@ -18,9 +18,9 @@ import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
 import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
-import { afterOverlay, useBackToClose, useSheet } from "../components/overlay";
+import { afterOverlay, useBackToClose, useSheet, useTabWrap } from "../components/overlay";
 import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
-import { AREAS, DESK_FEEDS, deriveDesk, listFor, seasonsWords, type Area, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
+import { AREAS, DESK_FEEDS, deriveDesk, listFor, seasonsWords, ticketKeys, type Area, type KeyLook, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
 
 /* ================================================================== store */
@@ -394,7 +394,7 @@ function Initial({ name, big = false }: { name: string; big?: boolean }) {
 function AllClear({ title, children }: { title: string; children: ReactNode }) {
   return (
     <motion.div
-      className="m-clear" role="status"
+      className="m-clear" role="status" tabIndex={-1}
       initial={{ opacity: 0, transform: "translateY(6px)" }} animate={{ opacity: 1, transform: "translateY(0px)" }}
       transition={{ duration: 0.3, ease: EASE_OUT }}
     >
@@ -872,7 +872,7 @@ function PeopleTab() {
                       <div className={`m-meter m-meter--${tone}`}>
                         <span className="m-meter__track"><span className="m-meter__fill" style={{ transform: `scaleX(${p.removalIn === null ? 1 : fill})` }} /></span>
                         <span className="m-meter__label">
-                          {p.neverRemove ? "Never removed for not watching" : p.removalIn === null ? "Safe while in the top three" : p.removalIn === 0 ? "Due for removal" : `${p.removalIn} days until removal · idle ${p.daysIdle}`}
+                          {p.neverRemove ? "Never removed for not watching" : p.removalIn === null ? "Safe while in the top three" : p.removalIn === 0 ? "Due for removal" : `${p.removalIn} days until removal · nothing watched in ${p.daysIdle} days`}
                         </span>
                       </div>
                     )}
@@ -1351,7 +1351,13 @@ const IMPORT_STAGES = ["Did you look at the files? 👀", "Episode numbers? Size
  * Manual Import gives (which episode or film each file is, quality, language, release
  * group, or skip it). Then a long hold to import it. Nothing goes in blind.
  */
-function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => void }) {
+function BlockedImport({ target, onDone, focusOnOpen = false }: { target: BlockedRef; onDone?: () => void;
+  /** Opened by Look inside: focus lands on its heading. */
+  focusOnOpen?: boolean;
+}) {
+  const head = useRef<HTMLHeadingElement>(null);
+  const hint = useId();
+  useEffect(() => { if (focusOnOpen) head.current?.focus(); }, [focusOnOpen]);
   const { toast, readOnly } = useManage();
   const { busy, act } = useAct();
   const [p, setP] = useState<BlockedPreview | null>(null);
@@ -1444,7 +1450,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
 
   return (
     <section className="m-blocked" aria-label={`${app} won’t import this by itself`}>
-      <p className="m-blocked__head"><CircleAlert size={16} aria-hidden /> {app} won’t import this by itself</p>
+      <h3 className="m-blocked__head" ref={head} tabIndex={-1}><CircleAlert size={16} aria-hidden /> {app} won’t import this by itself</h3>
       {/* Until the look inside after a failed import is back (or if it fails), say what became of the import here. */}
       {notDone && !p ? notDoneLine : null}
       {failed ? <LoadFailed text={failed} onRetry={() => { setFailed(""); setLooks((n) => n + 1); }} />
@@ -1468,7 +1474,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
           ) : null}
 
           <ul className="m-blocked__files" aria-label="What’s in it">
-            {files.map(({ f, c, skip, episodeIds, placed }) => (
+            {files.map(({ f, c, skip, episodeIds, placed }, n) => (
               <li key={f.name} className={skip ? "is-other" : !placed || f.notes.length ? "is-odd" : undefined}>
                 <span className="m-blocked__name">{f.name}</span>
                 <span className="muted">{bytes(f.size)}</span>
@@ -1482,7 +1488,8 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
                         {(episodeIds.length ? episodeIds : [0]).map((id, i) => (
                           <label key={i} className="m-blocked__field">
                             <span>{i ? "and" : "Episode"}</span>
-                            <select className="m-select" value={id || ""} disabled={epsWaiting} onChange={(e) => {
+                            <select className="m-select" value={id || ""} disabled={epsWaiting}
+                              aria-invalid={(!placed && !id) || undefined} aria-describedby={!placed && !id ? `${hint}-${n}` : undefined} onChange={(e) => {
                               const next = [...episodeIds]; const v = Number(e.target.value);
                               if (v) next[i] = v; else next.splice(i, 1);
                               pick(f.name, { episodeIds: next.filter(Boolean) });
@@ -1492,6 +1499,8 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
                             </select>
                           </label>
                         ))}
+                        {/* What's missing, said under the file it's about too, not only above Hold to import. */}
+                        {!placed && !epsWaiting ? <p className="m-blocked__nope" id={`${hint}-${n}`}>Pick which episode this is, or skip it.</p> : null}
                         {episodeIds.length ? (
                           <button type="button" className="btn btn--quiet m-btn m-blocked__more" disabled={epsWaiting} onClick={() => pick(f.name, { episodeIds: [...episodeIds, 0] })}>
                             + Another episode (a double)
@@ -1509,7 +1518,7 @@ function BlockedImport({ target, onDone }: { target: BlockedRef; onDone?: () => 
                       <ArrFinder app="radarr" onPick={(m) => { setFinding(null); pick(f.name, { movieId: m.id, movieLabel: `${m.title}${m.year ? ` (${m.year})` : ""}` } as Partial<BlockedChoice>); }} />
                     ) : null}
                     <details className="m-blocked__details">
-                      <summary>Quality, language, release group</summary>
+                      <summary>Quality, language, release group <ChevronDown size={18} aria-hidden className="m-blocked__chev" /></summary>
                       <label className="m-blocked__field"><span>Quality</span>
                         <select className="m-select" value={c.qualityId ?? f.qualityId ?? ""} onChange={(e) => pick(f.name, { qualityId: Number(e.target.value) })}>
                           {p.options.qualities.map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}
@@ -2152,7 +2161,7 @@ function WhoBroughtWhom() {
               <span className={`m-pill${j.via === "plexbie" ? " m-pill--safe" : ""}`}>{j.via === "plexbie" ? "Link" : "Discord"}</span>
               <span className="m-log__main">{j.who} <span className="muted">← {j.by}</span></span>
               <span className="muted m-log__meta">
-                {j.via === "plexbie" ? `invite “${j.code}”` : `code ${j.code}`}{j.role ? ` · got ${j.role}` : ""}{j.at ? ` · ${since(j.at)}` : ""}
+                {j.via === "plexbie" ? `invite “${j.code}”` : `code ${j.code}`}{j.role ? ` · got the ${j.role} role` : ""}{j.at ? ` · ${since(j.at)}` : ""}
               </span>
             </li>
           ))}
@@ -2701,12 +2710,13 @@ function ticketState(t: Pick<AdminTicketRow, "status" | "waiting" | "who">) {
 
 /** What a ticket is about, as its eyebrow puts it: its request's number, "Title" or "General". */
 function ticketKind(t: Pick<AdminTicketRow, "subject" | "slot">) {
-  return t.subject === "general" ? "General" : t.subject === "title" ? "Title" : `No. ${formatSlot(t.slot)}`;
+  return t.subject === "general" ? "General" : t.subject === "title" ? "Film or show" : `No. ${formatSlot(t.slot)}`;
 }
 
 /** Its heading: the film or show (a title ticket's with its year), or "General ticket". */
-function ticketTitle(t: Pick<AdminTicketRow, "subject" | "title" | "year">) {
-  if (t.subject === "general" || !t.title) return "General ticket";
+function ticketTitle(t: Pick<AdminTicketRow, "subject" | "title" | "year" | "reason">) {
+  // A general ticket is called by what it's about: its first line, as the member picked it.
+  if (t.subject === "general" || !t.title) return t.reason || "General ticket";
   return t.subject === "title" && t.year ? `${t.title} (${t.year})` : t.title;
 }
 
@@ -2826,11 +2836,13 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead }: {
   // A title ticket is searched for by its own TMDB id; a general one has nothing to search for.
   const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
   const mine = t.owner && t.owner === session?.user.name;
-  // Leading the pane, Take it is the one pink key; beside Look inside (or in a sheet) it's a quiet pill.
-  const lookLeads = !!(lead && blockedRow && !looking && t.blocked && t.status === "open");
+  // One pink key at most, in every state (ticketKeys): Look inside, else Take it, else Send once something's typed.
+  const keys = ticketKeys({ pane: !!lead, open: t.status === "open", blocked: !!t.blocked, looking: looking || (!!lead && !blockedRow), text: !!text.trim() });
+  const lookLeads = keys.look !== "none";
+  const look = (k: KeyLook) => (k === "primary" ? " btn--primary" : k === "quiet" ? " btn--quiet" : "");
   const take = (
-    <button type="button" className={`btn${lead && !lookLeads ? " btn--primary" : " btn--quiet"} m-btn m-ticket__take`} disabled={readOnly || busy.size > 0}
-      onClick={() => void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours")}>
+    <button type="button" className={`btn${look(keys.take)} m-btn m-ticket__take`} disabled={readOnly} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("take") || undefined}
+      onClick={() => { if (busy.size === 0) void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours"); }}>
       {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
     </button>
   );
@@ -2841,12 +2853,12 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead }: {
   );
   const blockedPart = t.blocked && t.status === "open" ? (
     blockedRow && !looking
-      ? <BlockedSummary row={blockedRow} onLook={() => setLooking(true)} keyed={!lead} />
-      : <BlockedImport target={t.blocked} onDone={after} />
+      ? <BlockedSummary row={blockedRow} onLook={() => setLooking(true)} keyed={!lead} primary={keys.summary === "primary"} />
+      : <BlockedImport target={t.blocked} onDone={after} focusOnOpen={looking || !!lead} />
   ) : null;
   // In the pane a blocked import's Look inside is the main key, and Take it joins the chips.
   const lookKey = lookLeads
-    ? <button type="button" className="btn btn--primary m-btn" onClick={() => setLooking(true)}><Search size={18} aria-hidden /> Look inside</button> : null;
+    ? <button type="button" className={`btn${look(keys.look)} m-btn`} onClick={() => setLooking(true)}><Search size={18} aria-hidden /> Look inside</button> : null;
   return (
     <div className="m-reqsheet__body">
       {lead ? <div className="m-pane__acts">{lookKey ?? (t.status === "open" ? take : reopen)}{lead}</div> : null}
@@ -2922,7 +2934,8 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead }: {
               onClick={() => void run("status", () => api.ticketStatus(id, t.waiting ? "open" : "waiting"), t.waiting ? "Back with the admins" : `Waiting on ${t.who}`)}>
               {t.waiting ? "Stop waiting" : `Wait on ${t.who}`}
             </button>
-            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("send")} onClick={() => void send()}>
+            <button type="button" className={`btn${look(keys.send)} m-btn`} disabled={readOnly} aria-disabled={busy.has("send") || undefined} aria-busy={busy.has("send") || undefined}
+              onClick={() => { if (!busy.has("send")) void send(); }}>
               {busy.has("send") ? "Sending…" : kind === "note" ? "Add note" : "Send reply"}
             </button>
           </div>
@@ -2964,7 +2977,9 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 /** A blocked import before looking inside: what Sonarr or Radarr said, and the way in. */
-function BlockedSummary({ row, onLook, keyed = true }: { row: BlockedRow; onLook: () => void;
+function BlockedSummary({ row, onLook, keyed = true, primary = true }: { row: BlockedRow; onLook: () => void;
+  /** Its Look inside is the view's one pink key (quiet while something's typed below). */
+  primary?: boolean;
   /** Its own Look inside key (not when the pane's main key is Look inside already). */
   keyed?: boolean;
 }) {
@@ -2977,7 +2992,7 @@ function BlockedSummary({ row, onLook, keyed = true }: { row: BlockedRow; onLook
       {row.messages.map((m) => <p key={m} className="m-blocked__msg">{m}</p>)}
       {keyed ? (
         <div className="m-blocked__acts">
-          <button type="button" className="btn btn--primary m-btn" onClick={onLook}><Search size={18} aria-hidden /> Look inside</button>
+          <button type="button" className={`btn${primary ? " btn--primary" : " btn--quiet"} m-btn`} onClick={onLook}><Search size={18} aria-hidden /> Look inside</button>
           <span className="muted">See the files, pick episodes, then Hold to import</span>
         </div>
       ) : <p className="muted m-blocked__how">Look inside: see the files, pick episodes, then Hold to import.</p>}
@@ -3337,43 +3352,61 @@ function RowActions({ item, a, open, look, reply, selected = false }: {
 }) {
   const { session } = useSession();
   const full = useOpenFull();
-  const off = a.readOnly || a.busy(item.key);
-  const key = (label: ReactNode, onClick: () => void, quiet = false, disabled = off) => (
-    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn m-rowbtn`} disabled={disabled}
-      onClick={(e) => { e.stopPropagation(); onClick(); }}>{label}</button>
+  const busy = a.busy(item.key);
+  // A busy key stays focusable (aria-disabled, clicks ignored), so the keyboard doesn't lose its place.
+  // `guarded` keys act on the row; Open and the like never are.
+  const key = (label: ReactNode, onClick: () => unknown, quiet = false, guarded = true) => (
+    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn m-rowbtn`} disabled={guarded && a.readOnly}
+      aria-disabled={(guarded && busy) || undefined} aria-busy={(guarded && busy) || undefined}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (guarded && busy) return;
+        const row = e.currentTarget.closest<HTMLElement>(".m-row");
+        void Promise.resolve(onClick()).then(() => keepFocusIn(row));
+      }}>{label}</button>
   );
   const openKey = key("Open", open, true, false);
-  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={off} onConfirm={run} />;
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} onConfirm={() => { if (!busy) run(); }} />;
   const src = item.src;
   switch (src.type) {
     case "ticket": {
       const t = src.t;
-      if (item.group === "done") return <>{key("Open", open, false, false)}{key("Reopen", () => void a.reopen(t), true)}</>;
-      if (item.group === "waiting") return <>{key("Open", open, false, false)}{key("Back to open", () => void a.reopen(t), true)}</>;
+      if (item.group === "done") return <>{key("Open", open, false, false)}{key("Reopen", () => a.reopen(t), true)}</>;
+      if (item.group === "waiting") return <>{key("Open", open, false, false)}{key("Stop waiting", () => a.reopen(t), true)}</>;
       const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
-      if (src.blocked) return <>{key("Look inside", look, selected, false)}{key("Search again", () => void a.searchTicket(t), true)}</>;
-      if (t.owner && t.owner === session?.user.name) return <>{video ? key("Search again", () => void a.searchTicket(t)) : null}{openKey}</>;
-      return <>{key(t.owner ? "Take it over" : "Take it", () => void a.take(t, false))}{openKey}</>;
+      if (src.blocked) return <>{key("Look inside", look, selected, false)}<span className="m-rowbtn--wide">{key("Search again", () => a.searchTicket(t), true)}</span></>;
+      if (t.owner && t.owner === session?.user.name) return <>{video ? key("Search again", () => a.searchTicket(t)) : null}{openKey}</>;
+      return <>{key(t.owner ? "Take it over" : "Take it", () => a.take(t, false))}{openKey}</>;
     }
     case "import": return <>{key("Look inside", look, false, false)}{key("Open", () => full("health", { part: "blocked" }), true, false)}</>;
-    case "stuck": return <>{["tv", "movie"].includes(src.r.title.kind) ? key("Search again", () => void a.searchRequest(src.r)) : null}{openKey}</>;
+    case "stuck": return <>{["tv", "movie"].includes(src.r.title.kind) ? key("Search again", () => a.searchRequest(src.r)) : null}{openKey}</>;
     case "request":
       if (item.group === "done") return <>{key("Open", open, false, false)}{key("All requests", () => full("all"), true, false)}</>;
-      return <>{key(<><Check size={18} aria-hidden /> Approve</>, () => void a.approve(src.r, true))}{hold("Decline", () => void a.approve(src.r, false))}</>;
+      return <>{key(<><Check size={18} aria-hidden /> Approve</>, () => a.approve(src.r, true))}{hold("Decline", () => a.approve(src.r, false))}</>;
     case "chat":
-      if (item.group === "done") return <>{key("Open", open, false, false)}{key("Mark unread", () => void a.chatDone(src.p, false), true)}</>;
+      if (item.group === "done") return <>{key("Open", open, false, false)}{key("Mark unread", () => a.chatDone(src.p, false), true)}</>;
       return <>{key("Reply", reply, false, false)}{openKey}</>;
     case "join":
       if (!src.j.messageId) return openKey;
-      return <>{key(<><Check size={18} aria-hidden /> Invite to Plex</>, () => void a.invite(src.j, true))}{hold("Deny", () => void a.invite(src.j, false))}</>;
-    case "person": return <>{src.chat ? key("Reply", reply, false, false) : key("Open", open, false, false)}{key("Never remove", () => void a.keepPerson(src.p), true)}</>;
-    case "leaving": return <>{key("Keep", () => void a.keepTitle(src.c))}{openKey}</>;
-    case "link": return <>{key("Open", () => full("invites", { part: "links" }), false, false)}{hold("Cancel", () => void a.cancelLink(src.i))}</>;
+      return <>{key(<><Check size={18} aria-hidden /> Invite to Plex</>, () => a.invite(src.j, true))}{hold("Deny", () => a.invite(src.j, false))}</>;
+    case "person": return <>{src.chat ? key("Reply", reply, false, false) : key("Open", open, false, false)}{key("Never remove", () => a.keepPerson(src.p), true)}</>;
+    case "leaving": return <>{key("Keep", () => a.keepTitle(src.c))}{openKey}</>;
+    case "link": return <>{key("Open", () => full("invites", { part: "links" }), false, false)}{hold("Cancel", () => a.cancelLink(src.i))}</>;
     case "plexinvite":
       if (!src.i.email) return openKey;
-      return <>{key("Change email", () => full("invites", { part: "plex" }), false, false)}{hold("Cancel", () => void a.cancelPlex(src.i))}</>;
-    case "down": return <>{key("Check again", () => void a.checkAgain())}{openKey}</>;
+      return <>{key("Change email", () => full("invites", { part: "plex" }), false, false)}{hold("Cancel", () => a.cancelPlex(src.i))}</>;
+    case "down": return <>{key("Check again", () => a.checkAgain())}{openKey}</>;
   }
+}
+
+/** After a row's key did its work: if that key went (Take it became Search again) but the row
+ *  stayed, focus moves to the row's first key, or the row itself, not off to the page. */
+function keepFocusIn(row: HTMLElement | null) {
+  requestAnimationFrame(() => {
+    const at = document.activeElement;
+    if (!row?.isConnected || (at && at !== document.body && at.isConnected)) return;
+    (row.querySelector<HTMLElement>(".m-row__acts button, .m-pane__acts button") ?? row.querySelector<HTMLElement>(".m-row__main, .m-hero__title"))?.focus({ preventScroll: true });
+  });
 }
 
 /** One queue row: its picture, three lines, and two keys. */
@@ -3415,15 +3448,22 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
 }) {
   const full = useOpenFull();
   const src = item.src;
-  const off = a.readOnly || a.busy(item.key);
+  const busy = a.busy(item.key);
   const facts = (rows: [string, ReactNode][]) => (
     <dl className="m-facts">{rows.filter(([, v]) => v !== null && v !== "").map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>
   );
   const acts = (main: ReactNode, pill: ReactNode) => <div className="m-pane__acts">{main}{pill}</div>;
-  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={off} onConfirm={run} />;
-  // The pane's main key is its one pink key, above the fold.
-  const key = (label: ReactNode, onClick: () => void, disabled = off) =>
-    <button type="button" className="btn btn--primary m-btn" disabled={disabled} onClick={onClick}>{label}</button>;
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} onConfirm={() => { if (!busy) run(); }} />;
+  // The pane's main key is its one pink key, above the fold. Busy, it stays focusable (aria-disabled);
+  // if it goes while the item stays, focus moves to the pane's new first key.
+  const key = (label: ReactNode, onClick: () => unknown, guarded = true) =>
+    <button type="button" className="btn btn--primary m-btn" disabled={guarded && a.readOnly}
+      aria-disabled={(guarded && busy) || undefined} aria-busy={(guarded && busy) || undefined}
+      onClick={(e) => {
+        if (guarded && busy) return;
+        const pane = e.currentTarget.closest<HTMLElement>(".m-pane");
+        void Promise.resolve(onClick()).then(() => keepFocusIn(pane));
+      }}>{label}</button>;
   const pill = (label: ReactNode, onClick: () => void) =>
     <button type="button" className="btn btn--quiet m-btn" onClick={onClick}>{label}</button>;
   switch (src.type) {
@@ -3434,7 +3474,7 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
       return (
         <>
           {acts(key(<><Search size={18} aria-hidden /> Look inside</>, onLook, false), pill("All blocked imports", () => full("health", { part: "blocked" })))}
-          {look ? <BlockedImport target={src.b} /> : <BlockedSummary row={src.b} onLook={onLook} />}
+          {look ? <BlockedImport target={src.b} focusOnOpen /> : <BlockedSummary row={src.b} onLook={onLook} keyed={false} />}
         </>
       );
     case "request":
@@ -3486,7 +3526,7 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
           {acts(key(<><ShieldCheck size={16} aria-hidden /> Never remove</>, () => void a.keepPerson(p)), pill("People", () => full("people")))}
           <div className="m-meter m-meter--hot">
             <span className="m-meter__track"><span className="m-meter__fill" style={{ transform: `scaleX(${total ? Math.min(1, p.daysIdle / total) : 1})` }} /></span>
-            <span className="m-meter__label">{p.removalIn ? `${p.removalIn} days until removal · idle ${p.daysIdle}` : "Due for removal"}</span>
+            <span className="m-meter__label">{p.removalIn ? `${p.removalIn} days until removal · nothing watched in ${p.daysIdle} days` : "Due for removal"}</span>
           </div>
           {facts([["Last watched", p.lastWatched ? since(p.lastWatched) : "No watch recorded"], ["Discord", p.discordName], ["Warned", p.warned ? "Yes" : null]])}
           {src.chat ? <Conversation key={src.chat.id} person={src.chat} onBack={() => undefined} inPane reply={reply} /> : null}
@@ -3602,26 +3642,6 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
       )}
     </aside>
   );
-}
-
-/** Tab and Shift+Tab go round inside a sheet: from the last control to the first, never out to the page. */
-function useTabWrap(panel: { current: HTMLElement | null }) {
-  useEffect(() => {
-    const el = panel.current;
-    if (!el) return;
-    const on = (e: KeyboardEvent) => {
-      if (e.key !== "Tab") return;
-      const all = [...el.querySelectorAll<HTMLElement>("a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])")]
-        .filter((x) => x.offsetParent !== null);
-      if (!all.length) return;
-      const first = all[0], last = all[all.length - 1];
-      const at = document.activeElement;
-      if (e.shiftKey && (at === first || !el.contains(at))) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && (at === last || !el.contains(at))) { e.preventDefault(); first.focus(); }
-    };
-    el.addEventListener("keydown", on);
-    return () => el.removeEventListener("keydown", on);
-  }, [panel]);
 }
 
 /** The phone's detail: a full-height sheet over the queue (Back, Escape or × closes it). */
@@ -3755,7 +3775,7 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
       if (k.pane && wide && rows.length) { setFocus((n) => n + 1); return; }
       const next = rows[Math.min(k.at, rows.length - 1)];
       if (next) next.focus({ preventScroll: true });
-      else heading.current?.focus({ preventScroll: true });
+      else (document.querySelector<HTMLElement>(".m-queue .m-clear") ?? heading.current)?.focus({ preventScroll: true });
     }, 0);
     return () => window.clearTimeout(t);
   }, [keys2, wide]);
@@ -3820,7 +3840,7 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
 
       <div className="m-panes">
         <section ref={column} className="m-queue-col" aria-labelledby="m-queue-h">
-          <h2 id="m-queue-h" className="visually-hidden" ref={heading} tabIndex={-1}>{VIEW_LABEL[view]}</h2>
+          <h2 id="m-queue-h" className="visually-hidden" ref={heading} tabIndex={-1}>{view === "needs" ? "Needs you" : "The queue"}</h2>
           <div className="m-seg3" role="group" aria-label="Show">
             {(["needs", "waiting", "done"] as DeskView[]).map((v) => (
               <button key={v} type="button" aria-pressed={view === v} onClick={() => showView(v)}>

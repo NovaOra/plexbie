@@ -1,7 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import { motion, useDragControls, useReducedMotion } from "motion/react";
 import { EASE_OUT } from "./motion";
-import { useSheet } from "./overlay";
+import { useSheet, useTabWrap } from "./overlay";
 
 /**
  * A sheet that rises from the bottom over a dimmed page. Tap the scrim, press
@@ -15,6 +15,7 @@ export function BottomSheet({ titleId, title, onClose, className, children }: {
   const panel = useRef<HTMLDivElement>(null);
   const drag = useDragControls();
   useSheet(panel, onClose);
+  useTabWrap(panel);
   return (
     // Clicks stop here: a sheet opened from inside a link card mustn't follow the link.
     // No aria-modal: useSheet already makes the page inert, and aria-modal would also
