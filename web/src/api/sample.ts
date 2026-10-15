@@ -583,6 +583,15 @@ type Entry = import("./types").TicketEntry;
 type Help = Omit<import("./types").AdminHelp, "request" | "slot" | "title"> & {
   request: string | null; slot: number | null; title: string | null;
   opened_by?: string; subject?: import("./types").TicketSubject; tmdb?: string | null; year?: string | null;
+  /** The reason's fixed code, as the bot keeps it beside the words. */
+  reason_code?: string;
+};
+/** Each reason's code by its words, as the bot works it out for a ticket from before codes were kept. */
+const REASON_CODES: Record<string, string> = {
+  "Stuck downloading": "stuck", "Can't be found": "notfound", "Downloaded, but not on Plex": "notonplex",
+  "Wrong version or quality": "quality", "Wrong or missing episodes": "episodes", "Won't play on Plex": "playback",
+  "Downloaded, but won't import": "blocked", "Picture looks wrong": "picture", "Can't get in, or nothing plays": "access",
+  "Something else": "other",
 };
 const threads: Record<string, Entry[]> = {};
 const owners: Record<string, string | null> = { h1: "Sam Rivera" };
@@ -664,7 +673,7 @@ function ticketRow(h: Help): import("./types").AdminTicketRow {
   const last = t[t.length - 1];
   return { id: h.id, subject: h.subject ?? "request", requestKey: h.request, slot: h.slot ?? 0, title: h.title ?? "",
     tmdb: h.tmdb ?? null, year: h.year ?? null, kind: h.kind, seasons: h.seasons, who: h.who,
-    reason: h.reason, status: h.status, waiting: !!waits[h.id] && h.status === "open", owner: owners[h.id] ?? null,
+    reason: h.reason, reasonCode: h.reason_code ?? REASON_CODES[h.reason] ?? "", status: h.status, waiting: !!waits[h.id] && h.status === "open", owner: owners[h.id] ?? null,
     openedBy: h.opened_by ?? null, offer: h.offer ?? null, createdAt: h.created_at, updatedAt: last?.at ?? h.created_at,
     last: last ? { by: last.by, kind: last.kind, text: last.text.slice(0, 160) } : null, count: t.length };
 }
@@ -794,7 +803,7 @@ export const openTicket = (body: { kind?: "movie" | "tv"; id?: string; reason: s
   }
   const h: Help = { id: `t${Date.now()}`, request: null, slot: null, subject: t ? "title" : "general", title: t?.title ?? null,
     tmdb: t?.id ?? null, year: t?.year ?? null, kind: t ? (body.kind ?? "movie") : "", seasons: null, who: ME,
-    reason: TICKET_WORDS[body.reason] ?? "Something else", note: body.note,
+    reason: TICKET_WORDS[body.reason] ?? "Something else", reason_code: TICKET_WORDS[body.reason] ? body.reason : "other", note: body.note,
     status_then: t ? "File: 1080p WEB-DL, SDR, 2.1 GB" : "", status: "open", created_at: new Date().toISOString() };
   helps.unshift(h);
   return wait({ ok: true, message: "Sent. An admin will take a look and get back to you.", help: { id: h.id, reason: h.reason }, ticket: myTicket(h) }, 600);

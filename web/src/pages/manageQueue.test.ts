@@ -48,7 +48,7 @@ describe("the Manage queue, from the sample household", () => {
     expect(titles("urgent")).toEqual(["Radar Men from the Moon", "Jordan Lee can’t get in", "Discord Public Bot"]);
     const radar = desk.needs[0];
     expect(radar.eyebrow).toBe("Ticket · import blocked");
-    expect(radar.sub).toBe("S1");
+    expect(radar.sub).toBe("Season 1");
     expect(radar.meta).toBe("Won’t import · Jordan Lee’s request");
   });
 
@@ -122,6 +122,40 @@ describe("the Manage queue, from the sample household", () => {
     const early = deriveDesk({ requests: data.requests }, now);
     expect(early.monitors.map((m) => m.known)).toEqual([false, false, false, false, false]);
     expect(deriveDesk({ requests: data.requests, all: data.all, tickets: data.tickets }, now).monitors[0]).toMatchObject({ known: true, count: 3 });
+  });
+
+  it("is loading (never all clear) until every feed has answered or failed", () => {
+    expect(deriveDesk({}, now)).toMatchObject({ loading: true, missing: [], needs: [] });
+    const { health: _health, ...rest } = data;
+    expect(deriveDesk(rest, now).loading).toBe(true);
+    expect(desk.loading).toBe(false);
+    expect(desk.missing).toEqual([]);
+  });
+
+  it("says which feeds couldn't load, and marks their monitors failed, not empty", () => {
+    const { health: _health, tickets: _tickets, ...rest } = data;
+    const half = deriveDesk(rest, now, { failed: { health: true, tickets: true } });
+    expect(half.loading).toBe(false);
+    expect(half.missing).toEqual(["tickets", "health"]);
+    expect(half.monitors.filter((m) => m.failed).map((m) => m.area)).toEqual(["requests", "help", "services"]);
+    // A refresh that failed over data already here is old data, not missing.
+    expect(deriveDesk(data, now, { failed: { health: true } }).missing).toEqual([]);
+  });
+
+  it("puts a ticket first by its reason code, whatever its words", () => {
+    const rows = data.tickets!.rows.map((t) => (t.id === "g2" ? { ...t, reason: "Some new wording" } : t));
+    const worded = deriveDesk({ ...data, tickets: { ...data.tickets!, rows } }, now);
+    expect(worded.needs.find((i) => i.key === "ticket:g2")!.group).toBe("urgent");
+    const coded = data.tickets!.rows.map((t) => (t.id === "g2" ? { ...t, reasonCode: "other" } : t));
+    const plain = deriveDesk({ ...data, tickets: { ...data.tickets!, rows: coded } }, now);
+    expect(plain.needs.find((i) => i.key === "ticket:g2")!.group).toBe("today");
+    expect(plain.urgent).toBe(2);
+  });
+
+  it("says the gist of a long health check on its row, and seasons in words", () => {
+    expect(desk.needs.find((i) => i.kind === "down")!.meta).toBe("Anyone with its ID can add it");
+    const alone = deriveDesk({ ...data, tickets: { ...data.tickets!, rows: data.tickets!.rows.filter((t) => t.id !== "h4") } }, now);
+    expect(alone.needs.find((i) => i.kind === "import")!.sub).toBe("Season 1, 3 episodes");
   });
 
   it("brings a stuck request with no open ticket in as its own row", () => {

@@ -72,12 +72,18 @@ export interface Monitor {
   area: Area; label: string; count: number; hot: boolean;
   /** The sections behind it have loaded. */
   known: boolean;
+  /** One of them couldn't be loaded at all: its count is unknown, not 0. */
+  failed: boolean;
   first?: Item;
   makeup: string;
 }
 
 export interface Desk {
   needs: Item[]; waiting: Item[]; done: Item[];
+  /** Something the queue is made from hasn't answered yet: no "all clear" until it has. */
+  loading: boolean;
+  /** What couldn't be loaded at all (never loaded, last ask failed): the queue may be missing those rows. */
+  missing: Feed[];
   urgent: number;
   monitors: Monitor[];
   /** One line each under the monitors. */
@@ -125,11 +131,23 @@ export function whatLabel(kind: string, seasons?: number[] | "all" | "latest" | 
   }
   return KIND[kind] ?? kind;
 }
-const seasonShort = (s?: number[] | "all" | null) => (Array.isArray(s) && s.length ? s.map((n) => `S${n}`).join(", ") : undefined);
+/** "Season 1", "Seasons 1, 2", "All seasons": a ticket's seasons, written out. */
+const seasonsOf = (s?: number[] | "all" | null) =>
+  s === "all" ? "All seasons" : Array.isArray(s) && s.length ? whatLabel("tv", s) : undefined;
+/** "S01E01", "S01E02", "S01E03" -> "Season 1, 3 episodes". */
+function episodesOf(codes: string[]) {
+  const seasons = [...new Set(codes.map((c) => Number(/^S(\d+)/i.exec(c)?.[1])).filter((n) => !Number.isNaN(n)))];
+  if (!seasons.length) return undefined;
+  const which = seasons.length === 1 ? `Season ${seasons[0]}` : `Seasons ${seasons.join(", ")}`;
+  return `${which}, ${codes.length === 1 ? "1 episode" : `${codes.length} episodes`}`;
+}
+/** A health check's own short line where its detail runs long: the queue row says the gist. */
+const CHECK_GIST: Record<string, string> = { "Discord Public Bot": "Anyone with its ID can add it" };
 const slot = (n: number) => String(n).padStart(4, "0");
 const at = (iso?: string | null) => (iso ? new Date(iso).getTime() : NaN);
-/** A member who can't get in at all is the one ticket that can't wait. */
-const lockedOut = (reason: string) => /can.t get in/i.test(reason);
+/** A member who can't get in at all is the one ticket that can't wait: by the reason's fixed
+ *  code from the bot ("access"), never its words, which may change. */
+const lockedOut = (t: AdminTicketRow) => t.reasonCode === "access";
 /** "riley.plex (Plex sign-in)" is riley.plex. */
 const joinName = (j: AdminJoin) => j.name.replace(/\s*\(Plex sign-in\)$/i, "");
 const nameOf = (p: AdminPerson) => p.displayName || p.plexName;
@@ -162,10 +180,10 @@ function ticketItem(t: AdminTicketRow, d: DeskData, now: number, me: string | nu
   const opened = now - at(t.createdAt);
   const stuckAge = stuck ? stuckSince(stuck, now, t) : 0;
   const general = t.subject === "general" || !t.title;
-  const locked = lockedOut(t.reason);
+  const locked = lockedOut(t);
   const what = blocked ? "import blocked" : locked ? "can’t get in" : stuck ? `request stuck ${span(stuckAge)}` : "";
   const title = general ? (locked ? `${t.who} can’t get in` : t.who) : t.title;
-  const sub = blocked ? seasonShort(t.seasons) : locked && general ? undefined : t.reason;
+  const sub = blocked ? seasonsOf(t.seasons) : locked && general ? undefined : t.reason;
   const art = general ? undefined : { poster: request?.title.poster ?? null, title: t.title, kind: t.kind || "movie" };
   return {
     key: `ticket:${t.id}`, kind: "ticket", area: "help", group,
@@ -212,14 +230,14 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
   for (const t of openTickets) {
     if (t.waiting) continue;
     const blocked = d.blocked?.some((b) => b.ticket === t.id);
-    out.push(ticketItem(t, d, now, me, blocked || lockedOut(t.reason) ? "urgent" : "today"));
+    out.push(ticketItem(t, d, now, me, blocked || lockedOut(t) ? "urgent" : "today"));
   }
   for (const b of d.blocked ?? []) {
     if (b.ticket && openTickets.some((t) => t.id === b.ticket)) continue;
     const app = b.app === "sonarr" ? "Sonarr" : "Radarr";
     out.push({
       key: `import:${b.app}:${b.downloadId}`, kind: "import", area: "help", group: "urgent",
-      eyebrow: `${app} · import blocked`, title: b.title, sub: b.episodes.length ? b.episodes.join(", ") : b.year ? String(b.year) : undefined,
+      eyebrow: `${app} · import blocked`, title: b.title, sub: episodesOf(b.episodes) ?? (b.year ? String(b.year) : undefined),
       meta: clamp(b.messages[0] ?? `${app} won’t import it by itself`, 42), top: "Import blocked",
       art: { poster: null, title: b.title, kind: b.app === "sonarr" ? "tv" : "movie" }, wait: 0, src: { type: "import", b },
     });
@@ -311,7 +329,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
     const said = (h.detail ?? "").split(/(?<=[.!?])\s/)[0];
     out.push({
       key: `down:${h.name}`, kind: "down", area: "services", group: "urgent",
-      eyebrow: "Services · check failing", title: h.name, meta: said ? clamp(said, 42) : "Not answering",
+      eyebrow: "Services · check failing", title: h.name, meta: CHECK_GIST[h.name] ?? (said ? clamp(said, 42) : "Not answering"),
       top: "Check failing", wait: 0, src: { type: "down", h },
     });
   }
@@ -374,9 +392,12 @@ const MAKEUP: Record<Area, [Kind[], (n: number) => string][]> = {
   library: [],
   services: [],
 };
+/** What the queue is made from (the watch party under the monitors waits for nobody). */
+export type Feed = Exclude<keyof DeskData, "discord">;
+export const DESK_FEEDS: Feed[] = ["requests", "all", "tickets", "joins", "invites", "plexinvites", "people", "cleanup", "messages", "health", "blocked"];
 /** Which sections each monitor counts from: until they've loaded it shows a dash, not a false 0. */
-const FEEDS: Record<Area, (keyof DeskData)[]> = {
-  requests: ["requests", "all", "tickets"], help: ["tickets", "messages"], people: ["joins", "people", "invites", "plexinvites"],
+const FEEDS: Record<Area, Feed[]> = {
+  requests: ["requests", "all", "tickets"], help: ["tickets", "messages", "blocked"], people: ["joins", "people", "invites", "plexinvites"],
   library: ["cleanup"], services: ["health"],
 };
 
@@ -385,8 +406,11 @@ const FEEDS: Record<Area, (keyof DeskData)[]> = {
  * `me` is the admin looking (their tickets say "Yours"); `hidden` rows are left out of
  * everything, counts included (a decision waiting out its Undo).
  */
-export function deriveDesk(d: DeskData, now: number, opts: { me?: string | null; hidden?: ReadonlySet<string> } = {}): Desk {
+export function deriveDesk(d: DeskData, now: number,
+  opts: { me?: string | null; hidden?: ReadonlySet<string>; failed?: Partial<Record<Feed, boolean>> } = {}): Desk {
   const hidden = opts.hidden ?? new Set<string>();
+  const failed = opts.failed ?? {};
+  const missing = DESK_FEEDS.filter((f) => d[f] === undefined && failed[f]);
   const me = opts.me ?? null;
   const all = rows(d, now, me).filter((i) => !hidden.has(i.key));
   const needs = order(all);
@@ -406,12 +430,15 @@ export function deriveDesk(d: DeskData, now: number, opts: { me?: string | null;
     const makeup = id === "library" ? (n ? `${n}${NB}leaving in ${days(warnDays)}` : cleanup?.enabled && !cleanup.practice ? "Nothing leaving" : `Cleanup ${cleanup?.enabled ? "in practice" : "off"}`)
       : id === "services" ? (checks ? `${n ? n : checks}${NB}of ${checks}${NB}${n ? "down" : "up"}` : "No checks yet")
         : parts.length ? parts.join(" · ") : "Nothing waiting";
-    return { area: id, label, count: n, hot: mine.some((i) => i.group === "urgent"), known: FEEDS[id].every((s) => d[s] !== undefined), first: mine[0], makeup };
+    return { area: id, label, count: n, hot: mine.some((i) => i.group === "urgent"), known: FEEDS[id].every((s) => d[s] !== undefined),
+      failed: FEEDS[id].some((s) => missing.includes(s)), first: mine[0], makeup };
   });
 
   const party = d.discord?.party;
   return {
     needs, waiting, done,
+    loading: DESK_FEEDS.some((f) => d[f] === undefined && !failed[f]),
+    missing,
     urgent: needs.filter((i) => i.group === "urgent").length,
     monitors,
     facts: {

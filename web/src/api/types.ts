@@ -360,7 +360,10 @@ export interface AdminTicketRow {
   /** The film or show ("" on a general ticket), with a title ticket's TMDB id and year. */
   title: string; tmdb?: string | null; year?: string | null;
   kind: string; seasons: number[] | "all" | null;
-  who: string; reason: string; status: "open" | "resolved"; waiting: boolean; owner?: string | null;
+  who: string; reason: string;
+  /** The reason as a fixed code ("access", "blocked", "playback"…), for code to read; `reason` is its words. */
+  reasonCode?: string;
+  status: "open" | "resolved"; waiting: boolean; owner?: string | null;
   openedBy?: string | null; offer?: "name" | null; createdAt: string; updatedAt: string;
   last?: { by: string; kind: TicketEntry["kind"]; text: string } | null; count: number;
 }
