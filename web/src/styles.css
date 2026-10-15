@@ -1078,6 +1078,8 @@ html, body { overflow-x: clip; }
   font-size: 1rem; font-weight: 760;
 }
 .air-steps h3 { margin: 4px 0; }
+/* Archivo's space is narrow at this weight and width: a little more between words. */
+.air-steps h3, .air-band__steps h3 { word-spacing: 0.06em; }
 
 /* The set's side: knobs and a speaker grille, for looks only. */
 .air-side { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
@@ -1193,7 +1195,6 @@ html, body { overflow-x: clip; }
   background: var(--panel); border-block: 1px solid var(--rule);
   scroll-margin-top: 76px;
 }
-.air-band > * { max-width: 65ch; }
 .air-band__title { display: flex; align-items: center; gap: 8px; color: var(--ink); }
 .air-band__title::before { content: ""; width: 3px; height: 16px; background: var(--slate); border-radius: var(--r-strap); }
 .air-band__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 24px; counter-reset: step; }
@@ -1203,15 +1204,20 @@ html, body { overflow-x: clip; }
   color: var(--slate-ink); font-size: 0.78rem; font-weight: 760; letter-spacing: 0.06em; line-height: 1;
   font-stretch: var(--cond);
 }
-.air-band__steps p { color: var(--slate-ink); }
+.air-band__steps p { max-width: 32rem; color: var(--slate-ink); }
 .air-band__cta { width: 100%; margin-top: 8px; }
 .air-band__status { color: var(--slate-ink); }
 @media (min-width: 720px) { .air-band__cta { max-width: 320px; } }
-/* The footer under the set reads at body size, as the set's own words do. */
-main:has(.air) + .footer p { font-size: 1rem; }
+/* The footer under the set reads at body size, as the set's own words do, at a
+   comfortable measure, with room between its lines and its links' hit areas. */
+main:has(.air) + .footer p { max-width: 32rem; font-size: 1rem; }
+main:has(.air) + .footer .footer__links { margin-bottom: 24px; font-size: 1rem; }
+main:has(.air) + .footer p + p { margin-top: 12px; }
+main:has(.air) + .footer .footer__credit { line-height: 1.75; }
+main:has(.air) + .footer a:active, .air-notice a:active { color: var(--screen-deep); }
 /* Three columns only where each still gets a comfortable measure. */
 @media (min-width: 1280px) {
-  .air-band__steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; max-width: none; width: 100%; }
+  .air-band__steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; width: 100%; }
   .air-band__steps li { padding: 0 24px; border-left: 1px solid var(--rule); }
   .air-band__steps li:first-child { padding-left: 0; border-left: 0; }
 }
