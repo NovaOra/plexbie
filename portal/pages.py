@@ -64,11 +64,14 @@ def head_tags(path: str, origin: str, *, operator: str = "", contact: str = "") 
     card_title = APP_CARD_TITLE if kind == "app" else title
     e = lambda s: html.escape(s, quote=True)
     card = f"{origin}{CARD}"
+    # The page's own address; an invite's never carries its code (/invite/<code>).
+    url = f"{origin}/invite" if kind == "invite" else f"{origin}/{path.strip('/')}"
     site = json.dumps({"operator": operator, "contact": contact}, ensure_ascii=False)
     tags = [
         f'<meta name="description" content="{e(description)}" />',
         '<meta property="og:type" content="website" />',
         '<meta property="og:site_name" content="Plexbie" />',
+        f'<meta property="og:url" content="{e(url)}" />',
         f'<meta property="og:title" content="{e(card_title)}" />',
         f'<meta property="og:description" content="{e(description)}" />',
         f'<meta property="og:image" content="{e(card)}" />',
