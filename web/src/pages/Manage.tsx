@@ -2471,11 +2471,15 @@ function RequestFixes({ kind, busy, disabled, byName = false, onSearch }: {
   );
 }
 
-/** One request in full, for an admin: where it is, who asked, its tickets, and the fixes. */
-function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
+/** One request in full, for an admin: where it is, who asked, its tickets, and the fixes.
+ *  In a sheet (All requests) or in Manage's detail pane; `head` says the line about who asked. */
+function RequestBody({ id, res, head = true, onLeave }: {
+  id: string; res: ReturnType<typeof useKept<AdminRequestDetail>>; head?: boolean;
+  /** Called before going to the request's open ticket (a sheet closes first). */
+  onLeave?: () => void;
+}) {
   const { refresh, toast, readOnly } = useManage();
   const { busy, act } = useAct();
-  const res = useKept<AdminRequestDetail>(() => api.adminRequest(id), [id]);
   const r = res.data ?? null;
   const [writing, setWriting] = useState(false);
   const [note, setNote] = useState("");
@@ -2485,7 +2489,7 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const titleId = useId();
   const load = res.reload;
 
-  const after = () => { window.setTimeout(() => { void load(); void refresh("all"); }, 900); };
+  const after = () => { window.setTimeout(() => { void load(); void refresh("all"); void refresh("tickets"); }, 900); };
   const search = async (how: SearchHow) => {
     const out = await act(how, () => api.requestSearch(id, how), { failText: "Couldn’t search" });
     if (!out) return;
@@ -2502,85 +2506,94 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
     after();
   };
 
-  const openTicket = r?.tickets.find((t) => t.status === "open");
+  if (!r) return res.failed ? <LoadFailed text="Couldn’t load this request." onRetry={load} /> : <p className="muted">Loading…</p>;
+  const openTicket = r.tickets.find((t) => t.status === "open");
   // Only an approved request can be searched for (not one waiting for a decision, or declined).
-  const video = r && ["tv", "movie"].includes(r.title.kind) && !["requested", ...ENDED].includes(r.stage);
+  const video = ["tv", "movie"].includes(r.title.kind) && !["requested", ...ENDED].includes(r.stage);
+  return (
+    <div className="m-reqsheet__body">
+      {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
+      {head ? <p className="m-card__eyebrow">No. {formatSlot(r.slot)} · {KIND_LABEL[r.title.kind] ?? r.title.kind} · asked {since(r.requestedAt)} by {r.requester} · via {r.via}</p> : null}
+      <Journey stage={r.stage} kind={r.title.kind} />
+      <LiveProgress stage={r.stage} progress={r.progress} />
+      {r.stuck.length ? (
+        <ul className="m-stuck m-stuck--list">{r.stuck.map((s) => <li key={s}><CircleAlert size={15} aria-hidden /> {s}</li>)}</ul>
+      ) : null}
+      <dl className="m-facts">
+        {!head ? <><dt>Asked</dt><dd>{since(r.requestedAt)} by {r.requester}, via {r.via}</dd></> : null}
+        {r.approvedAt ? <><dt>Approved</dt><dd>{since(r.approvedAt)}{r.approvedBy ? ` by ${r.approvedBy}` : ""}</dd></> : null}
+        {r.stageSince && r.stage !== "available" ? <><dt>{stageLabel(r.stage, r.title.kind)}</dt><dd>since {since(r.stageSince)}</dd></> : null}
+        {r.finishedAt ? <><dt>On Plex</dt><dd>since {since(r.finishedAt)}</dd></> : null}
+        {r.seerrId ? <><dt>Seerr</dt><dd>request #{r.seerrId}</dd></> : null}
+      </dl>
+
+      {video ? <RequestFixes kind={r.title.kind} busy={busy} disabled={readOnly} onSearch={(how) => void search(how)} /> : null}
+
+      {openTicket ? (
+        <div className="m-reqsheet__ticket">
+          <LifeBuoy size={16} aria-hidden />
+          <span>There’s an open ticket on this: <b>{openTicket.reason}</b>.</span>
+          <button type="button" className="btn m-btn" onClick={() => {
+            onLeave?.();
+            afterOverlay(() => setParams((p) => { p.set("tab", "tickets"); p.set("ticket", openTicket.id); return p; }, { replace: true }));
+          }}>Open the ticket</button>
+        </div>
+      ) : writing ? (
+        <div className="m-help__reply">
+          <label className="field__label" htmlFor={`${titleId}-note`}>What’s wrong, or what you’ve found</label>
+          <textarea id={`${titleId}-note`} className="m-textarea" rows={3} maxLength={600} value={note} onChange={(e) => setNote(e.target.value)}
+            placeholder="For example: the indexer had nothing, trying another release" />
+          <label className="m-check">
+            <input type="checkbox" checked={tell} onChange={(e) => {
+              setTell(e.target.checked);
+              if (e.target.checked && !message) setMessage(`An admin is looking into your request for ${r.title.title}. You’ll hear back when it’s sorted.`);
+            }} />
+            <span>Let {r.requester} know</span>
+          </label>
+          {tell ? (
+            <>
+              <label className="field__label" htmlFor={`${titleId}-msg`}>Message to {r.requester}</label>
+              <textarea id={`${titleId}-msg`} className="m-textarea m-textarea--reply" rows={3} maxLength={600} value={message}
+                onChange={(e) => setMessage(e.target.value)} />
+              <span className="muted m-person__meta">Sent the usual way (a Discord DM, or an alert). They can answer it.</span>
+            </>
+          ) : null}
+          <div className="m-person__actions m-person__actions--two">
+            <button type="button" className="btn m-btn" onClick={() => { setWriting(false); setNote(""); }}>Back</button>
+            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("ticket") || !note.trim()} onClick={() => void ticket()}>
+              <LifeBuoy size={16} aria-hidden /> {busy.has("ticket") ? "Opening…" : "Open the ticket"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="btn btn--primary m-btn m-reqsheet__open" disabled={readOnly} onClick={() => setWriting(true)}>
+          <LifeBuoy size={16} aria-hidden /> Open a ticket
+        </button>
+      )}
+
+      {r.tickets.length || r.activity.length ? (
+        <div className="m-reqsheet__history">
+          <h3>History</h3>
+          <ul>
+            {[...r.tickets.map((t) => ({ at: t.created_at ?? "", text: ticketLine(t) })),
+              ...r.activity.map((a) => ({ at: a.at, text: `${a.by}: ${a.did}` }))]
+              .sort((a, b) => b.at.localeCompare(a.at))
+              .map((e, n) => <li key={n}><span className="muted">{since(e.at)}</span> {e.text}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
+  const res = useKept<AdminRequestDetail>(() => api.adminRequest(id), [id]);
+  const r = res.data ?? null;
+  const titleId = useId();
   return (
     <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet"
       title={r ? <>{r.title.title}{seasonsLabel(r.seasons) ? <span className="muted"> · {seasonsLabel(r.seasons)}</span> : null}</> : "Request"}>
-      {!r ? (res.failed ? <LoadFailed text="Couldn’t load this request." onRetry={load} /> : <p className="muted">Loading…</p>) : (
-        <div className="m-reqsheet__body">
-          {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
-          <p className="m-card__eyebrow">No. {formatSlot(r.slot)} · {KIND_LABEL[r.title.kind] ?? r.title.kind} · asked {since(r.requestedAt)} by {r.requester} · via {r.via}</p>
-          <Journey stage={r.stage} kind={r.title.kind} />
-          <LiveProgress stage={r.stage} progress={r.progress} />
-          {r.stuck.length ? (
-            <ul className="m-stuck m-stuck--list">{r.stuck.map((s) => <li key={s}><CircleAlert size={15} aria-hidden /> {s}</li>)}</ul>
-          ) : null}
-          <dl className="m-facts">
-            {r.approvedAt ? <><dt>Approved</dt><dd>{since(r.approvedAt)}{r.approvedBy ? ` by ${r.approvedBy}` : ""}</dd></> : null}
-            {r.stageSince && r.stage !== "available" ? <><dt>{stageLabel(r.stage, r.title.kind)}</dt><dd>since {since(r.stageSince)}</dd></> : null}
-            {r.finishedAt ? <><dt>On Plex</dt><dd>since {since(r.finishedAt)}</dd></> : null}
-            {r.seerrId ? <><dt>Seerr</dt><dd>request #{r.seerrId}</dd></> : null}
-          </dl>
-
-          {video ? <RequestFixes kind={r.title.kind} busy={busy} disabled={readOnly} onSearch={(how) => void search(how)} /> : null}
-
-          {openTicket ? (
-            <div className="m-reqsheet__ticket">
-              <LifeBuoy size={16} aria-hidden />
-              <span>There’s an open ticket on this: <b>{openTicket.reason}</b>.</span>
-              <button type="button" className="btn m-btn" onClick={() => {
-                onClose();
-                setParams((p) => { p.set("tab", "tickets"); p.set("ticket", openTicket.id); return p; }, { replace: true });
-              }}>Open the ticket</button>
-            </div>
-          ) : writing ? (
-            <div className="m-help__reply">
-              <label className="field__label" htmlFor={`${titleId}-note`}>What’s wrong, or what you’ve found</label>
-              <textarea id={`${titleId}-note`} className="m-textarea" rows={3} maxLength={600} value={note} onChange={(e) => setNote(e.target.value)}
-                placeholder="For example: the indexer had nothing, trying another release" />
-              <label className="m-check">
-                <input type="checkbox" checked={tell} onChange={(e) => {
-                  setTell(e.target.checked);
-                  if (e.target.checked && !message) setMessage(`An admin is looking into your request for ${r.title.title}. You’ll hear back when it’s sorted.`);
-                }} />
-                <span>Let {r.requester} know</span>
-              </label>
-              {tell ? (
-                <>
-                  <label className="field__label" htmlFor={`${titleId}-msg`}>Message to {r.requester}</label>
-                  <textarea id={`${titleId}-msg`} className="m-textarea m-textarea--reply" rows={3} maxLength={600} value={message}
-                    onChange={(e) => setMessage(e.target.value)} />
-                  <span className="muted m-person__meta">Sent the usual way (a Discord DM, or an alert). They can answer it.</span>
-                </>
-              ) : null}
-              <div className="m-person__actions m-person__actions--two">
-                <button type="button" className="btn m-btn" onClick={() => { setWriting(false); setNote(""); }}>Back</button>
-                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("ticket") || !note.trim()} onClick={() => void ticket()}>
-                  <LifeBuoy size={16} aria-hidden /> {busy.has("ticket") ? "Opening…" : "Open the ticket"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button type="button" className="btn btn--primary m-btn m-reqsheet__open" disabled={readOnly} onClick={() => setWriting(true)}>
-              <LifeBuoy size={16} aria-hidden /> Open a ticket
-            </button>
-          )}
-
-          {r.tickets.length || r.activity.length ? (
-            <div className="m-reqsheet__history">
-              <h3>History</h3>
-              <ul>
-                {[...r.tickets.map((t) => ({ at: t.created_at ?? "", text: ticketLine(t) })),
-                  ...r.activity.map((a) => ({ at: a.at, text: `${a.by}: ${a.did}` }))]
-                  .sort((a, b) => b.at.localeCompare(a.at))
-                  .map((e, n) => <li key={n}><span className="muted">{since(e.at)}</span> {e.text}</li>)}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      )}
+      <RequestBody id={id} res={res} onLeave={onClose} />
     </BottomSheet>
   );
 }
@@ -2675,20 +2688,27 @@ function TicketRow({ t, onOpen }: { t: AdminTicketRow; onOpen: () => void }) {
 
 const ENTRY_LABEL: Record<TicketEntry["kind"], string> = { member: "", note: "Admins only", reply: "Sent to them", action: "", status: "" };
 
-/** One ticket, worked on in one place. */
-function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
+/** One ticket, worked on in one place: in a sheet (Tickets), or in Manage's detail pane,
+ *  where the blocked import waits behind "Look inside" (`blockedRow`) and `head` is left to
+ *  the pane. A new `solve` asks for Solve… (the E key). */
+function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
+  id: string; res: ReturnType<typeof useKept<AdminTicketDetail>>; head?: boolean; blockedRow?: BlockedRow; solve?: number;
+}) {
   const { refresh, toast, readOnly } = useManage();
   const { session } = useSession();
   const { busy, act } = useAct();
-  const res = useKept<AdminTicketDetail>(() => api.adminTicket(id), [id]);
   const t = res.data ?? null;
   const [kind, setKind] = useState<"note" | "reply">("note");
   const [text, setText] = useState("");
   const [solving, setSolving] = useState(false);
   const [last, setLast] = useState("");
+  const [looking, setLooking] = useState(false);
   const titleId = useId();
   const load = res.reload;
   const after = () => { void load(); window.setTimeout(() => { void refresh("tickets"); void refresh("all"); }, 600); };
+  // E asks for Solve… on the ticket shown.
+  const [asked, setAsked] = useState(solve);
+  if (solve !== asked) { setAsked(solve); if (solve && t?.status === "open") setSolving(true); }
 
   const run = async (key: string, call: () => Promise<Ack>, done: string) => {
     const out = await act(key, call);
@@ -2704,125 +2724,151 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const search = (how: SearchHow) =>
     run(how, () => ({ again: api.helpSearch, episodes: api.helpEpisodes, name: api.helpByName }[how])(id), SEARCHING[how]);
 
-  if (!t && res.failed) {
-    return <BottomSheet titleId={titleId} onClose={onClose} title="Ticket"><LoadFailed text="Couldn’t load this ticket." onRetry={load} /></BottomSheet>;
-  }
-  const state = t ? ticketState(t) : null;
+  if (!t) return res.failed ? <LoadFailed text="Couldn’t load this ticket." onRetry={load} /> : <p className="muted">Loading…</p>;
+  const state = ticketState(t);
   // A title ticket is searched for by its own TMDB id; a general one has nothing to search for.
-  const video = t && ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
-  const mine = t?.owner && t.owner === session?.user.name;
+  const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
+  const mine = t.owner && t.owner === session?.user.name;
   return (
-    <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet m-ticketsheet"
-      title={t ? <>{ticketTitle(t)}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</> : "Ticket"}>
-      {!t ? <p className="muted">Loading…</p> : (
-        <div className="m-reqsheet__body">
-          {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
-          <p className="m-card__eyebrow">{ticketKind(t)} · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p>
-          <div className="m-ticket__tags">
-            <span className={`m-pill m-pill--${state!.tone}`}>{state!.label}</span>
-            <span className="m-pill">{t.owner ? `${t.owner} has it` : "Nobody has it yet"}</span>
-            {t.status === "open" ? (
-              <button type="button" className="btn btn--quiet m-btn m-ticket__take" disabled={readOnly || busy.size > 0}
-                onClick={() => void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours")}>
-                {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
-              </button>
-            ) : null}
+    <div className="m-reqsheet__body">
+      {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
+      {head ? <p className="m-card__eyebrow">{ticketKind(t)} · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p> : null}
+      <div className="m-ticket__tags">
+        <span className={`m-pill m-pill--${state.tone}`}>{state.label}</span>
+        <span className="m-pill">{t.owner ? `${t.owner} has it` : "Nobody has it yet"}</span>
+        {t.status === "open" ? (
+          <button type="button" className="btn btn--quiet m-btn m-ticket__take" disabled={readOnly || busy.size > 0}
+            onClick={() => void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours")}>
+            {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
+          </button>
+        ) : null}
+      </div>
+
+      {t.request ? (
+        <div className="m-ticket__request">
+          <Journey stage={t.request.stage} kind={t.request.title.kind} compact />
+          <span className="muted">{stageLabel(t.request.stage, t.request.title.kind)}{rowLine(t.request) ? ` · ${rowLine(t.request)}` : ""}</span>
+          {t.request.stuck.length ? (
+            <span className="m-stuck"><CircleAlert size={15} aria-hidden /><span>{t.request.stuck.map((s) => <span key={s} className="m-stuck__item">{s}</span>)}</span></span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {t.subject === "title" && ((t.tmdb && ["tv", "movie"].includes(t.kind)) || t.plexUrl) ? (
+        <div className="m-ticket__links">
+          {t.tmdb && ["tv", "movie"].includes(t.kind) ? <Link to={`/title/${t.kind}/${t.tmdb}`}>Open its page</Link> : null}
+          {t.plexUrl ? <a href={t.plexUrl} target="_blank" rel="noopener noreferrer">Open in Plex</a> : null}
+        </div>
+      ) : null}
+
+      {t.statusThen ? (
+        <div className="m-ticket__sees">
+          <span className="m-card__eyebrow">When it was opened, Plexbie saw</span>
+          {t.statusThen.split("\n").map((line, i) => <span key={i}>{line}</span>)}
+        </div>
+      ) : null}
+
+      {t.blocked && t.status === "open" ? (
+        blockedRow && !looking
+          ? <BlockedSummary row={blockedRow} onLook={() => setLooking(true)} />
+          : <BlockedImport target={t.blocked} onDone={after} />
+      ) : null}
+
+      {video && t.status === "open" ? (
+        <RequestFixes kind={t.kind} busy={busy} disabled={readOnly} byName={t.offer === "name"} onSearch={(how) => void search(how)} />
+      ) : null}
+
+      <ol className="m-thread" aria-label="Timeline">
+        {t.thread.map((e) => (
+          <li key={e.id} className={`m-thread__entry is-${e.kind}`}>
+            {e.kind === "status" ? (
+              <span className="m-thread__status">{e.by}: {e.text} · {since(e.at)}</span>
+            ) : (
+              <>
+                <span className="m-thread__head">
+                  <b>{e.by}</b>{ENTRY_LABEL[e.kind] ? <span className={`m-thread__tag${e.missed ? " is-missed" : ""}`}>{e.kind === "reply" ? (e.missed ? "Not delivered" : `Sent to ${t.who}`) : ENTRY_LABEL[e.kind]}</span> : null}
+                  <span className="muted">{since(e.at)}</span>
+                </span>
+                <span className="m-thread__text">{e.text}</span>
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+
+      {t.status === "open" ? (
+        <div className={`m-composer is-${kind}`}>
+          <div className="m-seg" role="group" aria-label="Who sees it">
+            <button type="button" aria-pressed={kind === "note"} className="m-seg__item" onClick={() => setKind("note")}>Note for admins</button>
+            <button type="button" aria-pressed={kind === "reply"} className="m-seg__item" onClick={() => setKind("reply")}>Reply to {t.who}</button>
           </div>
-
-          {t.request ? (
-            <div className="m-ticket__request">
-              <Journey stage={t.request.stage} kind={t.request.title.kind} compact />
-              <span className="muted">{stageLabel(t.request.stage, t.request.title.kind)}{rowLine(t.request) ? ` · ${rowLine(t.request)}` : ""}</span>
-              {t.request.stuck.length ? (
-                <span className="m-stuck"><CircleAlert size={15} aria-hidden /><span>{t.request.stuck.map((s) => <span key={s} className="m-stuck__item">{s}</span>)}</span></span>
-              ) : null}
-            </div>
-          ) : null}
-
-          {t.subject === "title" && ((t.tmdb && ["tv", "movie"].includes(t.kind)) || t.plexUrl) ? (
-            <div className="m-ticket__links">
-              {t.tmdb && ["tv", "movie"].includes(t.kind) ? <Link to={`/title/${t.kind}/${t.tmdb}`}>Open its page</Link> : null}
-              {t.plexUrl ? <a href={t.plexUrl} target="_blank" rel="noopener noreferrer">Open in Plex</a> : null}
-            </div>
-          ) : null}
-
-          {t.statusThen ? (
-            <div className="m-ticket__sees">
-              <span className="m-card__eyebrow">When it was opened, Plexbie saw</span>
-              {t.statusThen.split("\n").map((line, i) => <span key={i}>{line}</span>)}
-            </div>
-          ) : null}
-
-          {t.blocked && t.status === "open" ? <BlockedImport target={t.blocked} onDone={after} /> : null}
-
-          {video && t.status === "open" ? (
-            <RequestFixes kind={t.kind} busy={busy} disabled={readOnly} byName={t.offer === "name"} onSearch={(how) => void search(how)} />
-          ) : null}
-
-          <ol className="m-thread" aria-label="Timeline">
-            {t.thread.map((e) => (
-              <li key={e.id} className={`m-thread__entry is-${e.kind}`}>
-                {e.kind === "status" ? (
-                  <span className="m-thread__status">{e.by}: {e.text} · {since(e.at)}</span>
-                ) : (
-                  <>
-                    <span className="m-thread__head">
-                      <b>{e.by}</b>{ENTRY_LABEL[e.kind] ? <span className={`m-thread__tag${e.missed ? " is-missed" : ""}`}>{e.kind === "reply" ? (e.missed ? "Not delivered" : `Sent to ${t.who}`) : ENTRY_LABEL[e.kind]}</span> : null}
-                      <span className="muted">{since(e.at)}</span>
-                    </span>
-                    <span className="m-thread__text">{e.text}</span>
-                  </>
-                )}
-              </li>
-            ))}
-          </ol>
-
-          {t.status === "open" ? (
-            <div className={`m-composer is-${kind}`}>
-              <div className="m-seg" role="group" aria-label="Who sees it">
-                <button type="button" aria-pressed={kind === "note"} className="m-seg__item" onClick={() => setKind("note")}>Note for admins</button>
-                <button type="button" aria-pressed={kind === "reply"} className="m-seg__item" onClick={() => setKind("reply")}>Reply to {t.who}</button>
-              </div>
-              <label className="visually-hidden" htmlFor={`${titleId}-say`}>{kind === "note" ? "Note for admins" : `Reply to ${t.who}`}</label>
-              <textarea id={`${titleId}-say`} className={`m-textarea${kind === "reply" ? " m-textarea--reply" : " m-textarea--note"}`} rows={3} maxLength={1200}
-                value={text} onChange={(e) => setText(e.target.value)}
-                placeholder={kind === "note" ? "Only admins see this" : `${t.who} gets this as a Discord DM or an alert, and can answer`} />
+          <label className="visually-hidden" htmlFor={`${titleId}-say`}>{kind === "note" ? "Note for admins" : `Reply to ${t.who}`}</label>
+          <textarea id={`${titleId}-say`} className={`m-textarea${kind === "reply" ? " m-textarea--reply" : " m-textarea--note"}`} rows={3} maxLength={1200}
+            value={text} onChange={(e) => setText(e.target.value)}
+            placeholder={kind === "note" ? "Only admins see this" : `${t.who} gets this as a Discord DM or an alert, and can answer`} />
+          <div className="m-person__actions m-person__actions--two">
+            <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0}
+              onClick={() => void run("status", () => api.ticketStatus(id, t.waiting ? "open" : "waiting"), t.waiting ? "Back with the admins" : `Waiting on ${t.who}`)}>
+              {t.waiting ? "Back to open" : `Wait on ${t.who}`}
+            </button>
+            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("send") || !text.trim()} onClick={() => void send()}>
+              {busy.has("send") ? "Sending…" : kind === "note" ? "Add note" : "Send reply"}
+            </button>
+          </div>
+          {solving ? (
+            <div className="m-help__reply">
+              <label className="field__label" htmlFor={`${titleId}-last`}>Last word to {t.who} <span className="muted">(optional)</span></label>
+              <textarea id={`${titleId}-last`} className="m-textarea m-textarea--reply" rows={2} maxLength={600} value={last} autoFocus={solve > 0}
+                onChange={(e) => setLast(e.target.value)} placeholder="Grabbed the 4K release, it’ll be on Plex tonight" />
               <div className="m-person__actions m-person__actions--two">
-                <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0}
-                  onClick={() => void run("status", () => api.ticketStatus(id, t.waiting ? "open" : "waiting"), t.waiting ? "Back with the admins" : `Waiting on ${t.who}`)}>
-                  {t.waiting ? "Back to open" : `Wait on ${t.who}`}
-                </button>
-                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("send") || !text.trim()} onClick={() => void send()}>
-                  {busy.has("send") ? "Sending…" : kind === "note" ? "Add note" : "Send reply"}
+                <button type="button" className="btn m-btn" onClick={() => { setSolving(false); setLast(""); }}>Back</button>
+                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("solve")}
+                  onClick={async () => { if (await run("solve", () => api.ticketStatus(id, "resolved", last.trim()), "Solved")) { setSolving(false); setLast(""); } }}>
+                  <Check size={16} aria-hidden /> {busy.has("solve") ? "Solving…" : "Solve it"}
                 </button>
               </div>
-              {solving ? (
-                <div className="m-help__reply">
-                  <label className="field__label" htmlFor={`${titleId}-last`}>Last word to {t.who} <span className="muted">(optional)</span></label>
-                  <textarea id={`${titleId}-last`} className="m-textarea m-textarea--reply" rows={2} maxLength={600} value={last}
-                    onChange={(e) => setLast(e.target.value)} placeholder="Grabbed the 4K release, it’ll be on Plex tonight" />
-                  <div className="m-person__actions m-person__actions--two">
-                    <button type="button" className="btn m-btn" onClick={() => { setSolving(false); setLast(""); }}>Back</button>
-                    <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("solve")}
-                      onClick={async () => { if (await run("solve", () => api.ticketStatus(id, "resolved", last.trim()), "Solved")) { setSolving(false); setLast(""); } }}>
-                      <Check size={16} aria-hidden /> {busy.has("solve") ? "Solving…" : "Solve it"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button type="button" className="btn btn--quiet m-btn m-ticket__solve" disabled={readOnly} onClick={() => setSolving(true)}>
-                  <Check size={16} aria-hidden /> Solve…
-                </button>
-              )}
             </div>
           ) : (
-            <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0} onClick={() => void run("reopen", () => api.ticketStatus(id, "open"), "Reopened")}>
-              <RefreshCw size={16} aria-hidden /> Reopen
+            <button type="button" className="btn btn--quiet m-btn m-ticket__solve" disabled={readOnly} onClick={() => setSolving(true)}>
+              <Check size={16} aria-hidden /> Solve…
             </button>
           )}
         </div>
+      ) : (
+        <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0} onClick={() => void run("reopen", () => api.ticketStatus(id, "open"), "Reopened")}>
+          <RefreshCw size={16} aria-hidden /> Reopen
+        </button>
       )}
+    </div>
+  );
+}
+
+function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
+  const res = useKept<AdminTicketDetail>(() => api.adminTicket(id), [id]);
+  const t = res.data ?? null;
+  const titleId = useId();
+  return (
+    <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet m-ticketsheet"
+      title={t ? <>{ticketTitle(t)}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</> : "Ticket"}>
+      <TicketBody id={id} res={res} />
     </BottomSheet>
+  );
+}
+
+/** A blocked import before looking inside: what Sonarr or Radarr said, and the way in. */
+function BlockedSummary({ row, onLook }: { row: BlockedRow; onLook: () => void }) {
+  const app = row.app === "sonarr" ? "Sonarr" : "Radarr";
+  const n = row.episodes.length;
+  return (
+    <section className="m-blocked m-blocked--summary" aria-label={`${app} won’t import this by itself`}>
+      <h3>{app} can’t import {n ? `${n === 1 ? "1 episode" : `${n} episodes`}` : "it"}{n ? <span className="muted"> ({n > 1 ? `${row.episodes[0]} to ${row.episodes[n - 1].replace(/^S\d+/, "")}` : row.episodes[0]})</span> : null}</h3>
+      <p className="m-blocked__release">{row.release}</p>
+      {row.messages.map((m) => <p key={m} className="m-blocked__msg">{m}</p>)}
+      <div className="m-blocked__acts">
+        <button type="button" className="btn btn--primary m-btn" onClick={onLook}><Search size={18} aria-hidden /> Look inside</button>
+        <span className="muted">See the files, pick episodes, then Hold to import</span>
+      </div>
+    </section>
   );
 }
 

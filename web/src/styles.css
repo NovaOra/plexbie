@@ -2087,7 +2087,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 /* bottom sheet */
 .m-sheet { position: fixed; inset: 0; z-index: 80; display: grid; align-items: end; justify-items: center; }
 .m-sheet__scrim { position: absolute; inset: 0; border: 0; background: rgb(3 6 18 / 0.6); cursor: pointer; touch-action: none; }
-.m-sheet__panel { position: relative; display: grid; gap: 12px; align-content: start; width: min(560px, 100%); max-height: 82dvh; overflow-y: auto; overscroll-behavior: contain; padding: 10px 18px 0; border-radius: 22px 22px 0 0; background: var(--panel); border: 1px solid var(--rule); border-bottom: 0; box-shadow: var(--shadow-float); }
+.m-sheet__panel { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-content: start; width: min(560px, 100%); max-height: 82dvh; overflow-y: auto; overscroll-behavior: contain; padding: 10px 18px 0; border-radius: 22px 22px 0 0; background: var(--panel); border: 1px solid var(--rule); border-bottom: 0; box-shadow: var(--shadow-float); }
 .m-sheet__panel > :last-child { margin-bottom: calc(18px + env(safe-area-inset-bottom)); }
 .m-sheet__panel:has(.m-sheet__foot) { scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 /* The Link sheet: heading and search stay put, only the member list scrolls. */
@@ -2299,14 +2299,14 @@ html.has-sheet, html.has-sheet body, html.has-menu, html.has-menu body { overflo
 @media (hover: hover) and (pointer: fine) { .slot--button:hover { background: var(--panel-raised); } }
 .slot--button.is-stuck { border-color: rgb(255 92 147 / 0.45); }
 .m-all__line { font-size: 0.88rem; }
-.m-blocked { display: grid; gap: 10px; padding: 14px; border-radius: 12px; border: 1px solid rgb(255 92 147 / 0.35); background: rgb(255 92 147 / 0.07); }
+.m-blocked { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px; border-radius: 12px; border: 1px solid rgb(255 92 147 / 0.35); background: rgb(255 92 147 / 0.07); }
 .m-blocked__head { display: flex; align-items: center; gap: 8px; margin: 0; font-weight: 700; color: var(--tally); }
 .m-blocked__why { margin: 0; font-style: italic; color: var(--slate-ink); overflow-wrap: anywhere; }
 .m-blocked__advice { margin: 0; }
 .m-blocked__warnings { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; color: var(--tally); font-weight: 600; font-size: 0.9rem; }
 .m-blocked__warnings li { display: flex; gap: 6px; align-items: flex-start; } .m-blocked__warnings svg { flex: none; margin-top: 3px; }
 .m-blocked__files { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.m-blocked__files li { display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; background: rgb(255 255 255 / 0.04); }
+.m-blocked__files li { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 8px 10px; border-radius: 8px; background: rgb(255 255 255 / 0.04); }
 .m-blocked__files li.is-odd { box-shadow: inset 3px 0 0 var(--tally); }
 .m-blocked__files li.is-danger { box-shadow: inset 3px 0 0 var(--tally); background: rgb(255 92 147 / 0.14); }
 .m-blocked__files li.is-other { opacity: 0.75; }
@@ -2316,7 +2316,7 @@ html.has-sheet, html.has-sheet body, html.has-menu, html.has-menu body { overflo
 .m-blocked__done { display: flex; gap: 6px; align-items: center; margin: 0; font-weight: 700; }
 .m-blocked__nope { margin: 0; font-weight: 600; color: var(--tally); }
 .m-blocked__owner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.m-blocked__edit { display: grid; gap: 8px; margin-top: 6px; }
+.m-blocked__edit { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 6px; }
 .m-blocked__field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 0.9rem; }
 .m-blocked__field > span:first-child { min-width: 72px; color: var(--slate-ink); }
 .m-blocked__field .m-select { flex: 1 1 200px; min-width: 0; }
@@ -2330,13 +2330,21 @@ html.has-sheet, html.has-sheet body, html.has-menu, html.has-menu body { overflo
 .m-blocked__finder ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .m-blocked__finder .m-btn { width: 100%; justify-content: flex-start; }
 .m-blocked .m-hold { justify-self: start; min-width: min(100%, 300px); }
+/* Before looking inside (Manage's detail pane): what Sonarr or Radarr said, and the way in. */
+.m-blocked--summary { gap: 6px; padding: 12px 16px; border-color: var(--rule); background: none; }
+.m-blocked--summary h3 { font-size: 1.05rem; font-weight: 760; font-stretch: 88%; }
+.m-blocked__release { margin: 0; font: 0.9rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--slate-ink); overflow-wrap: anywhere; }
+.m-blocked__msg { margin: 0; padding-left: 10px; border-left: 2px solid var(--rule); font-size: 0.92rem; }
+.m-blocked__acts { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
+.m-blocked__acts .muted { font-size: 0.86rem; }
 .m-stuck { display: inline-flex; align-items: flex-start; gap: 6px; color: var(--tally); font-size: 0.88rem; font-weight: 600; line-height: 1.35; }
 .m-stuck svg { flex: none; margin-top: 2px; }
 .m-stuck__item { display: block; }
 .m-stuck--list { display: grid; gap: 6px; margin: 0; padding: 10px 12px; list-style: none; border-radius: 12px; background: rgb(255 92 147 / 0.1); }
 .m-stuck--list li { display: flex; gap: 6px; align-items: flex-start; }
 
-.m-reqsheet__body { display: grid; gap: 14px; padding-bottom: 6px; }
+/* One column that never grows past the sheet: a long name or a row of buttons wraps, never scrolls the sheet sideways. */
+.m-reqsheet__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding-bottom: 6px; }
 .m-reqsheet__body > .m-card__eyebrow { margin: 0; }
 .m-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 0.92rem; }
 .m-facts dt { color: var(--slate-ink); }
