@@ -360,13 +360,21 @@ html, body { overflow-x: clip; }
   background: var(--btn-bg); color: var(--btn-fg);
   font: inherit; font-weight: 700; font-size: 1rem; letter-spacing: -0.005em;
   text-decoration: none; cursor: pointer;
-  transition: transform 140ms var(--ease-out), background-color 160ms ease, opacity 160ms ease;
+  /* A key, like the sign-in set's: a lip under the face and a highlight on top. */
+  --lip: var(--key-lip);
+  --lip-down: var(--key-lip-down);
+  box-shadow: var(--lip), var(--key-highlight);
+  transition: transform var(--t-press) var(--ease-out), box-shadow var(--t-press) var(--ease-out),
+    background-color var(--t-color) ease, opacity var(--t-color) ease;
 }
 @media (hover: hover) and (pointer: fine) { .btn:hover { --btn-bg: var(--rule); } }
-.btn:active { transform: scale(0.97); }
-.btn:disabled, .btn--primary:disabled { --btn-bg: var(--panel-raised); --btn-fg: var(--slate-ink); cursor: default; transform: none; }
-.btn--primary { --btn-bg: var(--screen); --btn-fg: var(--on-screen); }
-@media (hover: hover) and (pointer: fine) { .btn--primary:hover { --btn-bg: #ffe0ed; } }
+/* Pressed: the face goes down 2px onto a 1px lip. Under way (aria-busy), it stays there. */
+.btn:active, .btn[aria-busy="true"] { transform: translateY(var(--key-press)); box-shadow: var(--lip-down), var(--key-highlight); }
+.btn[aria-busy="true"] { cursor: progress; }
+.btn:disabled, .btn--primary:disabled { --btn-bg: var(--panel-raised); --btn-fg: var(--slate-ink); cursor: default; transform: none; box-shadow: none; }
+.btn--primary { --btn-bg: var(--screen); --btn-fg: var(--on-screen); --lip: var(--key-lip-pink); --lip-down: var(--key-lip-pink-down); }
+@media (hover: hover) and (pointer: fine) { .btn--primary:hover { --btn-bg: var(--screen-hover); } }
+.btn--primary:active, .btn--primary[aria-busy="true"] { --btn-bg: var(--screen-deep); }
 .btn--block { width: 100%; }
 .btn--quiet { --btn-bg: transparent; color: var(--slate-ink); padding: 0 12px; }
 @media (hover: hover) and (pointer: fine) { .btn--quiet:hover { --btn-bg: var(--panel); color: var(--ink); } }
@@ -1563,8 +1571,9 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 
 /* ------------------------------------------------------------------ manage */
 
-.btn--plex { --btn-bg: #e5a00d; --btn-fg: #1f1503; }
-@media (hover: hover) and (pointer: fine) { .btn--plex:hover { --btn-bg: #f2b733; } }
+.btn--plex { --btn-bg: var(--note); --btn-fg: var(--on-note); }
+@media (hover: hover) and (pointer: fine) { .btn--plex:hover { --btn-bg: var(--note-hover); } }
+.btn--plex:active, .btn--plex[aria-busy="true"] { --btn-bg: var(--note-deep); }
 
 /* ================================================================ manage */
 .m-page { padding-bottom: 120px; }
@@ -1578,10 +1587,10 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 .m-tick > span { grid-area: 1 / 1; display: inline-block; }
 
 /* pressable things share one feel: a quick dip on press */
-.m-btn { min-height: 44px; padding: 0 16px; font-size: 0.92rem; gap: 8px; transition: transform 140ms var(--ease-out), background-color 160ms ease, color 160ms ease; }
-.m-btn:active:not(:disabled) { transform: scale(0.96); }
-.m-btn--go:not(:disabled) { --btn-bg: var(--screen); --btn-fg: var(--on-screen); }
-@media (hover: hover) and (pointer: fine) { .m-btn--go:not(:disabled):hover { --btn-bg: #ffe0ed; } }
+.m-btn { min-height: 44px; padding: 0 16px; font-size: 0.92rem; gap: 8px; }
+.m-btn--go:not(:disabled) { --btn-bg: var(--screen); --btn-fg: var(--on-screen); --lip: var(--key-lip-pink); --lip-down: var(--key-lip-pink-down); }
+@media (hover: hover) and (pointer: fine) { .m-btn--go:not(:disabled):hover { --btn-bg: var(--screen-hover); } }
+.m-btn--go:not(:disabled):active { --btn-bg: var(--screen-deep); }
 .m-spin { animation: m-spin 700ms linear infinite; }
 @keyframes m-spin { to { transform: rotate(360deg); } }
 
@@ -1670,7 +1679,7 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
   .m-menu__panel {
     position: fixed; z-index: 81; inset: 0 0 0 auto; width: var(--menu-w); max-height: none;
     padding: calc(14px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) 10px;
-    border-width: 0 0 0 1px; border-radius: 0; box-shadow: -20px 0 50px -20px rgb(3 6 18 / 0.9);
+    border-width: 0 0 0 1px; border-radius: 0; box-shadow: var(--shadow-float);
     transition: transform 240ms var(--ease-out), display 240ms allow-discrete;
   }
   .m-menu__panel[hidden] { opacity: 1; transform: translateX(100%); transition-duration: 240ms; }
@@ -1707,7 +1716,8 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 .m-swipe__card.is-live:active { cursor: grabbing; }
 .m-card {
   display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px 16px; align-items: center;
-  padding: 14px; border: 1px solid var(--rule); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow);
+  padding: 14px; border: 1px solid var(--rule); border-radius: 16px; background: var(--panel);
+  box-shadow: var(--shadow-object), var(--bevel-light), var(--bevel-dark);
   transition: opacity 200ms ease;
 }
 .m-card.is-busy { opacity: 0.6; }
@@ -1843,7 +1853,7 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 html.has-sheet .m-toasts { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; }
 /* only the newest then, so a stack doesn't grow down over the sheet */
 html.has-sheet .m-toast:not(:last-child) { display: none; }
-.m-toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 16px; border-radius: 14px; background: var(--ink); color: var(--on-screen); box-shadow: 0 18px 40px -16px rgb(3 6 18 / 0.9); font-size: 0.92rem; font-weight: 600; cursor: grab; touch-action: pan-y; }
+.m-toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 16px; border-radius: 14px; background: var(--ink); color: var(--on-screen); box-shadow: var(--shadow-float); font-size: 0.92rem; font-weight: 600; cursor: grab; touch-action: pan-y; }
 .m-toast > svg { flex: none; }
 .m-toast.is-error { background: var(--tally); color: var(--on-tally); }
 .m-toast__text { flex: 1; min-width: 0; display: grid; gap: 2px; }
@@ -1863,7 +1873,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .m-field-label { font-size: 0.9rem; font-weight: 700; }
 .m-invite-form__go { min-height: 52px; width: 100%; }
 @media (min-width: 760px) { .m-invite-form { max-width: 560px; } .m-invite-form__go { width: auto; justify-self: start; } }
-.m-fresh { display: grid; gap: 12px; padding: 18px; border-radius: 16px; background: var(--panel); border: 1px solid rgb(255 209 228 / 0.5); box-shadow: var(--shadow); }
+.m-fresh { display: grid; gap: 12px; padding: 18px; border-radius: 16px; background: var(--panel); border: 1px solid rgb(255 209 228 / 0.5); box-shadow: var(--shadow-object), var(--bevel-light), var(--bevel-dark); }
 @media (min-width: 760px) { .m-fresh { max-width: 560px; } }
 .m-fresh__eyebrow { display: inline-flex; align-items: center; gap: 6px; font-size: 0.74rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--screen); }
 .m-fresh__url { width: 100%; min-height: 48px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--rule); background: var(--field-deep); color: var(--ink); font: 600 0.9rem/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; }
@@ -1875,7 +1885,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 
 /* the invite landing page: one card, one button, phone first */
 .invite { display: grid; gap: 28px; max-width: 560px; padding-top: 28px; padding-bottom: 64px; }
-.invite__card { display: grid; gap: 14px; justify-items: start; padding: 24px 20px; border-radius: 20px; background: var(--panel); border: 1px solid var(--rule); box-shadow: var(--shadow); }
+.invite__card { display: grid; gap: 14px; justify-items: start; padding: 24px 20px; border-radius: 20px; background: var(--panel); border: 1px solid var(--rule); box-shadow: var(--shadow-object), var(--bevel-light), var(--bevel-dark); }
 .invite__card .mascot { width: 72px; height: 72px; }
 .invite__card h1 { margin: 0; font-size: clamp(2.2rem, 1.6rem + 3vw, 3.2rem); font-weight: 860; font-stretch: 80%; line-height: 1; }
 .invite__lede { margin: 0; font-size: 1.08rem; line-height: 1.5; }
@@ -1937,8 +1947,8 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .m-set-block { display: grid; gap: 8px; }
 .m-step { display: grid; gap: 8px; }
 .m-step__row { display: flex; align-items: center; gap: 6px; }
-.m-step__btn { width: 48px; height: 48px; flex: none; border: 0; border-radius: 12px; background: var(--panel-raised); color: var(--ink); font: 700 1.4rem/1 var(--font); cursor: pointer; transition: transform 120ms var(--ease-out); }
-.m-step__btn:active:not(:disabled) { transform: scale(0.94); }
+.m-step__btn { width: 48px; height: 48px; flex: none; border: 0; border-radius: 12px; background: var(--panel-raised); color: var(--ink); font: 700 1.4rem/1 var(--font); cursor: pointer; box-shadow: var(--key-lip), var(--key-highlight); transition: transform var(--t-press) var(--ease-out), box-shadow var(--t-press) var(--ease-out); }
+.m-step__btn:active:not(:disabled) { transform: translateY(var(--key-press)); box-shadow: var(--key-lip-down), var(--key-highlight); }
 .m-step__btn:disabled { opacity: 0.4; cursor: default; }
 .m-step__input { width: 76px; min-height: 48px; border: 1px solid var(--rule); border-radius: 12px; background: var(--field-deep); color: var(--ink); text-align: center; font: 800 1.15rem/1 var(--font); -moz-appearance: textfield; }
 .m-step__input::-webkit-outer-spin-button, .m-step__input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1961,7 +1971,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 /* bottom sheet */
 .m-sheet { position: fixed; inset: 0; z-index: 80; display: grid; align-items: end; justify-items: center; }
 .m-sheet__scrim { position: absolute; inset: 0; border: 0; background: rgb(3 6 18 / 0.6); cursor: pointer; touch-action: none; }
-.m-sheet__panel { position: relative; display: grid; gap: 12px; align-content: start; width: min(560px, 100%); max-height: 82dvh; overflow-y: auto; overscroll-behavior: contain; padding: 10px 18px 0; border-radius: 22px 22px 0 0; background: var(--panel); border: 1px solid var(--rule); border-bottom: 0; box-shadow: 0 -20px 50px -20px rgb(3 6 18 / 0.9); }
+.m-sheet__panel { position: relative; display: grid; gap: 12px; align-content: start; width: min(560px, 100%); max-height: 82dvh; overflow-y: auto; overscroll-behavior: contain; padding: 10px 18px 0; border-radius: 22px 22px 0 0; background: var(--panel); border: 1px solid var(--rule); border-bottom: 0; box-shadow: var(--shadow-float); }
 .m-sheet__panel > :last-child { margin-bottom: calc(18px + env(safe-area-inset-bottom)); }
 .m-sheet__panel:has(.m-sheet__foot) { scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 /* The Link sheet: heading and search stay put, only the member list scrolls. */
@@ -2050,7 +2060,7 @@ html.has-sheet, html.has-sheet body, html.has-menu, html.has-menu body { overflo
 .pick-menu > summary { list-style: none; display: inline-flex; align-items: center; cursor: pointer; user-select: none; }
 .pick-menu > summary::-webkit-details-marker { display: none; }
 .pick-menu[open] > summary { border-color: var(--screen); }
-.pick-menu__panel { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; min-width: 220px; max-height: min(60vh, 420px); overflow-y: auto; display: grid; gap: 2px; padding: 8px; border: 1px solid var(--rule); border-radius: 14px; background: var(--panel-raised); box-shadow: 0 12px 32px rgb(3 6 18 / 0.45); }
+.pick-menu__panel { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; min-width: 220px; max-height: min(60vh, 420px); overflow-y: auto; display: grid; gap: 2px; padding: 8px; border: 1px solid var(--rule); border-radius: 14px; background: var(--panel-raised); box-shadow: var(--shadow-float); }
 .pick-menu__opt { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 8px; border-radius: 8px; cursor: pointer; font-weight: 600; }
 @media (hover: hover) and (pointer: fine) { .pick-menu__opt:hover { background: var(--panel); } }
 .pick-menu__opt input { width: 18px; height: 18px; accent-color: var(--screen); }
