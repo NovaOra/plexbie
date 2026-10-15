@@ -2762,7 +2762,7 @@ function TicketRow({ t, onOpen }: { t: AdminTicketRow; onOpen: () => void }) {
   const state = ticketState(t);
   return (
     <button type="button" className={`m-ticket is-${state.tone}`} onClick={onOpen}>
-      <span className="m-card__eyebrow">{ticketKind(t)} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} · {since(t.updatedAt)}</span>
+      <span className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} · {since(t.updatedAt)}</span>
       <span className="m-ticket__title">{ticketTitle(t)}{seasonsWords(t.seasons) ? <span className="muted"> · {seasonsWords(t.seasons)}</span> : null}</span>
       <span className="m-ticket__reason">{t.reason}</span>
       {t.last ? <span className="m-ticket__last"><b>{t.last.by}:</b> {t.last.text}</span> : null}
@@ -3780,8 +3780,8 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
           <h1 className="m-h1">Manage</h1>
           <p className="m-headline" aria-live="polite">
             {loading ? <span><b>Checking what needs you…</b></span> : <>
-              <span className="m-headline__long"><b>{missing.length ? "At least " : ""}{desk.needs.length === 1 ? "1\u00a0thing needs" : `${desk.needs.length}\u00a0things need`} you.</b>{desk.urgent ? <> <b>{`${desk.urgent}\u00a0${desk.urgent === 1 ? "is" : "are"} urgent.`}</b></> : null}</span>
-              <span className="m-headline__short"><b>{`${desk.needs.length}\u00a0need you`}</b>{desk.urgent ? <> · <b>{`${desk.urgent}\u00a0urgent`}</b></> : null}</span>
+              <span className="m-headline__long"><b>{missing.length ? "At least " : ""}{!desk.needs.length && !missing.length ? "Nothing needs you right now." : desk.needs.length === 1 ? "1\u00a0thing needs you." : `${desk.needs.length}\u00a0things need you.`}</b>{desk.urgent ? <> <b>{`${desk.urgent}\u00a0${desk.urgent === 1 ? "is" : "are"} urgent.`}</b></> : null}</span>
+              <span className="m-headline__short"><b>{!desk.needs.length && !missing.length ? "Nothing needs you" : `${desk.needs.length}\u00a0need you`}</b>{desk.urgent ? <> · <b>{`${desk.urgent}\u00a0urgent`}</b></> : null}</span>
             </>}
             {" "}<span className="m-headline__more"><span className="m-headline__wide">The rest is under Everything else.</span><span className="m-headline__phone">The rest is in the menu.</span></span>
           </p>
