@@ -94,7 +94,25 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 
-  --shadow: 0 10px 30px -12px rgb(3 6 18 / 0.7), 0 2px 6px -2px rgb(3 6 18 / 0.5);
+  /* Depth (DESIGN.md, Elevation & Depth): things you press look like hardware. */
+  /* Objects that hold controls, like the TV set: a soft shadow and a 1px bevel. */
+  --shadow-object: 0 24px 48px -16px rgb(3 6 18 / 0.65), 0 2px 6px -2px rgb(3 6 18 / 0.5);
+  --bevel-light: inset 1px 1px 0 rgb(174 184 216 / 0.35);
+  --bevel-dark: inset -1px -1px 0 rgb(3 6 18 / 0.45);
+  /* Keys and buttons: a 3px lip under the face and a 1px highlight on top. Pressed,
+     the face goes down 2px and the lip shrinks to 1px. Pink keys' lip is screen-deep. */
+  --key-lip: inset 0 -3px 0 rgb(3 6 18 / 0.4);
+  --key-lip-down: inset 0 -1px 0 rgb(3 6 18 / 0.4);
+  --key-lip-pink: inset 0 -3px 0 var(--screen-deep);
+  --key-lip-pink-down: inset 0 -1px 0 var(--screen-deep);
+  --key-highlight: inset 0 1px 0 rgb(255 255 255 / 0.12);
+  --key-press: 2px;
+  /* A lit screen: light from the screen colour, never a pink fill. */
+  --screen-glow: inset 0 0 40px rgb(255 209 228 / 0.08);
+  --screen-edge: rgb(255 209 228 / 0.14);
+  /* Things that float: menus, sheets, toasts. */
+  --shadow-float: 0 10px 30px -12px rgb(3 6 18 / 0.7), 0 2px 6px -2px rgb(3 6 18 / 0.5);
+  --shadow: var(--shadow-float);
 }
 
 @media (min-width: 720px) {
@@ -1008,6 +1026,7 @@ html, body { overflow-x: clip; }
   display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px);
   padding: clamp(12px, 0.5rem + 1vw, 16px);
   background: var(--slate); border: 1px solid var(--field-deep); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-object), var(--bevel-light), var(--bevel-dark);
 }
 .air-tv__front { display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px); }
 .air-bezel { padding: 8px; background: var(--field-deep); border-radius: var(--r-md); }
@@ -1016,7 +1035,8 @@ html, body { overflow-x: clip; }
   padding: clamp(12px, 0.5rem + 1vw, 16px) clamp(16px, 0.75rem + 1.5vw, 24px) 24px;
   overflow: hidden;
   background: var(--panel); color: var(--ink);
-  border: 1px solid var(--rule); border-radius: var(--r-md);
+  border: 1px solid var(--screen-edge); border-radius: var(--r-md);
+  box-shadow: var(--screen-glow);
 }
 
 /* On-screen display: the channel readout, and the tally, lit only while a sign-in is under way. */
@@ -1087,6 +1107,7 @@ html, body { overflow-x: clip; }
 .air-knob {
   position: relative; width: clamp(28px, 4px + 4vw, 44px); aspect-ratio: 1;
   background: var(--panel-raised); border: 1px solid var(--slate-ink); border-radius: var(--r-full);
+  box-shadow: var(--bevel-light), var(--bevel-dark);
   transition: transform 260ms var(--ease-out);
 }
 .air-knob::after {
@@ -1111,26 +1132,30 @@ html, body { overflow-x: clip; }
   border: 1px solid var(--slate); border-radius: var(--r);
   font: inherit; font-size: 1rem; font-weight: 700; letter-spacing: -0.005em; line-height: 1;
   text-decoration: none; cursor: pointer; user-select: none;
-  transition: background-color var(--t-color) var(--ease-out), transform var(--t-press) var(--ease-out);
+  --lip: var(--key-lip);
+  --lip-down: var(--key-lip-down);
+  box-shadow: var(--lip), var(--key-highlight);
+  transition: background-color var(--t-color) var(--ease-out), transform var(--t-press) var(--ease-out),
+    box-shadow var(--t-press) var(--ease-out);
 }
 .air-key svg { width: 22px; height: 22px; flex: none; }
 .air-key:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; position: relative; z-index: 1; }
 .air-key--plain { background: var(--panel-raised); color: var(--ink); }
 .air-key--plain.air-key--plex svg { color: var(--note); }
-.air-key--pink { background: var(--screen); color: var(--on-screen); }
+.air-key--pink { background: var(--screen); color: var(--on-screen); --lip: var(--key-lip-pink); --lip-down: var(--key-lip-pink-down); }
 .air-key--amber { background: var(--note); color: var(--on-note); }
-.air-key--off { background: var(--panel-raised); color: var(--faint); border-color: var(--rule); cursor: default; }
+.air-key--off { background: var(--panel-raised); color: var(--faint); border-color: var(--rule); cursor: default; box-shadow: none; }
 @media (hover: hover) and (pointer: fine) {
   .air-key--plain:hover { background: var(--rule); }
   .air-key--pink:hover { background: var(--screen-hover); }
   .air-key--amber:hover { background: var(--note-hover); }
 }
-.air-key:active { transform: translateY(1px); }
-.air-key--off:active { transform: none; }
+.air-key:active, .air-status__btn:active { transform: translateY(var(--key-press)); box-shadow: var(--lip-down), var(--key-highlight); }
+.air-key--off:active { transform: none; box-shadow: none; }
 .air-key--pink:active { background: var(--screen-deep); }
 .air-key--amber:active { background: var(--note-deep); }
 /* Pressed and under way: it stays down, a step darker, until the sign-in leaves the page. */
-.air-key[aria-busy="true"] { transform: translateY(1px); cursor: progress; }
+.air-key[aria-busy="true"] { transform: translateY(var(--key-press)); box-shadow: var(--lip-down), var(--key-highlight); cursor: progress; }
 .air-key--plain[aria-busy="true"] { background: var(--rule); }
 .air-key--pink[aria-busy="true"] { background: var(--screen-deep); }
 .air-key--amber[aria-busy="true"] { background: var(--note-deep); }
@@ -1145,22 +1170,26 @@ html, body { overflow-x: clip; }
   color: var(--ink); text-align: left;
 }
 
-.air-status {
-  display: flex; align-items: center; min-height: 44px; padding: 0 12px 0 4px;
-  background: var(--panel); border: 1px solid var(--slate); border-radius: var(--r);
-}
+/* The CH 2 row is a key of its own, with the channel chip printed on it. */
+.air-status { display: flex; }
 .air-status__btn {
-  flex: 1; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 4px;
-  background: none; border: 0; color: var(--slate-ink);
+  flex: 1; display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 16px 0 8px;
+  background: var(--panel); color: var(--slate-ink);
+  border: 1px solid var(--slate); border-radius: var(--r);
   font: inherit; font-weight: 640; text-align: left; cursor: pointer;
-  transition: color var(--t-color) var(--ease-out), transform var(--t-press) var(--ease-out);
+  --lip: var(--key-lip);
+  --lip-down: var(--key-lip-down);
+  box-shadow: var(--lip), var(--key-highlight);
+  transition: color var(--t-color) var(--ease-out), transform var(--t-press) var(--ease-out),
+    box-shadow var(--t-press) var(--ease-out);
 }
 @media (hover: hover) and (pointer: fine) { .air-status__btn:hover { color: var(--ink); } }
-.air-status__btn:active { color: var(--ink); transform: scale(0.98); }
+.air-status__btn:active { color: var(--ink); }
 .air-status__chev { width: 16px; height: 16px; margin-left: auto; flex: none; }
 .air-chip {
   display: inline-grid; place-items: center; height: 32px; padding: 0 8px;
   background: var(--panel-raised); color: var(--ink); border: 1px solid var(--slate); border-radius: var(--r);
+  box-shadow: var(--key-lip), var(--key-highlight);
 }
 
 .air-feet { display: flex; justify-content: space-between; width: 76%; }
@@ -1222,6 +1251,8 @@ main:has(.air) + .footer a:active, .air-notice a:active { color: var(--screen-de
   .air-band__steps li:first-child { padding-left: 0; border-left: 0; }
 }
 
+/* Reduced motion: the keys keep their depth and still show a press (the lip
+   shrinks), but nothing moves. */
 @media (prefers-reduced-motion: reduce) {
   .air-knob, .air-key, .air-status__btn { transition: none; }
   .air-key:active, .air-key[aria-busy="true"], .air-status__btn:active { transform: none; }
