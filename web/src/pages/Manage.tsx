@@ -20,7 +20,7 @@ import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
 import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
 import { afterOverlay, useBackToClose, useSheet } from "../components/overlay";
 import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
-import { AREAS, deriveDesk, type Area, type Desk, type DeskData, type Group, type Item } from "./manageQueue";
+import { AREAS, DESK_FEEDS, deriveDesk, type Area, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
 
 /* ================================================================== store */
@@ -702,7 +702,7 @@ function JoinsTab() {
           <ul className="m-log">
             {earlier.map((j) => (
               <li className="m-log__row" key={j.key}>
-                <span className={`m-pill m-pill--${j.status === "denied" ? "declined" : "approved"}`}>{j.status}</span>
+                <span className={`m-pill m-pill--${j.status === "denied" ? "declined" : "approved"}`}>{j.status === "denied" ? "Denied" : "Invited"}</span>
                 <span className="m-log__main">{j.name}</span>
                 <span className="muted m-log__meta">{j.email} · {since(j.askedAt)}</span>
               </li>
@@ -1678,7 +1678,7 @@ function HealthTab() {
           <li className={`m-health__item${h.ok ? "" : " is-down"}`} key={h.name}>
             <span className="m-health__dot" aria-hidden />
             <div>
-              <b>{h.name}</b>
+              <b>{h.name} <span className="m-health__state">{h.ok ? "Up" : "Check failing"}</span></b>
               <span className="muted">{h.ok ? `Answering in ${h.ms} ms` : h.detail ?? "Not answering"}</span>
               {h.ok ? <span className="m-health__bar" aria-hidden><span style={{ transform: `scaleX(${Math.min(1, Math.max(0.04, h.ms / 600))})` }} /></span> : null}
             </div>
@@ -2001,7 +2001,7 @@ function InvitesTab() {
                     <div className="m-person__body">
                       <h3 className="m-card__title">
                         {i.label}
-                        <span className={`m-pill m-pill--${i.status === "used" ? "approved" : "declined"}`}>{i.status === "revoked" ? "Cancelled" : i.status}</span>
+                        <span className={`m-pill m-pill--${i.status === "used" ? "approved" : "declined"}`}>{i.status === "revoked" ? "Cancelled" : i.status === "used" ? "Used" : "Expired"}</span>
                       </h3>
                       <span className="muted m-person__meta">
                         {i.status === "used" && i.usedBy ? `Joined as ${i.usedBy} ${i.usedAt ? since(i.usedAt) : ""}` : `Made by ${i.createdBy ?? "an admin"} ${since(i.createdAt)}`}
@@ -2203,6 +2203,7 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
   const [sending, setSending] = useState(false);
   const sendingNow = useRef(false);
   const [text, setText] = useState("");
+  const [empty, setEmpty] = useState(false);
   // Loaded again when something new arrives (the page refreshes the people every minute).
   const res = useKept<LoggedMessage[]>(() => api.conversation(person.id), [person.last.at]);
   const reload = () => { void res.reload(); void refresh("messages"); };
@@ -2212,7 +2213,8 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
     e.preventDefault();
     // One send at a time: the shortcut skips the button's guards, so check here too.
     const body = text.trim();
-    if (!body || readOnly || sendingNow.current) return;
+    if (!body) { setEmpty(true); box.current?.focus(); return; }
+    if (readOnly || sendingNow.current) return;
     sendingNow.current = true;
     setSending(true);
     const out = await act(null, () => api.messageReply(person.id, body), { failText: "Not sent" });
@@ -2289,16 +2291,17 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
         <div ref={end} />
       </div>
       <form className="m-chat__composer" onSubmit={send}>
-        <label className="visually-hidden" htmlFor={`m-reply-${person.id}`}>Message to {person.name}</label>
+        <label className="field__label" htmlFor={`m-reply-${person.id}`}>Message to {person.name}</label>
         <textarea ref={box} id={`m-reply-${person.id}`} className="m-textarea m-textarea--reply" rows={2} maxLength={1500} value={text}
-          readOnly={sending} onChange={(e) => setText(e.target.value)} placeholder={`Message ${person.name} as Plexbie`}
+          readOnly={sending} onChange={(e) => { setText(e.target.value); setEmpty(false); }} placeholder={`Message ${person.name} as Plexbie`}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.repeat) void send(e); }} />
         <div className="m-chat__send">
           <span className="muted m-person__meta">{discord ? "A Discord DM from Plexbie" : "A phone alert, else an email"}, signed “— {me} (admin)”</span>
-          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || sending || !text.trim()}>
+          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || sending}>
             {sending ? "Sending…" : "Send as Plexbie"}
           </button>
         </div>
+        {empty ? <p className="field__error" role="alert">Write the message first.</p> : null}
       </form>
     </section>
   );
@@ -2326,8 +2329,7 @@ function MessagesTab() {
   const current = people.find((p) => p.id === open) ?? null;
   return (
     <section className="section">
-      <div className="m-head">
-        <h2>Messages</h2>
+      <div className="m-head m-head--end">
         <SearchField value={query} onChange={setQuery} />
       </div>
       <p className="muted">Every message Plexbie sends someone and how it got there, and what they send Plexbie: DMs, “Something wrong?” and answers on their tickets. Kept for 90 days.</p>
@@ -2434,7 +2436,6 @@ function AllRequestsTab() {
 
   return (
     <section className="section m-all">
-      <h2>All requests</h2>
       <p className="muted m-all__lede">
         Every request from everyone, waiting, approved or declined, and where each one is now. {history ? "Showing every request since No. 0001." : "Showing the last 30 days, and anything still on its way."}
         {" "}Open one to see it in full, search again, or open a ticket.
@@ -2553,8 +2554,10 @@ function RequestFixes({ kind, busy, disabled, byName = false, onSearch }: {
 
 /** One request in full, for an admin: where it is, who asked, its tickets, and the fixes.
  *  In a sheet (All requests) or in Manage's detail pane; `head` says the line about who asked. */
-function RequestBody({ id, res, head = true, onLeave }: {
+function RequestBody({ id, res, head = true, onLeave, quiet = false }: {
   id: string; res: ReturnType<typeof useKept<AdminRequestDetail>>; head?: boolean;
+  /** "Open a ticket" isn't the main thing here (the pane, where Approve is). */
+  quiet?: boolean;
   /** Called before going to the request's open ticket (a sheet closes first). */
   onLeave?: () => void;
 }) {
@@ -2565,6 +2568,7 @@ function RequestBody({ id, res, head = true, onLeave }: {
   const [note, setNote] = useState("");
   const [tell, setTell] = useState(false);
   const [message, setMessage] = useState("");
+  const [empty, setEmpty] = useState(false);
   const [, setParams] = useSearchParams();
   const titleId = useId();
   const load = res.reload;
@@ -2577,6 +2581,7 @@ function RequestBody({ id, res, head = true, onLeave }: {
     after();
   };
   const ticket = async () => {
+    if (!note.trim()) { setEmpty(true); document.getElementById(`${titleId}-note`)?.focus(); return; }
     const out = await act("ticket", () => api.requestTicket(id, note.trim(), tell, tell ? message.trim() : ""), { failText: "Couldn’t open the ticket" });
     if (!out) return;
     buzz(12);
@@ -2593,7 +2598,7 @@ function RequestBody({ id, res, head = true, onLeave }: {
   return (
     <div className="m-reqsheet__body">
       {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
-      {head ? <p className="m-card__eyebrow">No. {formatSlot(r.slot)} · {KIND_LABEL[r.title.kind] ?? r.title.kind} · asked {since(r.requestedAt)} by {r.requester} · via {r.via}</p> : null}
+      {head ? <p className="m-ticket__line"><span className="caps">No. {formatSlot(r.slot)}</span> · {KIND_LABEL[r.title.kind] ?? r.title.kind} · asked {since(r.requestedAt)} by {r.requester} · via {r.via}</p> : null}
       <Journey stage={r.stage} kind={r.title.kind} />
       <LiveProgress stage={r.stage} progress={r.progress} />
       {r.stuck.length ? (
@@ -2621,7 +2626,7 @@ function RequestBody({ id, res, head = true, onLeave }: {
       ) : writing ? (
         <div className="m-help__reply">
           <label className="field__label" htmlFor={`${titleId}-note`}>What’s wrong, or what you’ve found</label>
-          <textarea id={`${titleId}-note`} className="m-textarea" rows={3} maxLength={600} value={note} onChange={(e) => setNote(e.target.value)}
+          <textarea id={`${titleId}-note`} className="m-textarea" rows={3} maxLength={600} value={note} onChange={(e) => { setNote(e.target.value); setEmpty(false); }}
             placeholder="For example: the indexer had nothing, trying another release" />
           <label className="m-check">
             <input type="checkbox" checked={tell} onChange={(e) => {
@@ -2640,13 +2645,14 @@ function RequestBody({ id, res, head = true, onLeave }: {
           ) : null}
           <div className="m-person__actions m-person__actions--two">
             <button type="button" className="btn m-btn" onClick={() => { setWriting(false); setNote(""); }}>Back</button>
-            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("ticket") || !note.trim()} onClick={() => void ticket()}>
+            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("ticket")} onClick={() => void ticket()}>
               <LifeBuoy size={16} aria-hidden /> {busy.has("ticket") ? "Opening…" : "Open the ticket"}
             </button>
           </div>
+          {empty ? <p className="field__error" role="alert">Say what’s wrong first: it’s the ticket’s first note.</p> : null}
         </div>
       ) : (
-        <button type="button" className="btn btn--primary m-btn m-reqsheet__open" disabled={readOnly} onClick={() => setWriting(true)}>
+        <button type="button" className={`btn${quiet ? " btn--quiet" : " btn--primary"} m-btn m-reqsheet__open`} disabled={readOnly} onClick={() => setWriting(true)}>
           <LifeBuoy size={16} aria-hidden /> Open a ticket
         </button>
       )}
@@ -2730,7 +2736,6 @@ function TicketsTab() {
   ];
   return (
     <section className="section m-tickets">
-      <h2>Tickets</h2>
       <p className="muted m-all__lede">“Something wrong?” from members, on a request, a film or show, or anything else, and tickets admins open from a request. Open one to talk it through, fix it and solve it.</p>
       <div className="request-bar m-all__bar">
         <select className="select" value={show} aria-label="Show" onChange={(e) => setShow(e.target.value as TicketShow)}>
@@ -2771,8 +2776,10 @@ const ENTRY_LABEL: Record<TicketEntry["kind"], string> = { member: "", note: "Ad
 /** One ticket, worked on in one place: in a sheet (Tickets), or in Manage's detail pane,
  *  where the blocked import waits behind "Look inside" (`blockedRow`) and `head` is left to
  *  the pane. A new `solve` asks for Solve… (the E key). */
-function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
+function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead }: {
   id: string; res: ReturnType<typeof useKept<AdminTicketDetail>>; head?: boolean; blockedRow?: BlockedRow; solve?: number;
+  /** In Manage's detail pane: the pill beside the main key (Open the full ticket), the pair right under the header. */
+  lead?: ReactNode;
 }) {
   const { refresh, toast, readOnly } = useManage();
   const { session } = useSession();
@@ -2783,6 +2790,8 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
   const [solving, setSolving] = useState(false);
   const [last, setLast] = useState("");
   const [looking, setLooking] = useState(false);
+  const [empty, setEmpty] = useState(false);
+  const box = useRef<HTMLTextAreaElement>(null);
   const titleId = useId();
   const load = res.reload;
   const after = () => { void load(); window.setTimeout(() => { void refresh("tickets"); void refresh("all"); }, 600); };
@@ -2798,7 +2807,8 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
     return true;
   };
   const send = async () => {
-    if (!text.trim()) return;
+    // An empty box says so, rather than a key that does nothing.
+    if (!text.trim()) { setEmpty(true); box.current?.focus(); return; }
     if (await run("send", () => api.ticketComment(id, kind, text.trim()), kind === "reply" ? "Sent" : "Note added")) setText("");
   };
   const search = (how: SearchHow) =>
@@ -2809,24 +2819,42 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
   // A title ticket is searched for by its own TMDB id; a general one has nothing to search for.
   const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
   const mine = t.owner && t.owner === session?.user.name;
+  const take = (
+    <button type="button" className={`btn${lead ? "" : " btn--quiet"} m-btn m-ticket__take`} disabled={readOnly || busy.size > 0}
+      onClick={() => void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours")}>
+      {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
+    </button>
+  );
+  const reopen = (
+    <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0} onClick={() => void run("reopen", () => api.ticketStatus(id, "open"), "Reopened")}>
+      <RefreshCw size={16} aria-hidden /> Reopen
+    </button>
+  );
+  const blockedPart = t.blocked && t.status === "open" ? (
+    blockedRow && !looking
+      ? <BlockedSummary row={blockedRow} onLook={() => setLooking(true)} keyed={!lead} />
+      : <BlockedImport target={t.blocked} onDone={after} />
+  ) : null;
+  // In the pane a blocked import's Look inside is the main key, and Take it joins the chips.
+  const lookKey = lead && blockedRow && !looking && t.blocked && t.status === "open"
+    ? <button type="button" className="btn m-btn" onClick={() => setLooking(true)}><Search size={18} aria-hidden /> Look inside</button> : null;
   return (
     <div className="m-reqsheet__body">
+      {lead ? <div className="m-pane__acts">{lookKey ?? (t.status === "open" ? take : reopen)}{lead}</div> : null}
       {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
-      {head ? <p className="m-card__eyebrow">{ticketKind(t)} · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p> : null}
+      {head ? <p className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p> : null}
       <div className="m-ticket__tags">
         <span className={`m-pill m-pill--${state.tone}`}>{state.label}</span>
         <span className="m-pill">{t.owner ? `${t.owner} has it` : "Nobody has it yet"}</span>
-        {t.status === "open" ? (
-          <button type="button" className="btn btn--quiet m-btn m-ticket__take" disabled={readOnly || busy.size > 0}
-            onClick={() => void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours")}>
-            {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
-          </button>
-        ) : null}
+        {t.status === "open" && (!lead || lookKey) ? take : null}
       </div>
+
+      {/* What can't wait comes first: a blocked import's Look inside, right under the header. */}
+      {blockedPart}
 
       {t.request ? (
         <div className="m-ticket__request">
-          <Journey stage={t.request.stage} kind={t.request.title.kind} compact />
+          <Journey stage={t.request.stage} kind={t.request.title.kind} compact={!lead} />
           <span className="muted">{stageLabel(t.request.stage, t.request.title.kind)}{rowLine(t.request) ? ` · ${rowLine(t.request)}` : ""}</span>
           {t.request.stuck.length ? (
             <span className="m-stuck"><CircleAlert size={15} aria-hidden /><span>{t.request.stuck.map((s) => <span key={s} className="m-stuck__item">{s}</span>)}</span></span>
@@ -2846,12 +2874,6 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
           <span className="m-card__eyebrow">When it was opened, Plexbie saw</span>
           {t.statusThen.split("\n").map((line, i) => <span key={i}>{line}</span>)}
         </div>
-      ) : null}
-
-      {t.blocked && t.status === "open" ? (
-        blockedRow && !looking
-          ? <BlockedSummary row={blockedRow} onLook={() => setLooking(true)} />
-          : <BlockedImport target={t.blocked} onDone={after} />
       ) : null}
 
       {video && t.status === "open" ? (
@@ -2883,18 +2905,19 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
             <button type="button" aria-pressed={kind === "reply"} className="m-seg__item" onClick={() => setKind("reply")}>Reply to {t.who}</button>
           </div>
           <label className="visually-hidden" htmlFor={`${titleId}-say`}>{kind === "note" ? "Note for admins" : `Reply to ${t.who}`}</label>
-          <textarea id={`${titleId}-say`} className={`m-textarea${kind === "reply" ? " m-textarea--reply" : " m-textarea--note"}`} rows={3} maxLength={1200}
-            value={text} onChange={(e) => setText(e.target.value)}
+          <textarea ref={box} id={`${titleId}-say`} className={`m-textarea${kind === "reply" ? " m-textarea--reply" : " m-textarea--note"}`} rows={3} maxLength={1200}
+            value={text} onChange={(e) => { setText(e.target.value); setEmpty(false); }} aria-describedby={empty ? `${titleId}-empty` : undefined}
             placeholder={kind === "note" ? "Only admins see this" : `${t.who} gets this as a Discord DM or an alert, and can answer`} />
           <div className="m-person__actions m-person__actions--two">
             <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0}
               onClick={() => void run("status", () => api.ticketStatus(id, t.waiting ? "open" : "waiting"), t.waiting ? "Back with the admins" : `Waiting on ${t.who}`)}>
-              {t.waiting ? "Back to open" : `Wait on ${t.who}`}
+              {t.waiting ? "Stop waiting" : `Wait on ${t.who}`}
             </button>
-            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("send") || !text.trim()} onClick={() => void send()}>
+            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("send")} onClick={() => void send()}>
               {busy.has("send") ? "Sending…" : kind === "note" ? "Add note" : "Send reply"}
             </button>
           </div>
+          {empty ? <p className="field__error" id={`${titleId}-empty`} role="alert">Write the {kind === "note" ? "note" : "reply"} first.</p> : null}
           {solving ? (
             <div className="m-help__reply">
               <label className="field__label" htmlFor={`${titleId}-last`}>Last word to {t.who} <span className="muted">(optional)</span></label>
@@ -2914,11 +2937,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0 }: {
             </button>
           )}
         </div>
-      ) : (
-        <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0} onClick={() => void run("reopen", () => api.ticketStatus(id, "open"), "Reopened")}>
-          <RefreshCw size={16} aria-hidden /> Reopen
-        </button>
-      )}
+      ) : lead ? null : reopen}
     </div>
   );
 }
@@ -2936,7 +2955,10 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 /** A blocked import before looking inside: what Sonarr or Radarr said, and the way in. */
-function BlockedSummary({ row, onLook }: { row: BlockedRow; onLook: () => void }) {
+function BlockedSummary({ row, onLook, keyed = true }: { row: BlockedRow; onLook: () => void;
+  /** Its own Look inside key (not when the pane's main key is Look inside already). */
+  keyed?: boolean;
+}) {
   const app = row.app === "sonarr" ? "Sonarr" : "Radarr";
   const n = row.episodes.length;
   return (
@@ -2944,10 +2966,12 @@ function BlockedSummary({ row, onLook }: { row: BlockedRow; onLook: () => void }
       <h3>{app} can’t import {n ? `${n === 1 ? "1 episode" : `${n} episodes`}` : "it"}{n ? <span className="muted"> ({n > 1 ? `${row.episodes[0]} to ${row.episodes[n - 1].replace(/^S\d+/, "")}` : row.episodes[0]})</span> : null}</h3>
       <p className="m-blocked__release">{row.release}</p>
       {row.messages.map((m) => <p key={m} className="m-blocked__msg">{m}</p>)}
-      <div className="m-blocked__acts">
-        <button type="button" className="btn btn--primary m-btn" onClick={onLook}><Search size={18} aria-hidden /> Look inside</button>
-        <span className="muted">See the files, pick episodes, then Hold to import</span>
-      </div>
+      {keyed ? (
+        <div className="m-blocked__acts">
+          <button type="button" className="btn btn--primary m-btn" onClick={onLook}><Search size={18} aria-hidden /> Look inside</button>
+          <span className="muted">See the files, pick episodes, then Hold to import</span>
+        </div>
+      ) : <p className="muted m-blocked__how">Look inside: see the files, pick episodes, then Hold to import.</p>}
     </section>
   );
 }
@@ -3007,7 +3031,7 @@ function MenuDrawer({ groups, facts, onClose, onPick }: {
   return (
     <div className="m-drawer-wrap">
       <div className="m-drawer__scrim" aria-hidden onClick={onClose} />
-      <div ref={panel} className="m-drawer" role="dialog" aria-labelledby={titleId}>
+      <div ref={panel} className="m-drawer" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className="m-drawer__top">
           <div><h2 id={titleId} tabIndex={-1}>Everything else</h2><p>Grouped like the monitors, with the same counts</p></div>
           <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Close the menu" onClick={onClose} data-autofocus><X size={20} aria-hidden /></button>
@@ -3089,10 +3113,10 @@ function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number, undon
       role={t.tone === "error" ? "alert" : undefined}
       onPointerEnter={() => clock.current?.pause()} onPointerLeave={() => clock.current?.resume()}
       onFocus={() => clock.current?.pause()} onBlur={() => clock.current?.resume()}
-      initial={{ opacity: 0, y: 24, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 12, scale: 0.97, transition: { duration: 0.16 } }}
-      transition={{ type: "spring", duration: 0.4, bounce: 0.18 }}
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8, transition: { duration: 0.16, ease: EASE_OUT } }}
+      transition={{ duration: 0.24, ease: EASE_OUT }}
       drag="x"
       dragSnapToOrigin
       onDragEnd={(_, i) => { if (Math.abs(i.offset.x) > 70 || Math.abs(i.velocity.x) > 500) dismiss(t.id); }}
@@ -3225,11 +3249,15 @@ function useMedia(query: string) {
 }
 
 /** Typing somewhere, or a sheet or the menu is up: the page's keys stay out of the way. */
-const keysOff = (e: KeyboardEvent) => {
+const keysOff = (e: KeyboardEvent, within: string) => {
   const t = e.target as HTMLElement | null;
   return e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || document.documentElement.classList.contains("has-sheet")
-    || !!t?.closest("input, textarea, select, [contenteditable='true']");
+    || !!t?.closest("input, textarea, select, [contenteditable='true']")
+    // Single-key shortcuts only where they're meant (WCAG 2.1.4): never from a stray key elsewhere.
+    || !t?.closest(within);
 };
+/** Where the queue's keys work: the strip, the queue and the detail. */
+const DESK_KEYS = ".m-strip, .m-queue-col, .m-pane";
 
 /** A row's picture: its poster (or a drawn cover), an icon, or the person's initial. */
 function ItemArt({ item, big = false }: { item: Item; big?: boolean }) {
@@ -3355,71 +3383,86 @@ function QueueRow({ item, selected, onSelect, actions }: {
   );
 }
 
-/** A ticket in the detail: the ticket's own insides, as Tickets shows it. */
-function TicketPane({ item, look, solve }: { item: Item & { src: { type: "ticket" } }; look: boolean; solve: number }) {
+/** A ticket in the detail: the ticket's own insides, as Tickets shows it, its main key and
+ *  "Open the full ticket" as the pair under the header. */
+function TicketPane({ item, look, solve, lead }: { item: Item & { src: { type: "ticket" } }; look: boolean; solve: number; lead: ReactNode }) {
   const res = useKept<AdminTicketDetail>(() => api.adminTicket(item.src.t.id), [item.src.t.id]);
-  return <TicketBody key={String(look)} id={item.src.t.id} res={res} head={false} blockedRow={look ? undefined : item.src.blocked} solve={solve} />;
+  return <TicketBody key={String(look)} id={item.src.t.id} res={res} head={false} blockedRow={look ? undefined : item.src.blocked} solve={solve} lead={lead} />;
 }
 
 /** A request in the detail: RequestSheet's insides (journey, fixes, Open a ticket, history). */
 function RequestPane({ id }: { id: string }) {
   const res = useKept<AdminRequestDetail>(() => api.adminRequest(id), [id]);
-  return <RequestBody id={id} res={res} head={false} />;
+  return <RequestBody id={id} res={res} head={false} quiet />;
 }
 
-/** What the detail says about an item, top to bottom, and how to act on it. */
-function DetailBody({ item, a, look, solve, reply }: { item: Item; a: DeskActions; look: boolean; solve: number; reply: number }) {
+/** What the detail says about an item, top to bottom. Every kind opens the same way: its
+ *  main key and a pill, left-aligned right under the header, then what there is to know. */
+function DetailBody({ item, a, look, onLook, solve, reply }: {
+  item: Item; a: DeskActions; look: boolean; onLook: () => void; solve: number; reply: number;
+}) {
   const full = useOpenFull();
   const src = item.src;
   const off = a.readOnly || a.busy(item.key);
   const facts = (rows: [string, ReactNode][]) => (
     <dl className="m-facts">{rows.filter(([, v]) => v !== null && v !== "").map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>
   );
-  const acts = (children: ReactNode) => <div className="m-pane__acts">{children}</div>;
+  const acts = (main: ReactNode, pill: ReactNode) => <div className="m-pane__acts">{main}{pill}</div>;
   const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={off} onConfirm={run} />;
-  const btn = (label: ReactNode, onClick: () => void, quiet = false, disabled = off) =>
-    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn`} disabled={disabled} onClick={onClick}>{label}</button>;
+  const key = (label: ReactNode, onClick: () => void, disabled = off, primary = false) =>
+    <button type="button" className={`btn${primary ? " btn--primary" : ""} m-btn`} disabled={disabled} onClick={onClick}>{label}</button>;
+  const pill = (label: ReactNode, onClick: () => void) =>
+    <button type="button" className="btn btn--quiet m-btn" onClick={onClick}>{label}</button>;
   switch (src.type) {
     case "ticket":
-      return (
-        <>
-          {acts(btn("Open the full ticket", () => full("tickets", { ticket: src.t.id }), true, false))}
-          <TicketPane item={item as Item & { src: { type: "ticket" } }} look={look} solve={solve} />
-        </>
-      );
+      return <TicketPane item={item as Item & { src: { type: "ticket" } }} look={look} solve={solve}
+        lead={pill("Open the full ticket", () => full("tickets", { ticket: src.t.id }))} />;
     case "import":
       return (
         <>
-          {look ? <BlockedImport target={src.b} /> : <BlockedSummaryLook row={src.b} />}
-          {acts(btn("Open blocked imports", () => full("health", { part: "blocked" }), true, false))}
+          {acts(key(<><Search size={18} aria-hidden /> Look inside</>, onLook, false), pill("All blocked imports", () => full("health", { part: "blocked" })))}
+          {look ? <BlockedImport target={src.b} /> : <BlockedSummary row={src.b} onLook={onLook} />}
         </>
       );
     case "request":
       if (item.group === "done") {
         return (
           <>
+            {acts(key("All requests", () => full("all"), false), null)}
             {facts([["Asked", `${since(src.r.requestedAt)} by ${src.r.requester}`], [src.r.status === "approved" ? "Approved" : "Declined", src.r.resolvedAt ? `${since(src.r.resolvedAt)}${src.r.resolvedBy ? ` by ${src.r.resolvedBy}` : ""}` : null]])}
-            {acts(btn("All requests", () => full("all"), true, false))}
           </>
         );
       }
       return (
         <>
-          {acts(<>{btn(<><Check size={18} aria-hidden /> Approve</>, () => void a.approve(src.r, true))}{hold("Decline", () => void a.approve(src.r, false))}</>)}
+          {acts(key(<><Check size={18} aria-hidden /> Approve</>, () => void a.approve(src.r, true), off, true), hold("Decline", () => void a.approve(src.r, false)))}
           <RequestPane id={src.r.id} />
         </>
       );
-    case "stuck": return <RequestPane id={src.r.id!} />;
+    case "stuck":
+      return (
+        <>
+          {acts(["tv", "movie"].includes(src.r.title.kind) ? key(<><RefreshCw size={16} aria-hidden /> Search again</>, () => void a.searchRequest(src.r)) : null,
+            pill("All requests", () => full("all")))}
+          <RequestPane id={src.r.id!} />
+        </>
+      );
     case "chat":
-      return <Conversation key={src.p.id} person={src.p} onBack={() => undefined} inPane reply={reply} />;
+      return (
+        <>
+          {acts(item.group === "done" ? key("Mark unread", () => void a.chatDone(src.p, false)) : key(<><Check size={16} aria-hidden /> Done</>, () => void a.chatDone(src.p, true)),
+            pill("All messages", () => full("messages")))}
+          <Conversation key={src.p.id} person={src.p} onBack={() => undefined} inPane reply={reply} />
+        </>
+      );
     case "join":
       return (
         <>
-          {facts([["Asked", since(src.j.askedAt)], ["How", src.j.via === "plex" ? "Signed in with Plex" : "On Discord"], ["Plex invite to", src.j.email || (src.j.via === "plex" ? "Their Plex account" : null)]])}
           {src.j.messageId
-            ? acts(<>{btn(<><Check size={18} aria-hidden /> Invite to Plex</>, () => void a.invite(src.j, true))}{hold("Deny", () => void a.invite(src.j, false))}</>)
-            : <p className="muted">Answer this one in Discord.</p>}
-          {acts(btn("Join requests", () => full("joins"), true, false))}
+            ? acts(key(<><Check size={18} aria-hidden /> Invite to Plex</>, () => void a.invite(src.j, true)), hold("Deny", () => void a.invite(src.j, false)))
+            : acts(pill("Join requests", () => full("joins")), null)}
+          {src.j.messageId ? null : <p className="muted">Answer this one in Discord.</p>}
+          {facts([["Asked", since(src.j.askedAt)], ["How", src.j.via === "plex" ? "Signed in with Plex" : "On Discord"], ["Plex invite to", src.j.email || (src.j.via === "plex" ? "Their Plex account" : null)]])}
         </>
       );
     case "person": {
@@ -3427,12 +3470,12 @@ function DetailBody({ item, a, look, solve, reply }: { item: Item; a: DeskAction
       const total = p.removalIn === null ? null : p.daysIdle + p.removalIn;
       return (
         <>
+          {acts(key(<><ShieldCheck size={16} aria-hidden /> Never remove</>, () => void a.keepPerson(p)), pill("People", () => full("people")))}
           <div className="m-meter m-meter--hot">
             <span className="m-meter__track"><span className="m-meter__fill" style={{ transform: `scaleX(${total ? Math.min(1, p.daysIdle / total) : 1})` }} /></span>
             <span className="m-meter__label">{p.removalIn ? `${p.removalIn} days until removal · idle ${p.daysIdle}` : "Due for removal"}</span>
           </div>
           {facts([["Last watched", p.lastWatched ? since(p.lastWatched) : "No watch recorded"], ["Discord", p.discordName], ["Warned", p.warned ? "Yes" : null]])}
-          {acts(<>{btn(<><ShieldCheck size={16} aria-hidden /> Never remove</>, () => void a.keepPerson(p))}{btn("People", () => full("people"), true, false)}</>)}
           {src.chat ? <Conversation key={src.chat.id} person={src.chat} onBack={() => undefined} inPane reply={reply} /> : null}
         </>
       );
@@ -3440,49 +3483,50 @@ function DetailBody({ item, a, look, solve, reply }: { item: Item; a: DeskAction
     case "leaving":
       return (
         <>
+          {acts(key(<><ShieldCheck size={16} aria-hidden /> Keep it</>, () => void a.keepTitle(src.c)), pill("Leaving soon", () => full("cleanup")))}
           {facts([["Leaves in", `${src.c.daysLeft === 1 ? "1 day" : `${src.c.daysLeft} days`}`], ["Why", clockText(src.c.reason, src.c.lastActivity)], ["Type", src.c.type === "show" ? "TV" : "Film"]])}
-          {acts(<>{btn(<><ShieldCheck size={16} aria-hidden /> Keep it</>, () => void a.keepTitle(src.c))}{btn("Leaving soon", () => full("cleanup"), true, false)}</>)}
         </>
       );
     case "link":
       return (
         <>
+          {acts(key("Invite links", () => full("invites", { part: "links" }), false), hold("Cancel", () => void a.cancelLink(src.i)))}
           {facts([["Made", `${since(src.i.createdAt)} by ${src.i.createdBy ?? "an admin"}`], ["Ends", daysUntil(src.i.expiresAt)], ["Locked to", src.i.email]])}
           <p className="muted">The link itself is only shown once, when it’s made. To send it again, make a new one under Invites.</p>
-          {acts(<>{btn("Invite links", () => full("invites", { part: "links" }), false, false)}{hold("Cancel", () => void a.cancelLink(src.i))}</>)}
         </>
       );
     case "plexinvite":
       return (
         <>
-          {facts([["Sent", since(src.i.sentAt)], ["To", src.i.email || src.i.name]])}
           {src.i.email
-            ? acts(<>{btn("Change email", () => full("invites", { part: "plex" }), false, false)}{hold("Cancel", () => void a.cancelPlex(src.i))}</>)
-            : <p className="muted">Sent to a Plex username, so change or cancel it on plex.tv.</p>}
+            ? acts(key("Change email", () => full("invites", { part: "plex" }), false), hold("Cancel", () => void a.cancelPlex(src.i)))
+            : acts(pill("Waiting on Plex", () => full("invites", { part: "plex" })), null)}
+          {src.i.email ? null : <p className="muted">Sent to a Plex username, so change or cancel it on plex.tv.</p>}
+          {facts([["Sent", since(src.i.sentAt)], ["To", src.i.email || src.i.name]])}
         </>
       );
     case "down":
       return (
         <>
+          {acts(key(<><RefreshCw size={16} aria-hidden /> Check again</>, () => void a.checkAgain()), pill("Services", () => full("health")))}
           <p className="m-pane__text">{src.h.detail ?? "Not answering."}</p>
-          {acts(<>{btn(<><RefreshCw size={16} aria-hidden /> Check again</>, () => void a.checkAgain())}{btn("Services", () => full("health"), true, false)}</>)}
         </>
       );
   }
 }
 
-/** The blocked import with no ticket: the summary, opened from the row's Look inside. */
-function BlockedSummaryLook({ row }: { row: BlockedRow }) {
-  const [look, setLook] = useState(false);
-  return look ? <BlockedImport target={row} /> : <BlockedSummary row={row} onLook={() => setLook(true)} />;
-}
-
 /** The selected item in full: beside the queue on a wide screen, a full-height sheet on a phone. */
-function Detail({ item, where, a, sheet, look, solve, reply, onStep, onClose }: {
-  item: Item | null; where: { group: string; place: string }; a: DeskActions; sheet: boolean; look: boolean; solve: number; reply: number;
+function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, state, onStep, onClose }: {
+  item: Item | null; where: { group: string; place: string; first: boolean; last: boolean }; a: DeskActions; sheet: boolean;
+  look: boolean; onLook: () => void; solve: number; reply: number;
+  /** A new value puts focus on the title (Enter or Open on a row). */
+  focus: number;
+  /** With nothing selected: still loading, something couldn't load, or truly nothing. */
+  state: "loading" | "missing" | "clear";
   onStep: (by: 1 | -1) => void; onClose: () => void;
 }) {
   const box = useRef<HTMLElement>(null);
+  const title = useRef<HTMLHeadingElement>(null);
   const [more, setMore] = useState({ has: false, end: true });
   // "More below" and the fade only when the pane really runs past the screen.
   useEffect(() => {
@@ -3497,16 +3541,17 @@ function Detail({ item, where, a, sheet, look, solve, reply, onStep, onClose }: 
     return () => { seen.disconnect(); el.removeEventListener("scroll", check); };
   }, [sheet, item?.key]);
   useEffect(() => { box.current?.scrollTo({ top: 0 }); }, [item?.key]);
+  useEffect(() => { if (focus) title.current?.focus({ preventScroll: true }); }, [focus]);
   const done = item && (item.kind === "ticket" || item.kind === "chat") && item.group !== "done";
   return (
     <aside ref={box} className={`m-pane${sheet ? " is-sheet" : ""}${more.has ? " has-more" : ""}${more.end ? " at-end" : ""}`}
-      aria-label={item ? `Selected: ${item.title}` : "Nothing selected"}>
+      aria-label={item ? `Selected: ${item.title}` : "Nothing selected"} aria-busy={!item && state === "loading"}>
       <div className="m-pane__top">
         <span className="m-pane__where"><b>{where.group}</b> · {where.place}</span>
         <div className="m-pane__nav">
           {sheet ? null : <>
-            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Previous (K)" onClick={() => onStep(-1)}><ChevronUp size={20} aria-hidden /></button>
-            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Next (J)" onClick={() => onStep(1)}><ChevronDown size={20} aria-hidden /></button>
+            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Previous (K)" disabled={!item || where.first} onClick={() => onStep(-1)}><ChevronUp size={20} aria-hidden /></button>
+            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Next (J)" disabled={!item || where.last} onClick={() => onStep(1)}><ChevronDown size={20} aria-hidden /></button>
           </>}
           {sheet ? <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Back to the queue" onClick={onClose} data-autofocus><X size={20} aria-hidden /></button> : null}
         </div>
@@ -3517,13 +3562,20 @@ function Detail({ item, where, a, sheet, look, solve, reply, onStep, onClose }: 
             <ItemArt item={item} big />
             <div>
               <p className="caps m-hero__eyebrow">{item.eyebrow}</p>
-              <h2 className="m-hero__title">{item.title}</h2>
+              <h2 className="m-hero__title" ref={title} tabIndex={-1}>{item.title}</h2>
               {item.sub ? <p className="m-hero__sub">{item.sub}</p> : null}
               <p className="m-hero__meta">{[item.meta, item.age && item.group !== "soon" ? `${item.age}${/^\d/.test(item.age) ? " ago" : ""}` : ""].filter(Boolean).join(" · ")}</p>
             </div>
           </div>
-          <DetailBody item={item} a={a} look={look} solve={solve} reply={reply} />
+          <DetailBody item={item} a={a} look={look} onLook={onLook} solve={solve} reply={reply} />
         </div>
+      ) : state === "loading" ? (
+        <div className="m-pane__body" aria-hidden>
+          <div className="m-hero"><span className="skeleton m-hero__art" /><span className="m-skel-lines"><span className="skeleton" /><span className="skeleton" /><span className="skeleton" /></span></div>
+          <div className="skeleton m-skel-block" />
+        </div>
+      ) : state === "missing" ? (
+        <div className="m-pane__body"><p className="muted">Nothing to show here: some of the queue couldn’t be loaded. Try again above.</p></div>
       ) : (
         <div className="m-pane__body">
           <AllClear title="All clear">Nothing here right now.</AllClear>
@@ -3543,7 +3595,7 @@ function Detail({ item, where, a, sheet, look, solve, reply, onStep, onClose }: 
 function DetailSheet(props: Parameters<typeof Detail>[0]) {
   const panel = useRef<HTMLDivElement>(null);
   useSheet(panel, props.onClose);
-  return <div ref={panel} className="m-pane-sheet" role="dialog" aria-label={props.item ? props.item.title : "Detail"}><Detail {...props} /></div>;
+  return <div ref={panel} className="m-pane-sheet" role="dialog" aria-modal="true" aria-label={props.item ? props.item.title : "Detail"}><Detail {...props} /></div>;
 }
 
 /**
@@ -3551,7 +3603,19 @@ function DetailSheet(props: Parameters<typeof Detail>[0]) {
  * of the queue), what needs you (Urgent, Today, Coming up), Waiting and Done, and the
  * selected item in full beside it (on a phone, in a sheet).
  */
-function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | null; menu: ReactNode }) {
+/** What each feed is called when it couldn't be loaded. */
+const FEED_NAME: Record<Feed, string> = {
+  requests: "requests", all: "all requests", tickets: "tickets", joins: "join requests", invites: "invite links",
+  plexinvites: "Plex invites", people: "people", cleanup: "cleanup", messages: "messages", health: "services", blocked: "blocked imports",
+};
+const listed = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "");
+
+function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
+  desk: Desk; checked: string | null; menu: ReactNode; openMenu: () => void;
+  /** A refresh failed over what's on screen: when it was last good. */
+  stale: { at?: number } | null;
+  onRetry: (feeds: Feed[] | "stale") => Promise<unknown>;
+}) {
   const { data } = useManage();
   const facts = desk.facts;
   const [params] = useSearchParams();
@@ -3566,6 +3630,9 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
   const [look, setLook] = useState<string | null>(null);
   const [solve, setSolve] = useState({ key: "", n: 0 });
   const [reply, setReply] = useState({ key: "", n: 0 });
+  const [focus, setFocus] = useState(0);
+  const loading = desk.loading;
+  const missing = desk.missing;
   const list = view === "needs" ? (filter ? desk.needs.filter((i) => i.area === filter) : desk.needs) : view === "waiting" ? desk.waiting : desk.done;
   const found = list.findIndex((i) => i.key === sel.key);
   // An item acted on leaves the list: the next one takes its place.
@@ -3574,6 +3641,8 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
   const select = (item: Item, open = false) => {
     setSel({ key: item.key, at: list.indexOf(item) });
     if (open && !wide) setSheet(true);
+    // Opened on a wide screen: focus goes to the item's title beside the queue.
+    if (open && wide) setFocus((n) => n + 1);
   };
   const a = useDeskActions();
   const step = (by: 1 | -1) => {
@@ -3585,8 +3654,9 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
   const toggle = (area: Area | null) => { setView("needs"); setFilter((f) => (f === area ? null : area)); };
   const groups = view === "needs" ? (["urgent", "today", "soon"] as Group[]) : [view as Group];
   const label = AREAS.find((x) => x.id === filter)?.label;
-  const where = current ? { group: GROUP_HEAD[current.group].label.replace(" · last 2 days", ""), place: `${index + 1}\u00a0of ${list.length}` }
-    : { group: VIEW_LABEL[view], place: "nothing here" };
+  const where = current ? { group: GROUP_HEAD[current.group].label.replace(" · last 2 days", ""), place: `${index + 1}\u00a0of ${list.length}`, first: index === 0, last: index === list.length - 1 }
+    : { group: VIEW_LABEL[view], place: loading ? "loading" : "nothing here", first: true, last: true };
+  if (loading) Object.assign(where, { group: VIEW_LABEL[view], place: "loading", first: true, last: true });
   const up = (data.health ?? []).filter((h) => h.ok).map((h) => h.name);
   // Toasts float over the bottom of the queue column on a wide screen (styles.css).
   const column = useRef<HTMLElement>(null);
@@ -3611,8 +3681,9 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
   // Enter opens the row that has focus, as its button does.
   const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
   const onKey = (e: KeyboardEvent) => {
-    if (keysOff(e)) return;
+    if (keysOff(e, DESK_KEYS)) return;
     const k = e.key.toLowerCase();
+    if (e.key === "/") { e.preventDefault(); openMenu(); return; }
     const inQueue = !!(e.target as HTMLElement | null)?.closest(".m-queue-col");
     if (/^[1-5]$/.test(e.key)) { e.preventDefault(); toggle(AREAS[Number(e.key) - 1].id); return; }
     if (k === "j" || (inQueue && e.key === "ArrowDown")) { e.preventDefault(); step(1); return; }
@@ -3636,20 +3707,24 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
     return () => window.removeEventListener("keydown", on);
   }, []);
   const detail = {
-    item: current, where, a, look: !!current && look === current.key,
+    item: loading ? null : current, where, a, look: !!current && look === current.key, onLook: () => { if (current) setLook(current.key); },
     solve: current && solve.key === current.key ? solve.n : 0, reply: current && reply.key === current.key ? reply.n : 0,
+    focus, state: (loading ? "loading" : missing.length ? "missing" : "clear") as "loading" | "missing" | "clear",
     onStep: step, onClose: () => setSheet(false),
   };
+  const count = (n: number) => (loading ? "–" : n);
 
   return (
     <>
       <div className="m-dhead">
         <div className="m-dhead__text">
           <h1 className="m-h1">Manage</h1>
-          <p className="m-headline">
-            <span className="m-headline__long"><b>{desk.needs.length === 1 ? "1 thing needs" : `${desk.needs.length} things need`} you.</b>{desk.urgent ? <> <b>{desk.urgent} {desk.urgent === 1 ? "is" : "are"} urgent.</b></> : null}</span>
-            <span className="m-headline__short"><b>{desk.needs.length} need you</b>{desk.urgent ? <> · <b>{desk.urgent} urgent</b></> : null}</span>
-            {" "}<span className="m-headline__more">Most you can handle from here.</span>
+          <p className="m-headline" aria-live="polite">
+            {loading ? <span><b>Checking what needs you…</b></span> : <>
+              <span className="m-headline__long"><b>{missing.length ? "At least " : ""}{desk.needs.length === 1 ? "1\u00a0thing needs" : `${desk.needs.length}\u00a0things need`} you.</b>{desk.urgent ? <> <b>{`${desk.urgent}\u00a0${desk.urgent === 1 ? "is" : "are"} urgent.`}</b></> : null}</span>
+              <span className="m-headline__short"><b>{`${desk.needs.length}\u00a0need you`}</b>{desk.urgent ? <> · <b>{`${desk.urgent}\u00a0urgent`}</b></> : null}</span>
+            </>}
+            {" "}<span className="m-headline__more">The rest is under Everything else.</span>
           </p>
         </div>
         {menu}
@@ -3658,14 +3733,17 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
       <section className="m-strip" aria-label="At a glance. Press a monitor to show only that part of the queue">
         <div className={`m-monitors${filter ? " is-filtered" : ""}`} role="group" aria-label="Filter the queue">
           {desk.monitors.map((m, n) => (
-            <button key={m.area} type="button" className={`m-mon${m.hot ? " is-urgent" : ""}`} aria-pressed={filter === m.area} onClick={() => toggle(m.area)}
+            <button key={m.area} type="button" className={`m-mon${m.hot && m.known ? " is-urgent" : ""}`} aria-pressed={filter === m.area} onClick={() => toggle(m.area)}
               aria-keyshortcuts={String(n + 1)}
-              aria-label={`${m.label}: ${m.known ? m.count : "not loaded yet"}, ${m.makeup}${m.hot ? ", urgent" : ""}${m.first ? `. First: ${m.first.title}, ${m.first.top}` : ""}`}>
+              aria-label={`${m.label}: ${m.failed ? "couldn’t load" : m.known ? `${m.count}, ${m.makeup}` : "loading"}${m.hot ? ", urgent" : ""}${m.first ? `. First: ${m.first.title}, ${m.first.top}` : ""}`}>
               <span className="m-mon__label"><span className="m-lamp" aria-hidden /><span className="caps">{m.label}</span></span>
               <span className="m-mon__screen">
-                <span className="m-mon__num">{m.known ? m.count : "–"}</span>
-                <span className="m-mon__top"><b>{m.first?.title ?? (m.area === "services" ? "All up" : "Nothing waiting")}</b><span>{m.first?.top ?? "All clear"}</span></span>
-                <span className="m-mon__make">{m.known ? m.makeup : "Loading…"}</span>
+                <span className="m-mon__num">{m.failed ? "?" : m.known ? m.count : "–"}</span>
+                <span className="m-mon__top">
+                  <b>{m.failed ? "Couldn’t load" : !m.known ? "Checking…" : m.first?.title ?? (m.area === "services" ? "All up" : "Nothing waiting")}</b>
+                  <span>{m.failed ? "Try again below" : !m.known ? "\u00a0" : m.first?.top ?? "All clear"}</span>
+                </span>
+                <span className="m-mon__make">{m.failed ? "Count unknown" : m.known ? m.makeup : "Loading…"}</span>
               </span>
             </button>
           ))}
@@ -3684,7 +3762,7 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
             {(["needs", "waiting", "done"] as DeskView[]).map((v) => (
               <button key={v} type="button" aria-pressed={view === v} onClick={() => { setView(v); setSel({ key: null, at: 0 }); }}>
                 {v === "needs" ? "Needs you" : v === "waiting" ? "Waiting" : "Done"}
-                {v === "done" ? null : <span className="m-seg3__n">{v === "needs" ? desk.needs.length : desk.waiting.length}</span>}
+                {v === "done" ? null : <span className="m-seg3__n">{count(v === "needs" ? desk.needs.length : desk.waiting.length)}</span>}
               </button>
             ))}
           </div>
@@ -3695,8 +3773,18 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
               <button type="button" className="btn btn--quiet m-btn m-rowbtn" onClick={() => toggle(null)}>Show all</button>
             </div>
           ) : null}
-          <div className="m-queue">
-            {groups.map((g) => {
+          {missing.length ? (
+            <LoadFailed text={`Couldn’t load ${listed(missing.map((f) => FEED_NAME[f]))}, so the queue may be missing some of what needs you.`}
+              onRetry={() => onRetry(missing)} />
+          ) : stale ? <Stale at={stale.at} onRetry={() => onRetry("stale")} /> : null}
+          <div className="m-queue" aria-busy={loading}>
+            {/* Until everything has answered: rows the size of the real ones, swapped in once. */}
+            {loading ? (
+              <div className="m-group" aria-hidden>
+                <div className="m-group__head"><span className="skeleton m-skel-caps" /></div>
+                <ul className="m-rows2">{[0, 1, 2, 3].map((n) => <li key={n} className="skeleton m-skel-row" />)}</ul>
+              </div>
+            ) : groups.map((g) => {
               const rows = list.filter((i) => i.group === g);
               if (!rows.length) return null;
               return (
@@ -3713,14 +3801,15 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
                 </section>
               );
             })}
-            {!list.length ? (
+            {/* "All clear" only when everything answered and there's truly nothing. */}
+            {!loading && !missing.length && !list.length ? (
               <AllClear title="All clear">
                 {view === "waiting" ? "Nobody owes you an answer." : view === "done" ? "Nothing decided, solved or marked done in the last two days."
                   : filter ? `Nothing in ${label} needs you.` : "Nothing needs you right now."}
               </AllClear>
             ) : null}
           </div>
-          {view === "needs" && list.length ? (
+          {view === "needs" && list.length && !loading ? (
             <p className="m-queue__end">
               <Check size={18} aria-hidden />
               {filter ? <span>That’s all for {label}. {desk.needs.length - list.length}{" "}more in the full queue.</span>
@@ -3730,6 +3819,7 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
           <div className="m-keys m-queue__keys" aria-hidden>
             <span><kbd>J</kbd><kbd>K</kbd> next, previous</span><span><kbd>Enter</kbd> open</span><span><kbd>E</kbd> done (tickets, chats)</span>
             <span><kbd>A</kbd> approve</span><span><kbd>1</kbd>–<kbd>5</kbd> filter</span><span><kbd>/</kbd> menu</span>
+            <span>(in the queue, the monitors or the detail)</span>
           </div>
         </section>
         {wide ? <Detail {...detail} sheet={false} /> : null}
@@ -3767,9 +3857,9 @@ export function Manage() {
   const reduced = useReducedMotion();
   const now = useNow();
   const [menuOpen, setMenuOpen] = useState(false);
-  // "/" opens Everything else.
+  // "/" opens Everything else from a full view (the queue has its own, beside its other keys).
   useEffect(() => {
-    const on = (e: KeyboardEvent) => { if (e.key === "/" && !keysOff(e)) { e.preventDefault(); setMenuOpen(true); } };
+    const on = (e: KeyboardEvent) => { if (e.key === "/" && !keysOff(e, "#m-panel, .page-head")) { e.preventDefault(); setMenuOpen(true); } };
     window.addEventListener("keydown", on);
     return () => window.removeEventListener("keydown", on);
   }, []);
@@ -3832,11 +3922,13 @@ export function Manage() {
   // Blocked imports: on opening, and with the services at most every five minutes while
   // the page stays open (each ask reads Sonarr's and Radarr's queues).
   const [blocked, setBlocked] = useState<BlockedRow[] | undefined>(undefined);
+  const [blockedFailed, setBlockedFailed] = useState(false);
+  const [blockedLoadedAt, setBlockedLoadedAt] = useState<number | undefined>(undefined);
   const blockedAt = useRef(0);
   const loadBlocked = useCallback(() => {
     blockedAt.current = Date.now();
-    // A failure keeps the last answer; Health says when it can't ask.
-    return api.adminBlocked().then((b) => setBlocked(b.rows), () => undefined);
+    // A failure keeps the last answer and says so.
+    return api.adminBlocked().then((b) => { setBlocked(b.rows); setBlockedFailed(false); setBlockedLoadedAt(Date.now()); }, () => setBlockedFailed(true));
   }, []);
 
   const admin = !!session?.admin;
@@ -3899,7 +3991,12 @@ export function Manage() {
     setParams(() => { const p = new URLSearchParams(); p.set("tab", t); if (row.part) p.set("part", row.part); return p; });
   };
   const deskData: DeskData = { ...data, blocked };
-  const desk = deriveDesk(deskData, now, { me: session?.user.name ?? null, hidden });
+  const feedFailed = { ...failed, blocked: blockedFailed } as Partial<Record<Feed, boolean>>;
+  const desk = deriveDesk(deskData, now, { me: session?.user.name ?? null, hidden, failed: feedFailed });
+  // Refreshes that failed over what's already here: the desk keeps it and says how old it is.
+  const staleFeeds = DESK_FEEDS.filter((f) => feedFailed[f] && deskData[f] !== undefined);
+  const retry = (feeds: Feed[] | "stale") => Promise.all((feeds === "stale" ? staleFeeds : feeds)
+    .map((f) => (f === "blocked" ? loadBlocked() : refresh(f as Section))));
   const groups = menuGroups(desk, deskData);
   const facts = [desk.facts.party ? `Watch party: ${desk.facts.party}.` : "",
     desk.facts.cleanup ? `${desk.facts.cleanup}.` : "", loadedAt.health ? `Checked ${clock(loadedAt.health)}, again every minute.` : ""].filter(Boolean).join(" ");
@@ -3915,7 +4012,9 @@ export function Manage() {
     return (
       <ManageCtx.Provider value={ctx}>
         <div className="shell page m-page m-page--desk">
-          <ManageDesk desk={desk} checked={loadedAt.health ? clock(loadedAt.health) : null} menu={menu} />
+          <ManageDesk desk={desk} checked={loadedAt.health ? clock(loadedAt.health) : null} menu={menu} openMenu={() => setMenuOpen(true)}
+            stale={staleFeeds.length ? { at: Math.min(...staleFeeds.map((f) => (f === "blocked" ? blockedLoadedAt ?? 0 : loadedAt[f as Section] ?? 0))) || undefined } : null}
+            onRetry={retry} />
         </div>
         <ToastHost register={registerToasts} />
       </ManageCtx.Provider>
@@ -3927,7 +4026,7 @@ export function Manage() {
       <div className="shell page m-page">
         <div className="page-head">
           <div className="m-titlebar">
-            <h1 className="display page-title">Manage</h1>
+            <h1 className="m-h1">Manage</h1>
             {menu}
           </div>
           <Link to="/manage" className="m-back"><ArrowLeft size={16} aria-hidden /> What needs you</Link>

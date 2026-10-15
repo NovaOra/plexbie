@@ -356,8 +356,17 @@ export const admin = (section: string): Promise<unknown> => {
   // Titles kept from the search are on the server but not on the clock.
   c.exempt = [...all, ...plexTitles.filter((t) => !all.some((r) => r.ratingKey === t.ratingKey))].filter(isKept)
     .map(({ ratingKey, title, type }) => ({ ratingKey, title, type, year: plexTitles.find((t) => t.ratingKey === ratingKey)?.year ?? null }));
-  return wait(data[section]);
+  const { slow, fails } = reviewKnobs();
+  if (fails.includes(section)) return new Promise((_, no) => setTimeout(() => no(new Error("Plexbie didn't answer.")), 260 + slow));
+  return wait(data[section], 260 + slow);
 };
+
+/** For reviewing Manage's loading and failure states in the sample: ?slow=<ms> holds every
+ *  admin answer back that long, ?fail=health,tickets makes those sections fail. */
+function reviewKnobs() {
+  const q = new URLSearchParams(location.search);
+  return { slow: Math.min(20_000, Number(q.get("slow")) || 0), fails: (q.get("fail") ?? "").split(",").filter(Boolean) };
+}
 
 /** The language chips, remembered for the visit. */
 let languages: string[] = [];
@@ -615,7 +624,7 @@ helps.push({ id: "h4", request: "5099", slot: 208, title: "Radar Men from the Mo
   reason: "Downloaded, but won't import", note: BLOCKED_NOTE, status_then: "Downloaded, import blocked", status: "open", created_at: at(8), opened_by: "Plexbie" } as Help);
 threads.h4 = [{ id: "e9", at: at(8), by: "Plexbie", kind: "note", text: BLOCKED_NOTE }];
 const sampleBlocked = { app: "sonarr" as const, downloadId: "SABnzbd_nzo_demo" };
-export const adminBlocked = () => wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952,
+export const adminBlocked = () => reviewKnobs().fails.includes("blocked") ? Promise.reject(new Error("Sonarr didn't answer.")) : wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952,
   release: "Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"], ticket: "h4",
   messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."] }], errors: {} });
 const RADAR_TITLES = ["Moon Rocket", "Molten Terror", "Bridge of Death", "Flight to Destruction", "Murder Car", "Hills of Death",
