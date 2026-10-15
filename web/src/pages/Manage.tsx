@@ -3404,11 +3404,18 @@ function RowActions({ item, a, open, look, reply, selected = false }: {
 /** After a row's key did its work: if that key went (Take it became Search again) but the row
  *  stayed, focus moves to the row's first key, or the row itself, not off to the page. */
 function keepFocusIn(row: HTMLElement | null) {
-  requestAnimationFrame(() => {
+  // The row's keys can change a moment later (the queue refreshes after the action), so watch
+  // for a few seconds: should focus fall to the page while the row is still there, put it back.
+  const was = document.activeElement;
+  let n = 0;
+  const t = window.setInterval(() => {
     const at = document.activeElement;
-    if (!row?.isConnected || (at && at !== document.body && at.isConnected)) return;
+    const lost = !at || at === document.body || !at.isConnected;
+    if (++n > 30 || !row?.isConnected || (!lost && at !== was)) { window.clearInterval(t); return; }
+    if (!lost) return;
+    window.clearInterval(t);
     (row.querySelector<HTMLElement>(".m-row__acts button, .m-pane__acts button") ?? row.querySelector<HTMLElement>(".m-row__main, .m-hero__title"))?.focus({ preventScroll: true });
-  });
+  }, 100);
 }
 
 /** One queue row: its picture, three lines, and two keys. */
