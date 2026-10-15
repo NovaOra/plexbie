@@ -53,10 +53,23 @@
   --screen: #ffd1e4;
   --screen-deep: #f5b3cf;
   --on-screen: #141b30;
+  --screen-hover: #ffe0ed;
 
   /* Tally: only what is live or active right now. */
   --tally: #ff5c93;
   --on-tally: #1a0710;
+  /* Its light around a lit tally dot. */
+  --tally-halo: color-mix(in oklab, var(--tally) 22%, transparent);
+
+  /* Plex amber: the Plex sign-in when it's the only one. */
+  --note: #e5a00d;
+  --on-note: #1f1503;
+  --note-hover: color-mix(in srgb, var(--note), white 15%);
+  --note-deep: color-mix(in srgb, var(--note), black 15%);
+
+  /* "Not yet" text and placeholders. */
+  --faint: #7f8fbb;
+  --focus: var(--screen);
 
   --font: "Archivo Variable", "Archivo", "Archivo Fallback", system-ui, sans-serif;
   --wide: 100%;
@@ -64,6 +77,13 @@
 
   --r: 6px;
   --r-strap: 2px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-full: 999px;
+  --t-press: 130ms;
+  --t-color: 160ms;
+  /* The widest the page's content runs; bands behind it still go edge to edge. */
+  --shell: 1200px;
   --gutter: 16px;
   /* The page's side padding: the gutter, or more where a phone held sideways
      puts the notch or rounded corners. */
@@ -187,7 +207,7 @@ p { margin: 0; text-wrap: pretty; }
 /* ------------------------------------------------------------------ layout */
 .shell {
   width: 100%;
-  max-width: 1200px;
+  max-width: var(--shell);
   margin: 0 auto;
   padding: 0 var(--pad-r) 0 var(--pad-l);
 }
@@ -329,7 +349,6 @@ html, body { overflow-x: clip; }
 .btn:disabled, .btn--primary:disabled { --btn-bg: var(--panel-raised); --btn-fg: var(--slate-ink); cursor: default; transform: none; }
 .btn--primary { --btn-bg: var(--screen); --btn-fg: var(--on-screen); }
 @media (hover: hover) and (pointer: fine) { .btn--primary:hover { --btn-bg: #ffe0ed; } }
-.btn--discord svg { width: 22px; height: 22px; }
 .btn--block { width: 100%; }
 .btn--quiet { --btn-bg: transparent; color: var(--slate-ink); padding: 0 12px; }
 @media (hover: hover) and (pointer: fine) { .btn--quiet:hover { --btn-bg: var(--panel); color: var(--ink); } }
@@ -590,13 +609,9 @@ html, body { overflow-x: clip; }
 }
 
 /* ---------------------------------------------------------------- landing */
-.landing { display: grid; gap: 64px; padding-top: 56px; padding-bottom: 64px; }
-
 .landing__actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 /* A quiet button on its own line lines up with the text, not 12px in. */
 @media (max-width: 559px) { .landing__actions .btn--quiet { padding-inline: 0; } }
-/* The two ways to sign in, side by side at the same width (stacked on a phone). */
-.landing__signin > .btn { flex: 1 1 220px; justify-content: center; }
 
 .footer {
   padding-top: 24px; padding-bottom: calc(var(--tabbar) + 28px);
@@ -909,18 +924,7 @@ html, body { overflow-x: clip; }
 @media (min-width: 900px) { .wall { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 34px 22px; } }
 @media (min-width: 1180px) { .wall { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
 
-/* ------------------------------------------------- landing v2, journey row */
-.kinetic { display: block; overflow: hidden; padding-bottom: 0.04em; }
-.kinetic > span { display: inline-block; }
-
-.access { display: grid; gap: 30px; }
-@media (min-width: 960px) { .access { grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); align-items: start; gap: 56px; } }
-.access__steps { display: grid; gap: 28px; }
-.access__copy { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.access__copy h3 { margin-bottom: 6px; }
-.access__copy p { color: var(--slate-ink); font-size: 0.94rem; }
-@media (max-width: 639px) { .access__copy { grid-template-columns: 1fr; } }
-
+/* ------------------------------------------------- stage masthead, journey row */
 .has-stage .masthead { position: fixed; inset: 0 0 auto 0; background: transparent; border-bottom-color: transparent; }
 .has-stage .masthead.is-scrolled { background: var(--field); border-bottom-color: var(--rule); }
 
@@ -962,16 +966,7 @@ html, body { overflow-x: clip; }
 
 .h3 { font-size: 1.05rem; letter-spacing: -0.01em; font-stretch: 88%; }
 
-/* ------------------------------------------------- private landing, legal, footer */
-.landing--private { padding-top: 40px; }
-.landing-hero { display: grid; gap: 40px; align-items: center; min-height: min(78svh, 720px); }
-@media (min-width: 960px) { .landing-hero { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 56px; } }
-.landing-hero__copy { display: grid; gap: 24px; }
-.landing-hero__title { font-size: clamp(4rem, 2rem + 10vw, 9.5rem); line-height: 0.84; }
-.landing-hero__mark { justify-self: center; width: min(360px, 70vw); }
-.landing-hero__mark img { width: 100%; height: auto; border-radius: 22%; box-shadow: 0 40px 80px -30px rgb(3 6 18 / 0.9), 0 0 0 1px rgb(255 209 228 / 0.12); }
-.landing__lede { font-size: 1.15rem; color: var(--slate-ink); max-width: 44ch; }
-
+/* ------------------------------------------------- legal, footer */
 .legal { max-width: 860px; }
 .legal__body { display: grid; gap: 16px; max-width: 40rem; font-size: 1.02rem; }
 .legal__body h2 { font-size: 1.25rem; margin-top: 18px; }
@@ -987,6 +982,238 @@ html, body { overflow-x: clip; }
 .footer__powered a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-weight: 600; color: var(--slate-ink); text-decoration: none; }
 @media (hover: hover) and (pointer: fine) { .footer__powered a:hover { color: var(--screen); } }
 .footer__powered img { border-radius: 5px; }
+
+/* ------------------------------------------------- landing: On Air set */
+/* Signed out: a small TV set (channel 1 the sign-in, channel 2 how to get in, the
+   sign-in keys on its deck) and the same steps on a band below it. Flat like the
+   rest of the site: depth is the panel steps and one slate 1px edge on each
+   control, never a shadow. The set's parts grow with the screen, without jumps. */
+.studio-clock { color: var(--ink); }
+
+.air-stage {
+  /* The first screen under the masthead (60px and its 1px rule). */
+  min-height: calc(100svh - 61px);
+  display: grid; place-items: center;
+  padding: clamp(24px, 1rem + 2vw, 48px) var(--pad-r) clamp(24px, 1rem + 2vw, 48px) var(--pad-l);
+}
+.air-set { width: min(660px, 100%); display: flex; flex-direction: column; align-items: center; }
+
+.air-antennae { display: block; width: clamp(150px, 120px + 8vw, 200px); height: auto; aspect-ratio: 200 / 58; margin-bottom: -4px; }
+.air-antennae line { stroke: var(--slate); stroke-width: 3; stroke-linecap: round; }
+.air-antennae circle { fill: var(--slate-ink); }
+.air-antennae path { fill: var(--slate); }
+
+.air-tv {
+  position: relative; width: 100%;
+  display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px);
+  padding: clamp(12px, 0.5rem + 1vw, 16px);
+  background: var(--slate); border: 1px solid var(--field-deep); border-radius: var(--r-lg);
+}
+.air-tv__front { display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px); }
+.air-bezel { padding: 8px; background: var(--field-deep); border-radius: var(--r-md); }
+.air-screen {
+  display: grid; grid-template-rows: auto 1fr;
+  padding: clamp(12px, 0.5rem + 1vw, 16px) clamp(16px, 0.75rem + 1.5vw, 24px) 24px;
+  overflow: hidden;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: var(--r-md);
+}
+
+/* On-screen display: the channel readout, and the tally, lit only while a sign-in is under way. */
+.air-osd { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 20px; }
+.air-osd__ch { color: var(--slate-ink); }
+.air-tally { display: inline-flex; align-items: center; gap: 8px; padding-right: 4px; color: var(--slate-ink); }
+.air-tally__dot {
+  width: 8px; height: 8px; border-radius: var(--r-full);
+  background: var(--slate); outline: 3px solid transparent;
+  transition: background-color var(--t-color) var(--ease-out), outline-color var(--t-color) var(--ease-out);
+}
+.air-tally.is-live { color: var(--ink); }
+.air-tally.is-live .air-tally__dot { background: var(--tally); outline-color: var(--tally-halo); }
+
+.air-channels { display: grid; }
+.air-ch { grid-area: 1 / 1; min-width: 0; }
+.air-ch[inert] { display: none; }
+
+/* Channel 1: the message, and what the last sign-in or invite came back with. */
+.air-ch1 {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+  padding: 16px 0 4px;
+  text-align: center;
+}
+.air-mascot { width: clamp(64px, 3.5rem + 2vw, 76px); height: auto; aspect-ratio: 1; border-radius: 24%; }
+.air-title {
+  font-size: clamp(2.4rem, 1.6rem + 2.6vw, 3.6rem); font-weight: 820; line-height: 0.92;
+  letter-spacing: -0.01em; font-stretch: 70%; text-transform: uppercase;
+}
+.air-lede { max-width: 32ch; color: var(--slate-ink); font-weight: 520; }
+.air-notice {
+  display: grid; gap: 4px; width: 100%;
+  padding: 12px 16px;
+  background: var(--field); color: var(--ink);
+  border: 1px solid var(--slate); border-left: 3px solid var(--slate); border-radius: var(--r);
+  text-align: left; font-weight: 520;
+}
+.air-notice--alert { border-left-color: var(--tally); }
+.air-notice__lead { color: var(--slate-ink); }
+.air-notice__body { text-wrap: pretty; }
+/* On a phone a notice takes the mascot's place, so both keys stay on the first screen. */
+@media (max-width: 719px) {
+  .air-ch1.has-notice { gap: 12px; }
+  .air-ch1.has-notice .air-mascot { display: none; }
+}
+@media (max-height: 600px) { .air-mascot { display: none; } }
+
+/* Channel 2: getting in. */
+.air-ch2 { padding-top: 16px; }
+.air-ch2__title { margin: 0 0 16px; }
+.air-ch2__title:focus { outline: none; }
+.air-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; counter-reset: step; }
+.air-steps li { display: grid; grid-template-columns: 32px minmax(0, 1fr); column-gap: 12px; counter-increment: step; }
+.air-steps li::before {
+  content: counter(step); grid-row: 1 / span 2;
+  display: grid; place-items: center; width: 32px; height: 32px;
+  border: 1.5px solid currentColor; border-radius: var(--r-full);
+  font-size: 1rem; font-weight: 760;
+}
+.air-steps h3 { margin: 4px 0; }
+
+/* The set's side: knobs and a speaker grille, for looks only. */
+.air-side { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; }
+.air-knobs { display: flex; gap: 12px; }
+.air-knob {
+  position: relative; width: clamp(28px, 4px + 4vw, 44px); aspect-ratio: 1;
+  background: var(--panel-raised); border: 1px solid var(--slate-ink); border-radius: var(--r-full);
+  transition: transform 260ms var(--ease-out);
+}
+.air-knob::after {
+  content: ""; position: absolute; left: 50%; top: 10%; translate: -50% 0;
+  width: 2px; height: 30%; border-radius: 1px; background: var(--slate-ink);
+}
+.air-knob--vol { transform: rotate(-40deg); }
+.air-tv[data-ch="2"] .air-knob--ch { transform: rotate(60deg); }
+.air-tv.is-tuning .air-knob--ch { transform: rotate(-35deg); }
+.air-grille { display: flex; gap: 4px; }
+.air-grille i { display: block; width: 2px; height: 16px; border-radius: 1px; background: var(--panel-raised); }
+
+/* The deck: the set's own keys, each with its legend printed under it. */
+.air-deck {
+  display: grid; gap: 12px; padding: 12px;
+  background: var(--panel); border: 1px solid var(--field-deep); border-radius: var(--r-md);
+}
+.air-seg { display: grid; }
+.air-key {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 48px; padding: 0 16px;
+  border: 1px solid var(--slate); border-radius: var(--r);
+  font: inherit; font-size: 1rem; font-weight: 700; letter-spacing: -0.005em; line-height: 1;
+  text-decoration: none; cursor: pointer; user-select: none;
+  transition: background-color var(--t-color) var(--ease-out), transform var(--t-press) var(--ease-out);
+}
+.air-key svg { width: 22px; height: 22px; flex: none; }
+.air-key:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; position: relative; z-index: 1; }
+.air-key--plain { background: var(--panel-raised); color: var(--ink); }
+.air-key--plain.air-key--plex svg { color: var(--note); }
+.air-key--pink { background: var(--screen); color: var(--on-screen); }
+.air-key--amber { background: var(--note); color: var(--on-note); }
+.air-key--off { background: var(--panel-raised); color: var(--faint); border-color: var(--rule); cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .air-key--plain:hover { background: var(--rule); }
+  .air-key--pink:hover { background: var(--screen-hover); }
+  .air-key--amber:hover { background: var(--note-hover); }
+}
+.air-key:active { transform: translateY(1px); }
+.air-key--off:active { transform: none; }
+.air-key--pink:active { background: var(--screen-deep); }
+.air-key--amber:active { background: var(--note-deep); }
+/* Pressed and under way: it stays down, a step darker, until the sign-in leaves the page. */
+.air-key[aria-busy="true"] { transform: translateY(1px); cursor: progress; pointer-events: none; }
+.air-key--plain[aria-busy="true"] { background: var(--rule); }
+.air-key--pink[aria-busy="true"] { background: var(--screen-deep); }
+.air-key--amber[aria-busy="true"] { background: var(--note-deep); }
+.air-legend {
+  margin: 8px 0 16px; padding: 0 8px;
+  color: var(--slate-ink); font-weight: 520; text-align: center; text-wrap: balance;
+}
+.air-legend:last-child { margin-bottom: 0; }
+
+.air-status {
+  display: flex; align-items: center; min-height: 44px; padding: 0 12px 0 4px;
+  background: var(--panel); border: 1px solid var(--slate); border-radius: var(--r);
+}
+.air-status__btn {
+  flex: 1; display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px 0 4px;
+  background: none; border: 0; color: var(--slate-ink);
+  font: inherit; font-weight: 640; text-align: left; cursor: pointer;
+  transition: color var(--t-color) var(--ease-out), transform var(--t-press) var(--ease-out);
+}
+@media (hover: hover) and (pointer: fine) { .air-status__btn:hover { color: var(--ink); } }
+.air-status__btn:active { color: var(--ink); transform: scale(0.98); }
+.air-status__chev { width: 16px; height: 16px; margin-left: auto; flex: none; }
+.air-chip {
+  display: inline-grid; place-items: center; height: 32px; padding: 0 8px;
+  background: var(--panel-raised); color: var(--ink); border: 1px solid var(--slate); border-radius: var(--r);
+}
+
+.air-feet { display: flex; justify-content: space-between; width: 76%; }
+.air-feet i {
+  display: block; width: 44px; height: 12px;
+  background: var(--slate); border: 1px solid var(--field-deep); border-top: 0; border-radius: 0 0 var(--r) var(--r);
+}
+
+@media (min-width: 720px) {
+  .air-tv__front { grid-template-columns: minmax(0, 1fr) 56px; }
+  .air-screen { min-height: 360px; }
+  /* Both channels keep their room, so the screen doesn't change size between them. */
+  .air-ch[inert] { display: flex; visibility: hidden; }
+  .air-ch2[inert] { display: block; }
+  .air-side { flex-direction: column; gap: 24px; padding: 12px 0 16px; }
+  .air-knobs { flex-direction: column; gap: 16px; }
+  .air-grille { flex-direction: column; gap: 8px; }
+  .air-grille i { width: 36px; height: 2px; }
+  /* Side by side, 8px apart, each legend under its own key. */
+  .air-seg { grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; grid-auto-flow: column; column-gap: 8px; }
+  .air-legend { margin: 8px 0 0; }
+}
+
+/* The band under the set: the same three steps, always on the page. Its colour runs
+   edge to edge; its words line up with the masthead and the footer. */
+.air-band {
+  display: grid; gap: 16px; justify-items: start;
+  margin: 8px 0 32px;
+  padding-block: clamp(24px, 1rem + 2vw, 32px);
+  padding-left: max(var(--pad-l), (100% - var(--shell)) / 2 + var(--gutter));
+  padding-right: max(var(--pad-r), (100% - var(--shell)) / 2 + var(--gutter));
+  background: var(--panel); border-block: 1px solid var(--rule);
+  scroll-margin-top: 76px;
+}
+.air-band > * { max-width: 65ch; }
+.air-band__title { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+.air-band__title::before { content: ""; width: 3px; height: 16px; background: var(--slate); border-radius: var(--r-strap); }
+.air-band__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 24px; counter-reset: step; }
+.air-band__steps li { display: grid; align-content: start; gap: 4px; counter-increment: step; }
+.air-band__steps li::before {
+  content: "0" counter(step); margin-bottom: 4px;
+  color: var(--slate-ink); font-size: 0.78rem; font-weight: 760; letter-spacing: 0.06em; line-height: 1;
+  font-stretch: var(--cond);
+}
+.air-band__steps p { color: var(--slate-ink); }
+.air-band__cta { width: 100%; margin-top: 8px; }
+.air-band__status { color: var(--slate-ink); font-size: 0.86rem; }
+@media (min-width: 720px) { .air-band__cta { max-width: 320px; } }
+/* The footer under the set reads at body size, as the set's own words do. */
+main:has(.air) + .footer p { font-size: 1rem; }
+/* Three columns only where each still gets a comfortable measure. */
+@media (min-width: 1280px) {
+  .air-band__steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; max-width: none; width: 100%; }
+  .air-band__steps li { padding: 0 24px; border-left: 1px solid var(--rule); }
+  .air-band__steps li:first-child { padding-left: 0; border-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .air-knob, .air-key, .air-status__btn { transition: none; }
+  .air-key:active, .air-key[aria-busy="true"], .air-status__btn:active { transform: none; }
+}
 
 /* ------------------------------------------------------------ project page */
 

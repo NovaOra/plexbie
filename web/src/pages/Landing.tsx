@@ -1,114 +1,349 @@
+import { useCallback, useEffect, useRef, useState, type AnchorHTMLAttributes, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { PlayCircle } from "../components/icons";
 import { loginUrl, signInReturn } from "../api/client";
-import { EASE_OUT, Journey, useRise } from "../components/motion";
-import { InviteOutcome } from "./InvitePage";
+import { EASE_OUT } from "../components/motion";
+import { useStudioClock } from "../components/studioClock";
+import { inviteOutcome } from "./inviteOutcome";
 import { DiscordMark, useTitle } from "../components/ui";
 import { PlexSignIn } from "../components/PlexSignIn";
 
 // The public face says only what Plexbie is and how to sign in. Nothing about
 // the server, its library or its people is shown before login (PRODUCT.md).
-
-function Kinetic({ lines }: { lines: string[] }) {
-  const reduced = useReducedMotion();
-  return (
-    <h1 className="display landing-hero__title">
-      {lines.map((line, i) => (
-        <span className="kinetic" key={line}>
-          <motion.span
-            initial={reduced ? false : { y: "105%" }}
-            animate={{ y: 0 }}
-            transition={{ duration: 0.9, ease: EASE_OUT, delay: 0.15 + i * 0.12 }}
-          >
-            {line}
-          </motion.span>
-        </span>
-      ))}
-    </h1>
-  );
-}
+// It's a little TV set: channel 1 is the sign-in, channel 2 how to get in, and
+// the sign-in keys sit on its deck. The same steps stay on the page below it.
 
 const LOGIN_MESSAGES: Record<string, string> = {
   failed: "Signing in didn’t work just now. Try again in a moment.",
   expired: "That sign-in took too long, so it expired. Try again.",
   cancelled: "Sign-in was cancelled. Nothing was changed.",
   busy: "Lots of sign-ins just now. Wait a few minutes and try again.",
-  unavailable: "Logging in with Discord isn’t set up yet. Try signing in with Plex.",
+  unavailable: "Signing in with Discord isn’t set up yet. Try signing in with Plex.",
 };
 
-function LoginNotice() {
-  const [params] = useSearchParams();
-  const message = LOGIN_MESSAGES[params.get("login") ?? ""];
-  return message ? <p className="field__error" role="alert">{message}</p> : null;
-}
-
-const ACCESS = [
-  { title: "Be in the Discord", body: "Plexbie lives in the household's private Discord server. If a link in there brought you here, you're set." },
-  { title: "Ask to join", body: "Log in with Discord and ask to join; an admin reviews every request. Not on Discord? An admin can send you an invite link instead." },
-  { title: "Accept the invite", body: "Once you're approved, accept the invitation you're sent, then come back here and log in." },
+const STEPS = [
+  { title: "Be in the Discord", body: "Plexbie lives in the household’s private Discord server." },
+  { title: "Ask to join", body: "Sign in with Discord and ask to join; an admin reviews every request. Not on Discord? An admin can send you an invite link instead." },
+  { title: "Accept the invite", body: "Once you’re approved, accept the invitation you’re sent, then come back here and sign in." },
 ];
 
+/** Invite outcomes whose way back is a Plex sign-in, so the Plex key leads. */
+const PLEX_FIRST = ["email", "unconfirmed", "failed"];
+
+type Notice = { role: "alert" | "status"; lead: string; text: string; openPlex: boolean };
+/** discord: Discord leads. plex: Plex leads (pink). plex-only: Discord can't work, Plex is the one sign-in (amber). */
+type Lead = "discord" | "plex" | "plex-only";
+type KeyId = "discord" | "plex" | "cta";
+type KeyProps = Pick<AnchorHTMLAttributes<HTMLAnchorElement>,
+  "aria-busy" | "onPointerEnter" | "onPointerLeave" | "onFocus" | "onBlur" | "onClick">;
+
+/** What the last sign-in or invite came back with, as the screen's lower third. */
+function noticeFor(search: string): Notice | null {
+  const login = new URLSearchParams(search).get("login") ?? "";
+  if (Object.hasOwn(LOGIN_MESSAGES, login)) {
+    return { role: "alert", lead: "Sign-in problem", text: LOGIN_MESSAGES[login], openPlex: false };
+  }
+  const invite = inviteOutcome(search);
+  if (!invite) return null;
+  if (invite.tone === "error") return { role: "alert", lead: "Invite problem", text: invite.text, openPlex: false };
+  return { role: "status", lead: invite.outcome === "already" ? "Already in" : "Invite accepted", text: invite.text, openPlex: true };
+}
+
+function leadFor(search: string): Lead {
+  const q = new URLSearchParams(search);
+  if (q.get("login") === "unavailable") return "plex-only";
+  return PLEX_FIRST.includes(q.get("invite") ?? "") ? "plex" : "discord";
+}
+
+/** The set's rabbit-ears: an original drawing, slate on the studio navy. */
+function Antennae() {
+  return (
+    <svg className="air-antennae" viewBox="0 0 200 58" aria-hidden="true" focusable="false">
+      <line x1="100" y1="54" x2="44" y2="8" />
+      <line x1="100" y1="54" x2="150" y2="14" />
+      <circle cx="44" cy="8" r="5" />
+      <circle cx="150" cy="14" r="5" />
+      <path d="M78 58a22 14 0 0 1 44 0Z" />
+    </svg>
+  );
+}
+
+function Chevron() {
+  return (
+    <svg className="air-status__chev" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Steps({ className }: { className: string }) {
+  return (
+    <ol className={className}>
+      {STEPS.map((s) => (
+        <li key={s.title}>
+          <h3>{s.title}</h3>
+          <p>{s.body}</p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export function Landing() {
-  useTitle("Log in");
+  useTitle("Sign in");
+  useStudioClock();
   const reduced = useReducedMotion();
-  const rise = useRise(12, 0.45);
-  const { pathname, search } = useLocation();
+  const { pathname, search, hash } = useLocation();
   const next = signInReturn(pathname, search);
+  const notice = noticeFor(search);
+  const lead = leadFor(search);
+  const inviteWorked = notice?.openPlex ?? false;
+
+  const [ch, setCh] = useState<1 | 2>(() => (hash === "#getting-in" ? 2 : 1));
+  const [preview, setPreview] = useState<string | null>(null);
+  // The key pressed, while its sign-in is under way: the tally is live only then.
+  const [busy, setBusy] = useState<KeyId | null>(null);
+  const [plexStatus, setPlexStatus] = useState<{ from: KeyId; text: string } | null>(null);
+
+  const tv = useRef<HTMLDivElement>(null);
+  const channels = useRef<HTMLDivElement>(null);
+  const ch2Title = useRef<HTMLHeadingElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  const focusAfter = useRef<1 | 2 | null>(null);
+  const flickTimer = useRef(0);
+
+  const focusFor = useCallback((n: 1 | 2) => {
+    if (n === 1) {
+      toggle.current?.focus({ preventScroll: true });
+      return;
+    }
+    ch2Title.current?.focus({ preventScroll: true });
+    const r = tv.current?.getBoundingClientRect();
+    if (r && (r.top < 0 || r.top > window.innerHeight * 0.4)) {
+      tv.current?.scrollIntoView({ block: "start", behavior: reduced ? "auto" : "smooth" });
+    }
+  }, [reduced]);
+
+  // Focus moves once the channel is drawn (an inert channel can't take it).
+  useEffect(() => {
+    if (focusAfter.current !== ch) return;
+    focusAfter.current = null;
+    focusFor(ch);
+  }, [ch, focusFor]);
+
+  const tune = useCallback((n: 1 | 2) => {
+    if (n === ch) {
+      focusFor(n);
+      return;
+    }
+    focusAfter.current = n;
+    if (reduced) {
+      setCh(n);
+      return;
+    }
+    // A quick vertical-hold flick, and the picture changes as it closes.
+    channels.current?.animate(
+      [
+        { transform: "none", opacity: 1 },
+        { transform: "scaleY(0.03)", opacity: 0.4, offset: 0.4 },
+        { transform: "none", opacity: 1 },
+      ],
+      { duration: 240, easing: `cubic-bezier(${EASE_OUT.join(",")})` },
+    );
+    window.clearTimeout(flickTimer.current);
+    flickTimer.current = window.setTimeout(() => setCh(n), 96);
+  }, [ch, focusFor, reduced]);
+
+  useEffect(() => () => window.clearTimeout(flickTimer.current), []);
+
+  useEffect(() => {
+    if (ch !== 2) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") tune(1);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [ch, tune]);
+
+  // Coming back with Back (or from a cancelled sign-in) shows the set at rest again.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      setBusy(null);
+      setPreview(null);
+      setPlexStatus(null);
+    };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, []);
+
+  const names: Record<KeyId, string> = { discord: "Discord", plex: "Plex", cta: lead === "discord" ? "Discord" : "Plex" };
+  const readout = ch === 2 ? "CH 2 · Getting in"
+    : busy ? `CH 1 · Tuning in to ${names[busy]}`
+    : preview ? `CH 1 · ${preview}`
+    : "CH 1 · Sign in";
+
+  /** What every sign-in key shares: the readout preview, and staying down once pressed. */
+  const keyProps = (id: KeyId): KeyProps => ({
+    "aria-busy": busy === id ? true : undefined,
+    onPointerEnter: () => setPreview(names[id]),
+    onPointerLeave: (e) => {
+      if (document.activeElement !== e.currentTarget) setPreview(null);
+    },
+    onFocus: () => setPreview(names[id]),
+    onBlur: () => setPreview(null),
+    onClick: () => {
+      setBusy(id);
+      if (id !== "discord") setPlexStatus(null);
+    },
+  });
+  /** A Plex sign-in in its own window reports here; when it stops waiting, its key comes back up. */
+  const plexReport = (from: KeyId) => (text: string, waiting?: boolean) => {
+    setPlexStatus(text ? { from, text } : null);
+    if (!waiting) setBusy((b) => (b === from ? null : b));
+  };
+
+  const tone = (id: "discord" | "plex") => {
+    if (id === "discord") return lead === "discord" ? "pink" : lead === "plex" ? "plain" : "off";
+    return lead === "discord" ? "plain" : lead === "plex" ? "pink" : "amber";
+  };
+  const discordTone = tone("discord");
+  const plexTone = tone("plex");
+  const plexHere = plexStatus?.from === "plex" ? plexStatus.text : null;
+  const plexBelow = plexStatus?.from === "cta" ? plexStatus.text : null;
+
+  const discordIcon = <DiscordMark />;
+  const plexIcon = <PlayCircle size={22} aria-hidden />;
 
   return (
-    <div className="shell landing landing--private">
-      <section className="landing-hero">
-        <div className="landing-hero__copy">
-          <Kinetic lines={["Members", "only."]} />
-          <motion.p {...rise(0.225)} className="landing__lede">
-            This is the private members’ area for one household’s Plex server.
-            Sign in with your Discord account to continue.
-          </motion.p>
-          <LoginNotice />
-          <InviteOutcome />
-          <motion.div {...rise(0.3)} className="landing__actions landing__signin">
-            <a className="btn btn--primary btn--discord" href={loginUrl(next, "discord")}>
-              <DiscordMark /> Log in with Discord
-            </a>
-            <PlexSignIn className="btn btn--plex" next={next}>
-              <PlayCircle size={20} aria-hidden /> Sign in with Plex
-            </PlexSignIn>
-          </motion.div>
-          <motion.p {...rise(0.35)} className="muted" style={{ fontSize: "0.9rem" }}>
-            Already watching without Discord? Sign in with your Plex account. New here without Discord? Ask for an invite link. <a href="#access">How to get access</a>
-          </motion.p>
-        </div>
+    <div className="air">
+      <section className="air-stage" aria-label="Sign in">
         <motion.div
-          className="landing-hero__mark"
-          initial={reduced ? false : { scale: 0.96, rotate: -3 }}
-          animate={{ scale: 1, rotate: 0 }}
-          transition={{ duration: 0.5, ease: EASE_OUT }}
+          className="air-set"
+          initial={reduced ? false : { opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: EASE_OUT }}
         >
-          <img src="/brand/plexbie-512.webp" alt="Plexbie logo" width={360} height={360} fetchPriority="high" />
+          <Antennae />
+          <div ref={tv} className={`air-tv${busy ? " is-tuning" : ""}`} data-ch={ch}>
+            <div className="air-tv__front">
+              <div className="air-bezel">
+                <div className="air-screen" id="air-screen">
+                  <div className="air-osd caps">
+                    <span className="air-osd__ch">{readout}</span>
+                    <span className={`air-tally${busy ? " is-live" : ""}`}>
+                      <span className="air-tally__dot" aria-hidden="true" />
+                      <span aria-live="polite">{busy ? "Tuning in" : "Standby"}</span>
+                    </span>
+                  </div>
+                  <div className="air-channels" ref={channels}>
+                    <div className={`air-ch air-ch1${notice ? " has-notice" : ""}`} inert={ch !== 1}>
+                      <img
+                        className="air-mascot" src="/brand/plexbie-256.webp" alt="" width={76} height={76}
+                        fetchPriority="high" decoding="async"
+                      />
+                      <h1 className="air-title">Your household’s Plex, on air.</h1>
+                      <p className="air-lede">
+                        {inviteWorked ? "Your invite worked." : "Plexbie is your household’s Plex helper. Members sign in below."}
+                      </p>
+                      {notice ? (
+                        <p className={`air-notice air-notice--${notice.role}`} role={notice.role}>
+                          <span className="air-notice__lead caps">{notice.lead}</span>
+                          <span className="air-notice__body">
+                            {notice.text}
+                            {notice.openPlex ? <>{" "}<a href="https://app.plex.tv">Open Plex</a></> : null}
+                          </span>
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="air-ch air-ch2" inert={ch !== 2}>
+                      <h2 className="air-ch2__title" ref={ch2Title} tabIndex={-1}>Getting in</h2>
+                      <Steps className="air-steps" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="air-side" aria-hidden="true">
+                <div className="air-knobs">
+                  <span className="air-knob air-knob--ch" />
+                  <span className="air-knob air-knob--vol" />
+                </div>
+                <div className="air-grille"><i /><i /><i /><i /><i /></div>
+              </div>
+            </div>
+
+            <div className="air-deck">
+              <div className="air-seg" role="group" aria-label="Sign in">
+                {discordTone === "off" ? (
+                  <a className="air-key air-key--off" aria-disabled="true" aria-describedby="air-leg-discord">
+                    {discordIcon} Sign in with Discord
+                  </a>
+                ) : (
+                  <a
+                    className={`air-key air-key--${discordTone}`} href={loginUrl(next, "discord")}
+                    aria-describedby="air-leg-discord" {...keyProps("discord")}
+                  >
+                    {discordIcon} Sign in with Discord
+                  </a>
+                )}
+                <p className="air-legend" id="air-leg-discord">
+                  {discordTone === "off" ? "Discord sign-in isn’t set up yet" : "For people in the household’s Discord"}
+                </p>
+                <PlexSignIn
+                  className={`air-key air-key--${plexTone} air-key--plex`} next={next}
+                  aria-describedby="air-leg-plex" onStatus={plexReport("plex")} {...keyProps("plex")}
+                >
+                  {plexIcon} Sign in with Plex
+                </PlexSignIn>
+                <p className="air-legend" id="air-leg-plex" role="status">{plexHere ?? "Already watching on Plex"}</p>
+              </div>
+              <div className="air-status">
+                <button
+                  ref={toggle} type="button" className="air-status__btn"
+                  aria-controls="air-screen" aria-expanded={ch === 2}
+                  onClick={() => tune(ch === 1 ? 2 : 1)}
+                >
+                  <span className="air-chip caps">{ch === 1 ? "CH 2" : "CH 1"}</span>
+                  {ch === 1 ? "How to get in" : "Back to sign-in"}
+                  <Chevron />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="air-feet" aria-hidden="true"><i /><i /></div>
         </motion.div>
       </section>
 
-      <section className="access" id="access" aria-labelledby="access-h" style={{ scrollMarginTop: 80 }}>
-        <div style={{ display: "grid", gap: 14 }}>
-          <h2 id="access-h" className="display" style={{ fontSize: "clamp(2.2rem, 1.6rem + 2.4vw, 3.6rem)" }}>Getting in</h2>
-          <p className="muted" style={{ maxWidth: "38ch" }}>
-            Access is by invitation only. If you weren’t invited, this site isn’t for you, and that’s fine.
-          </p>
-        </div>
-        <div className="access__steps">
-          <Journey stage={ACCESS.length - 1} steps={ACCESS.map((a) => a.title)} />
-          <ol className="access__copy" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-            {ACCESS.map((a) => (
-              <li key={a.title}><h3>{a.title}</h3><p>{a.body}</p></li>
-            ))}
-          </ol>
-        </div>
+      <section className="air-band" id="getting-in" aria-labelledby="air-band-title">
+        <h2 className="air-band__title caps" id="air-band-title">Getting in</h2>
+        <Steps className="air-band__steps" />
+        <CtaKey lead={lead} next={next} keyProps={keyProps("cta")} onStatus={plexReport("cta")}
+          icon={lead === "discord" ? discordIcon : plexIcon} />
+        {plexBelow ? <p className="air-band__status" role="status">{plexBelow}</p> : null}
       </section>
-
-      <p className="muted" style={{ fontSize: "0.92rem" }}>
-        Read the <Link to="/privacy">privacy policy</Link> and <Link to="/terms">terms of use</Link>.
-      </p>
     </div>
+  );
+}
+
+/** The sign-in under the steps: the same key the set leads with. */
+function CtaKey({ lead, next, keyProps, onStatus, icon }: {
+  lead: Lead; next: string; icon: ReactNode;
+  keyProps: KeyProps; onStatus: (text: string, waiting?: boolean) => void;
+}) {
+  if (lead === "discord") {
+    return (
+      <a className="air-key air-key--pink air-band__cta" href={loginUrl(next, "discord")} {...keyProps}>
+        {icon} Sign in with Discord
+      </a>
+    );
+  }
+  return (
+    <PlexSignIn
+      className={`air-key air-key--${lead === "plex" ? "pink" : "amber"} air-band__cta`} next={next}
+      onStatus={onStatus} {...keyProps}
+    >
+      {icon} Sign in with Plex
+    </PlexSignIn>
   );
 }
