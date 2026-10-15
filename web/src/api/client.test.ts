@@ -200,7 +200,7 @@ describe("plexSignIn", () => {
     plexSignIn(e, "/home", true, status);
     expect(open.mock.calls[0][0]).toBe("/auth/plex/go?next=%2Fhome&invite=1");
     expect(e.preventDefault).toHaveBeenCalled();
-    expect(status).toHaveBeenCalledWith("Waiting for Plex…");
+    expect(status).toHaveBeenCalledWith("Waiting for Plex…", true);
     await vi.advanceTimersByTimeAsync(1500 * 3);
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(fetch.mock.calls[0][0]).toBe("/auth/plex/check");
@@ -224,7 +224,7 @@ describe("plexSignIn", () => {
     const status = vi.fn();
     plexSignIn(click(), "/", false, status);
     await vi.advanceTimersByTimeAsync(1500 * 4);
-    expect(status).toHaveBeenLastCalledWith("Waiting for Plex…");
+    expect(status).toHaveBeenLastCalledWith("Waiting for Plex…", true);
     await vi.advanceTimersByTimeAsync(1500);
     expect(fetch).toHaveBeenCalledTimes(5);
     expect(status).toHaveBeenLastCalledWith("That PIN expired.");
@@ -275,7 +275,7 @@ describe("plexSignIn", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     plexSignIn(click(), "/", false, second);
     expect(first).toHaveBeenLastCalledWith("");
-    expect(second).toHaveBeenLastCalledWith("Waiting for Plex…");
+    expect(second).toHaveBeenLastCalledWith("Waiting for Plex…", true);
     await vi.advanceTimersByTimeAsync(1500 * 4);
     expect(fetch).toHaveBeenCalledTimes(6);
     expect(first).toHaveBeenLastCalledWith("");

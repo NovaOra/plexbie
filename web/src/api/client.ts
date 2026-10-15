@@ -245,8 +245,10 @@ let plexWatch: { stop(): void } | null = null;
  * back isn't relied on: on phones the plex.tv link often opens the Plex app, which
  * never returns. Approving there still counts; polling notices and signs in.
  * Use as an onClick on a link to loginUrl(…, "plex"), which stays the fallback.
+ * onStatus gets what to show; `waiting` is true while the window is still open.
  */
-export function plexSignIn(e: { preventDefault(): void }, next = "/", invite = false, onStatus?: (text: string) => void) {
+export function plexSignIn(e: { preventDefault(): void }, next = "/", invite = false,
+  onStatus?: (text: string, waiting?: boolean) => void) {
   if (SAMPLE) return;
   const q = new URLSearchParams({ next });
   if (invite) q.set("invite", "1");
@@ -259,7 +261,7 @@ export function plexSignIn(e: { preventDefault(): void }, next = "/", invite = f
   plexWatch?.stop();
   const watch = new AbortController();
   plexWatch = { stop: () => { watch.abort(); onStatus?.(""); } };
-  onStatus?.("Waiting for Plex…");
+  onStatus?.("Waiting for Plex…", true);
   (async () => {
     try {
       let closedFor = 0;

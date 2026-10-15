@@ -8,6 +8,7 @@ import { useRise } from "../components/motion";
 import { Mascot } from "../components/Mascot";
 import { PROJECT_SITE, SITE } from "../site";
 import { OffAir, useLoad, useTitle } from "../components/ui";
+import { inviteOutcome } from "./inviteOutcome";
 
 const STEPS = [
   { title: "Sign in with Plex, or make an account", body: "The button opens Plex’s own page. Already on Plex? Sign in. New to it? Choose to sign up there: a Plex account is free and takes a minute with your email." },
@@ -185,19 +186,9 @@ export function InvitePage() {
   );
 }
 
-const OUTCOMES: Record<string, { tone: "ok" | "error"; text: string }> = {
-  ok: { tone: "ok", text: "You’re in. Welcome to the household Plex! Open the Plex app and it’s all there." },
-  already: { tone: "ok", text: "You already have access, so the invite wasn’t needed. Welcome back." },
-  email: { tone: "error", text: "That invite is for a different Plex account. Sign in with the account it was made for, or ask for a new link." },
-  unconfirmed: { tone: "error", text: "Confirm your email with Plex first, then open your invite link again; it still works." },
-  invalid: { tone: "error", text: "That invite link doesn’t work any more. Ask whoever sent it for a new one." },
-  failed: { tone: "error", text: "Plex didn’t accept the invite just now. Open your invite link again in a minute; it still works." },
-};
-
 /** After an invite sign-in: what happened, in one line. Shown wherever they land. */
 export function InviteOutcome() {
-  const outcome = new URLSearchParams(location.search).get("invite");
-  const m = outcome ? OUTCOMES[outcome] : null;
+  const m = inviteOutcome(location.search);
   if (!m) return null;
   return <p className={m.tone === "ok" ? "invite__done" : "field__error"} role={m.tone === "ok" ? "status" : "alert"}>{m.text}</p>;
 }
