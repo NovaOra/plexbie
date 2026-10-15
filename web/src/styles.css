@@ -120,6 +120,8 @@
   --screen-rim: color-mix(in srgb, var(--screen) 16%, transparent);
   --screen-shading: inset 0 0 50px rgb(0 0 0 / 0.35), 0 0 60px color-mix(in srgb, var(--screen) 22%, transparent);
   --glare: rgb(255 255 255 / 0.1);
+  --scanline: rgb(255 255 255 / 0.025);
+  --screen-scan: color-mix(in srgb, var(--screen) 5%, transparent);
   --glare-soft: rgb(255 255 255 / 0.03);
   --deck-shading: inset 0 2px 6px rgb(0 0 0 / 0.45), 0 1px 0 rgb(255 255 255 / 0.15);
   --knob-hi: color-mix(in srgb, var(--panel-raised) 65%, white);
@@ -1075,6 +1077,7 @@ html, body { overflow-x: clip; }
   pointer-events: none;
 }
 
+.air-antennae { transform-origin: 50% 100%; }
 .air-antennae { display: block; width: clamp(150px, 120px + 8vw, 200px); height: auto; aspect-ratio: 200 / 58; margin-bottom: -4px; }
 .air-antennae line { stroke: var(--slate); stroke-width: 3; stroke-linecap: round; }
 .air-antennae circle { fill: var(--slate-ink); }
@@ -1103,10 +1106,18 @@ html, body { overflow-x: clip; }
   padding: clamp(12px, 0.5rem + 1vw, 16px) clamp(16px, 0.75rem + 1.5vw, 24px) 24px;
   position: relative; overflow: hidden;
   /* Lit from its centre, darker towards the glass's edges, and glowing a little past them. */
-  background: radial-gradient(120% 95% at 50% 42%, var(--screen-light) 0%, var(--screen-light-soft) 38%, var(--panel) 70%, var(--field-deep) 100%);
+  background:
+    repeating-linear-gradient(180deg, var(--scanline) 0 1px, transparent 1px 3px),
+    radial-gradient(120% 95% at 50% 42%, var(--screen-light) 0%, var(--screen-light-soft) 38%, var(--panel) 70%, var(--field-deep) 100%);
   color: var(--ink);
   border: 1px solid var(--screen-rim); border-radius: 18px / 14px;
   box-shadow: var(--screen-shading);
+}
+/* A band of brighter picture rolls slowly down the screen. */
+.air-screen::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 40%; z-index: 1; pointer-events: none;
+  background: linear-gradient(180deg, transparent, var(--screen-scan) 50%, transparent);
+  animation: air-roll 7s linear infinite;
 }
 /* Glare on the glass. */
 .air-screen::after {
@@ -1338,11 +1349,23 @@ main:has(.air) + .shell.footer::before { display: none; }
   .air-band__steps li:first-child { padding-left: 0; border-left: 0; }
 }
 
+/* A little alive (DESIGN.md): the mascot bobs, the picture rolls, the room glow
+   breathes and the antennae sway when you point at the set. Slow, never on text. */
+@keyframes air-bob { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-6px) rotate(1.5deg); } }
+@keyframes air-roll { from { transform: translateY(-100%); } to { transform: translateY(100%); } }
+@keyframes air-breathe { 0%, 100% { opacity: 0.75; } 50% { opacity: 1; } }
+@keyframes air-sway { 0%, 100% { transform: rotate(0); } 30% { transform: rotate(-3deg); } 70% { transform: rotate(2deg); } }
+.air-mascot { animation: air-bob 3.6s ease-in-out infinite; }
+.air-set::before { animation: air-breathe 5s ease-in-out infinite; }
+@media (hover: hover) and (pointer: fine) { .air-set:hover .air-antennae { animation: air-sway 1.4s ease-in-out; } }
+
 /* Reduced motion: the keys keep their depth and still show a press (the lip
    shrinks), but nothing moves. */
 @media (prefers-reduced-motion: reduce) {
   .air-knob, .air-key, .air-status__btn { transition: none; }
   .air-key:active, .air-key[aria-busy="true"], .air-status__btn:active { transform: none; }
+  .air-mascot, .air-set::before, .air-set:hover .air-antennae { animation: none; }
+  .air-screen::before { display: none; }
 }
 
 /* ------------------------------------------------------------ project page */
