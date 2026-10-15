@@ -3224,6 +3224,13 @@ function useMedia(query: string) {
   return on;
 }
 
+/** Typing somewhere, or a sheet or the menu is up: the page's keys stay out of the way. */
+const keysOff = (e: KeyboardEvent) => {
+  const t = e.target as HTMLElement | null;
+  return e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || document.documentElement.classList.contains("has-sheet")
+    || !!t?.closest("input, textarea, select, [contenteditable='true']");
+};
+
 /** A row's picture: its poster (or a drawn cover), an icon, or the person's initial. */
 function ItemArt({ item, big = false }: { item: Item; big?: boolean }) {
   if (item.art) return <span className={big ? "m-hero__art" : "m-thumb"}><Art title={{ ...item.art, kind: item.art.kind as never }} size={big ? "w342" : "w185"} /></span>;
@@ -3557,7 +3564,7 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
   const [sheet, setSheet] = useState(() => !!params.get("item") && !window.matchMedia(WIDE).matches);
   // Look inside, Solve… (E) and Reply, each asked for one item.
   const [look, setLook] = useState<string | null>(null);
-  const [solve] = useState({ key: "", n: 0 });
+  const [solve, setSolve] = useState({ key: "", n: 0 });
   const [reply, setReply] = useState({ key: "", n: 0 });
   const list = view === "needs" ? (filter ? desk.needs.filter((i) => i.area === filter) : desk.needs) : view === "waiting" ? desk.waiting : desk.done;
   const found = list.findIndex((i) => i.key === sel.key);
@@ -3598,6 +3605,35 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
     seen.observe(el);
     window.addEventListener("resize", place);
     return () => { seen.disconnect(); window.removeEventListener("resize", place); html.classList.remove("has-desk"); };
+  }, []);
+  // The queue's keys: J and K (or the arrows, in the queue) step, E is done (Solve… on a
+  // ticket, Done on a conversation), A approves (or invites), 1 to 5 filter, Escape shows all.
+  // Enter opens the row that has focus, as its button does.
+  const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
+  const onKey = (e: KeyboardEvent) => {
+    if (keysOff(e)) return;
+    const k = e.key.toLowerCase();
+    const inQueue = !!(e.target as HTMLElement | null)?.closest(".m-queue-col");
+    if (/^[1-5]$/.test(e.key)) { e.preventDefault(); toggle(AREAS[Number(e.key) - 1].id); return; }
+    if (k === "j" || (inQueue && e.key === "ArrowDown")) { e.preventDefault(); step(1); return; }
+    if (k === "k" || (inQueue && e.key === "ArrowUp")) { e.preventDefault(); step(-1); return; }
+    if (e.key === "Escape" && filter) { toggle(null); return; }
+    if (!current || a.readOnly) return;
+    const src = current.src;
+    if (k === "e" && current.group !== "done") {
+      if (src.type === "ticket") { e.preventDefault(); setSolve((x) => ({ key: current.key, n: x.n + 1 })); if (!wide) setSheet(true); }
+      else if (src.type === "chat") { e.preventDefault(); void a.chatDone(src.p, true); }
+    }
+    if (k === "a" && current.group !== "done") {
+      if (src.type === "request") { e.preventDefault(); a.approve(src.r, true); }
+      else if (src.type === "join" && src.j.messageId) { e.preventDefault(); a.invite(src.j, true); }
+    }
+  };
+  useEffect(() => { keys.current = onKey; });
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => keys.current(e);
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
   }, []);
   const detail = {
     item: current, where, a, look: !!current && look === current.key,
@@ -3731,6 +3767,12 @@ export function Manage() {
   const reduced = useReducedMotion();
   const now = useNow();
   const [menuOpen, setMenuOpen] = useState(false);
+  // "/" opens Everything else.
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => { if (e.key === "/" && !keysOff(e)) { e.preventDefault(); setMenuOpen(true); } };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
   // A view picked from the menu, landed once it's rendered: focus on its heading, the
   // page at the top of its content (or at the part asked for).
   const landing = useRef<Section | null>(null);
