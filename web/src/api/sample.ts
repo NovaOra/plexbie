@@ -36,6 +36,8 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOSt
 
 const titles: Title[] = (raw as Omit<Title, "availability">[]).map((t) => ({ ...t, availability: "none" }));
 const byTitle = (name: string) => titles.find((t) => t.title === name)!;
+/** A title's poster in the sample catalogue, if it has one. */
+const posterOf = (name: string | null | undefined) => (name ? titles.find((t) => t.title === name)?.poster ?? null : null);
 
 // Who already has what, so search results show real-looking availability.
 const onPlex = new Set(["Elephants Dream", "Pepper & Carrot", "King of the Rocket Men", "Sintel", "Radar Men from the Moon", "Charge", "The Wonderful Wizard of Oz", "Coffee Run", "The Daily Dweebs", "Cosmos Laundromat", "Sprite Fright", "The Great Gatsby", "Plan 9 from Outer Space", "House on Haunted Hill", "Night of the Living Dead", "Carnival of Souls"]);
@@ -283,8 +285,8 @@ export const admin = (section: string): Promise<unknown> => {
           requester: r.requester, requestedAt: r.requestedAt, status: "pending" })),
       older: [],
       recent: [
-        { id: "8", slot: 213, title: "Night of the Living Dead", kind: "movie", poster: null, seasons: null, requester: "Marcus T.", requestedAt: ago(60 * 5), status: "declined", resolvedBy: "you", resolvedAt: ago(60 * 2) },
-        { id: "9", slot: 207, title: "Spring", kind: "movie", poster: null, seasons: null, requester: "Alex Kim", requestedAt: ago(60 * 50), status: "approved", resolvedBy: "you", resolvedAt: ago(60 * 48) },
+        { id: "8", slot: 213, title: "Night of the Living Dead", kind: "movie", poster: posterOf("Night of the Living Dead"), seasons: null, requester: "Marcus T.", requestedAt: ago(60 * 5), status: "declined", resolvedBy: "you", resolvedAt: ago(60 * 2) },
+        { id: "9", slot: 207, title: "Spring", kind: "movie", poster: posterOf("Spring"), seasons: null, requester: "Alex Kim", requestedAt: ago(60 * 50), status: "approved", resolvedBy: "you", resolvedAt: ago(60 * 48) },
       ],
     },
     plexinvites: [
@@ -306,8 +308,8 @@ export const admin = (section: string): Promise<unknown> => {
       libraries: ["Movies", "TV Shows", "Music", "Kids"],
       channels: [{ id: "11", name: "plex-updates" }, { id: "12", name: "admin" }],
       warning: [
-        { ratingKey: "1", title: "Elephants Dream", type: "movie", daysLeft: 5, reason: "added", lastActivity: ago(60 * 24 * 85) },
-        { ratingKey: "2", title: "Radar Men from the Moon", type: "show", daysLeft: 6, reason: "last watched", lastActivity: ago(60 * 24 * 84) },
+        { ratingKey: "1", title: "Elephants Dream", type: "movie", daysLeft: 5, reason: "added", lastActivity: ago(60 * 24 * 85), poster: posterOf("Elephants Dream") },
+        { ratingKey: "2", title: "Radar Men from the Moon", type: "show", daysLeft: 6, reason: "last watched", lastActivity: ago(60 * 24 * 84), poster: posterOf("Radar Men from the Moon") },
       ],
       upcoming: [{ ratingKey: "3", title: "Pepper & Carrot", type: "show", daysLeft: 41, reason: "last watched", lastActivity: ago(60 * 24 * 49) }],
       exempt: [{ ratingKey: "4", title: "The Daily Dweebs", type: "show" }],
@@ -356,16 +358,32 @@ export const admin = (section: string): Promise<unknown> => {
   // Titles kept from the search are on the server but not on the clock.
   c.exempt = [...all, ...plexTitles.filter((t) => !all.some((r) => r.ratingKey === t.ratingKey))].filter(isKept)
     .map(({ ratingKey, title, type }) => ({ ratingKey, title, type, year: plexTitles.find((t) => t.ratingKey === ratingKey)?.year ?? null }));
-  const { slow, fails } = reviewKnobs();
+  const { slow, fails, empty } = reviewKnobs();
   if (fails.includes(section)) return new Promise((_, no) => setTimeout(() => no(new Error("Plexbie didn't answer.")), 260 + slow));
+  if (empty) return wait(emptied(section, data[section]), 260 + slow);
   return wait(data[section], 260 + slow);
 };
 
-/** For reviewing Manage's loading and failure states in the sample: ?slow=<ms> holds every
- *  admin answer back that long, ?fail=health,tickets makes those sections fail. */
+/** For reviewing Manage's loading, failure and empty states in the sample: ?slow=<ms> holds
+ *  every admin answer back that long, ?fail=health,tickets makes those sections fail, and
+ *  ?empty=1 is a household with nothing waiting (and nothing done lately). */
 function reviewKnobs() {
   const q = new URLSearchParams(location.search);
-  return { slow: Math.min(20_000, Number(q.get("slow")) || 0), fails: (q.get("fail") ?? "").split(",").filter(Boolean) };
+  return { slow: Math.min(20_000, Number(q.get("slow")) || 0), fails: (q.get("fail") ?? "").split(",").filter(Boolean), empty: q.get("empty") === "1" };
+}
+/** A section with nothing in it that needs anyone. */
+function emptied(section: string, d: unknown): unknown {
+  const all = d as Record<string, unknown>;
+  switch (section) {
+    case "requests": return { pending: [], older: [], recent: [] };
+    case "tickets": return { rows: [], counts: { action: 0, waiting: 0, solved: 0 } };
+    case "all": return { ...all, rows: [], counts: { active: 0, stuck: 0, finished: 0, waiting: 0, declined: 0 } };
+    case "joins": case "plexinvites": case "invites": case "messages": return [];
+    case "people": return (d as { removalIn: number | null }[]).map((p) => ({ ...p, warned: false, removalIn: p.removalIn === null ? null : 40 }));
+    case "cleanup": return { ...all, warning: [] };
+    case "health": return (d as { ok: boolean; detail?: string }[]).map((h) => ({ ...h, ok: true, ms: 40, detail: null }));
+    default: return d;
+  }
 }
 
 /** The language chips, remembered for the visit. */
@@ -624,7 +642,8 @@ helps.push({ id: "h4", request: "5099", slot: 208, title: "Radar Men from the Mo
   reason: "Downloaded, but won't import", note: BLOCKED_NOTE, status_then: "Downloaded, import blocked", status: "open", created_at: at(8), opened_by: "Plexbie" } as Help);
 threads.h4 = [{ id: "e9", at: at(8), by: "Plexbie", kind: "note", text: BLOCKED_NOTE }];
 const sampleBlocked = { app: "sonarr" as const, downloadId: "SABnzbd_nzo_demo" };
-export const adminBlocked = () => reviewKnobs().fails.includes("blocked") ? Promise.reject(new Error("Sonarr didn't answer.")) : wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952,
+export const adminBlocked = () => reviewKnobs().fails.includes("blocked") ? Promise.reject(new Error("Sonarr didn't answer."))
+  : reviewKnobs().empty ? wait({ rows: [], errors: {} }) : wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952, poster: posterOf("Radar Men from the Moon"),
   release: "Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"], ticket: "h4",
   messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."] }], errors: {} });
 const RADAR_TITLES = ["Moon Rocket", "Molten Terror", "Bridge of Death", "Flight to Destruction", "Murder Car", "Hills of Death",
@@ -682,7 +701,7 @@ function ticketRow(h: Help): import("./types").AdminTicketRow {
   const last = t[t.length - 1];
   return { id: h.id, subject: h.subject ?? "request", requestKey: h.request, slot: h.slot ?? 0, title: h.title ?? "",
     tmdb: h.tmdb ?? null, year: h.year ?? null, kind: h.kind, seasons: h.seasons, who: h.who,
-    reason: h.reason, reasonCode: h.reason_code ?? REASON_CODES[h.reason] ?? "", status: h.status, waiting: !!waits[h.id] && h.status === "open", owner: owners[h.id] ?? null,
+    reason: h.reason, reasonCode: h.reason_code ?? REASON_CODES[h.reason] ?? "", poster: posterOf(h.title), status: h.status, waiting: !!waits[h.id] && h.status === "open", owner: owners[h.id] ?? null,
     openedBy: h.opened_by ?? null, offer: h.offer ?? null, createdAt: h.created_at, updatedAt: last?.at ?? h.created_at,
     last: last ? { by: last.by, kind: last.kind, text: last.text.slice(0, 160) } : null, count: t.length };
 }

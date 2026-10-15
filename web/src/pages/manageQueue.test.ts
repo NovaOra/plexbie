@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BlockedRow } from "../api/types";
-import { clamp, deriveDesk, span, type Desk, type DeskData } from "./manageQueue";
+import { clamp, deriveDesk, listFor, span, type Desk, type DeskData } from "./manageQueue";
 
 /** The sample household's Manage page: the numbers the approved design shows for it. */
 
@@ -140,6 +140,33 @@ describe("the Manage queue, from the sample household", () => {
     expect(half.monitors.filter((m) => m.failed).map((m) => m.area)).toEqual(["requests", "help", "services"]);
     // A refresh that failed over data already here is old data, not missing.
     expect(deriveDesk(data, now, { failed: { health: true } }).missing).toEqual([]);
+  });
+
+  it("counts honestly when a feed is missing: Needs you at least, Waiting unknown without tickets", () => {
+    expect(desk.counts).toEqual({ needs: "17", waiting: "1" });
+    const { tickets: _tickets, ...rest } = data;
+    const half = deriveDesk(rest, now, { failed: { tickets: true } });
+    expect(half.counts).toEqual({ needs: `${half.needs.length}+`, waiting: "?" });
+    const { health: _health, ...noHealth } = data;
+    expect(deriveDesk(noHealth, now, { failed: { health: true } }).counts).toEqual({ needs: "16+", waiting: "1" });
+  });
+
+  it("narrows only Needs you by a monitor; Waiting and Done stay whole", () => {
+    expect(listFor(desk, "needs", "requests")).toMatchObject({ filtered: true });
+    expect(listFor(desk, "needs", "requests").list.map((i) => i.title)).toEqual(["Tears of Steel", "The Daily Dweebs", "Dracula"]);
+    expect(listFor(desk, "needs", null)).toMatchObject({ filtered: false, list: desk.needs });
+    expect(listFor(desk, "waiting", "requests")).toEqual({ filtered: false, list: desk.waiting });
+    expect(listFor(desk, "done", "people")).toEqual({ filtered: false, list: desk.done });
+  });
+
+  it("finds a poster for a ticket or a decided request from what's loaded", () => {
+    expect(desk.needs[0].art?.poster).toBeTruthy();
+    expect(desk.done.find((i) => i.title === "Night of the Living Dead")?.art?.poster).toBeTruthy();
+    // A row that brings none still finds its title's request in All requests.
+    const rows = data.tickets!.rows.map((t) => ({ ...t, poster: null }));
+    const bare = deriveDesk({ ...data, tickets: { ...data.tickets!, rows } }, now);
+    expect(bare.needs.find((i) => i.title === "Spring")?.art?.poster).toBeTruthy();
+    expect(bare.needs.find((i) => i.key === "ticket:h4")?.art?.poster).toBeNull();
   });
 
   it("puts a ticket first by its reason code, whatever its words", () => {

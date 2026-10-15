@@ -53,8 +53,10 @@ export interface Item {
   /** Beside the eyebrow: "8 min", "checked 19:53", "warned". */
   age?: string;
   title: string;
-  /** The second part of the title: "S1", "Picture looks wrong". */
+  /** The second part of the title: "Season 1", "Picture looks wrong". */
   sub?: string;
+  /** `sub` is only the season (the detail shows it): a narrow row may leave it out. */
+  subIsSeason?: boolean;
   meta: string;
   /** On the monitor when it's the area's first row: "Import blocked · 8 min". */
   top: string;
@@ -85,6 +87,9 @@ export interface Desk {
   /** What couldn't be loaded at all (never loaded, last ask failed): the queue may be missing those rows. */
   missing: Feed[];
   urgent: number;
+  /** The tabs' counts as they can honestly be said: "12+" while a feed is missing, "?" for
+   *  Waiting when the tickets couldn't be loaded. */
+  counts: { needs: string; waiting: string };
   monitors: Monitor[];
   /** One line each under the monitors. */
   facts: { party: string | null; cleanup: string | null };
@@ -152,6 +157,17 @@ const lockedOut = (t: AdminTicketRow) => t.reasonCode === "access";
 const joinName = (j: AdminJoin) => j.name.replace(/\s*\(Plex sign-in\)$/i, "");
 const nameOf = (p: AdminPerson) => p.displayName || p.plexName;
 
+/** A poster for a title from whatever's loaded: the row's own (when the bot sends one), else a
+ *  request for the same title (All requests, waiting, recently decided). Null draws a cover. */
+function posterFor(d: DeskData, title: string, own?: string | null) {
+  if (own) return own;
+  const t = title.trim().toLowerCase();
+  if (!t) return null;
+  return d.all?.rows.find((r) => r.title.title.toLowerCase() === t && r.title.poster)?.title.poster
+    ?? [...(d.requests?.pending ?? []), ...(d.requests?.recent ?? [])].find((r) => r.title.toLowerCase() === t && r.poster)?.poster
+    ?? null;
+}
+
 /** A stuck request's age: since its stage began, or since its ticket was opened if that's longer. */
 function stuckSince(r: AdminRequestRow, now: number, ticket?: AdminTicketRow) {
   const stage = at(r.stageSince ?? r.updatedAt);
@@ -184,12 +200,12 @@ function ticketItem(t: AdminTicketRow, d: DeskData, now: number, me: string | nu
   const what = blocked ? "import blocked" : locked ? "can’t get in" : stuck ? `request stuck ${span(stuckAge)}` : "";
   const title = general ? (locked ? `${t.who} can’t get in` : t.who) : t.title;
   const sub = blocked ? seasonsOf(t.seasons) : locked && general ? undefined : t.reason;
-  const art = general ? undefined : { poster: request?.title.poster ?? null, title: t.title, kind: t.kind || "movie" };
+  const art = general ? undefined : { poster: posterFor(d, t.title, request?.title.poster ?? t.poster), title: t.title, kind: t.kind || "movie" };
   return {
     key: `ticket:${t.id}`, kind: "ticket", area: "help", group,
     eyebrow: what ? `Ticket · ${what}` : "Ticket",
     age: group === "waiting" ? `waiting ${span(now - at(t.updatedAt))}` : span(opened),
-    title, sub,
+    title, sub, subIsSeason: !!blocked && !!sub,
     meta: group === "waiting" ? `Waiting on ${t.who}` : blocked ? `Won’t import · ${t.who}’s request` : ticketMeta(t, me, now),
     top: `${blocked ? "Import blocked" : locked ? "Can’t get in" : t.reason} · ${span(Math.max(opened, stuckAge))}`,
     art, initial: general ? t.who : undefined,
@@ -239,7 +255,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
       key: `import:${b.app}:${b.downloadId}`, kind: "import", area: "help", group: "urgent",
       eyebrow: `${app} · import blocked`, title: b.title, sub: episodesOf(b.episodes) ?? (b.year ? String(b.year) : undefined),
       meta: clamp(b.messages[0] ?? `${app} won’t import it by itself`, 42), top: "Import blocked",
-      art: { poster: null, title: b.title, kind: b.app === "sonarr" ? "tv" : "movie" }, wait: 0, src: { type: "import", b },
+      art: { poster: posterFor(d, b.title, b.poster), title: b.title, kind: b.app === "sonarr" ? "tv" : "movie" }, wait: 0, src: { type: "import", b },
     });
   }
   const people = d.people ?? [];
@@ -296,7 +312,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
       out.push({
         key: `leaving:${c.ratingKey}`, kind: "leaving", area: "library", group: "soon",
         eyebrow: `Cleanup · leaving in ${days(c.daysLeft)}`, age: `${settings.warnDaysBefore}-day warning`, title: c.title, meta: why,
-        top: `Leaves in ${days(c.daysLeft)}`, art: { poster: null, title: c.title, kind: c.type === "show" ? "tv" : "movie" },
+        top: `Leaves in ${days(c.daysLeft)}`, art: { poster: posterFor(d, c.title, c.poster), title: c.title, kind: c.type === "show" ? "tv" : "movie" },
         wait: 0, due: c.daysLeft, src: { type: "leaving", c, warn: settings.warnDaysBefore },
       });
     }
@@ -359,7 +375,7 @@ function doneRows(d: DeskData, now: number, inQueue: Set<string>): Item[] {
       key: `done-request:${r.id}`, kind: "request", area: "requests", group: "done",
       eyebrow: `Request · No.${NB}${slot(r.slot)} · ${word}`, age: span(now - at(r.resolvedAt)), title: r.title, sub: whatLabel(r.kind, r.seasons),
       meta: `${r.requester} asked${r.resolvedBy ? ` · ${word} by ${r.resolvedBy}` : ""}`, top: "",
-      art: { poster: r.poster, title: r.title, kind: r.kind }, wait: 0, src: { type: "request", r }, when: at(r.resolvedAt),
+      art: { poster: posterFor(d, r.title, r.poster), title: r.title, kind: r.kind }, wait: 0, src: { type: "request", r }, when: at(r.resolvedAt),
     });
   }
   for (const t of d.tickets?.rows ?? []) {
@@ -370,7 +386,7 @@ function doneRows(d: DeskData, now: number, inQueue: Set<string>): Item[] {
       key: `done-ticket:${t.id}`, kind: "ticket", area: "help", group: "done",
       eyebrow: "Ticket · solved", age: span(now - at(t.updatedAt)), title: general ? t.who : t.title, sub: t.reason,
       meta: by ? `Solved by ${by}` : `${t.who}’s ticket`, top: "",
-      art: general ? undefined : { poster: null, title: t.title, kind: t.kind || "movie" }, initial: general ? t.who : undefined,
+      art: general ? undefined : { poster: posterFor(d, t.title, t.poster), title: t.title, kind: t.kind || "movie" }, initial: general ? t.who : undefined,
       wait: 0, src: { type: "ticket", t }, when: at(t.updatedAt),
     });
   }
@@ -435,8 +451,10 @@ export function deriveDesk(d: DeskData, now: number,
   });
 
   const party = d.discord?.party;
+  const ticketsMissing = missing.includes("tickets");
   return {
     needs, waiting, done,
+    counts: { needs: missing.length ? `${needs.length}+` : String(needs.length), waiting: ticketsMissing ? "?" : String(waiting.length) },
     loading: DESK_FEEDS.some((f) => d[f] === undefined && !failed[f]),
     missing,
     urgent: needs.filter((i) => i.group === "urgent").length,
@@ -446,4 +464,13 @@ export function deriveDesk(d: DeskData, now: number,
       cleanup: cleanup ? (cleanup.enabled ? `Cleanup ${cleanup.practice ? "in practice" : "live"} · ${cleanup.warnDaysBefore}-day warning` : "Cleanup off") : null,
     },
   };
+}
+
+/** What the queue shows: Needs you (narrowed by a monitor, when one is picked), Waiting or Done.
+ *  A monitor narrows Needs you only; Waiting and Done are always whole. */
+export type View = "needs" | "waiting" | "done";
+export function listFor(desk: Desk, view: View, filter: Area | null): { list: Item[]; filtered: boolean } {
+  if (view === "waiting") return { list: desk.waiting, filtered: false };
+  if (view === "done") return { list: desk.done, filtered: false };
+  return filter ? { list: desk.needs.filter((i) => i.area === filter), filtered: true } : { list: desk.needs, filtered: false };
 }
