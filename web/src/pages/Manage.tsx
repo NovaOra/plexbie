@@ -17,10 +17,10 @@ import { sendAgain } from "../api/alerts";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
-import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, seasonsLabel, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
+import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
 import { afterOverlay, useBackToClose, useSheet } from "../components/overlay";
 import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
-import { AREAS, DESK_FEEDS, deriveDesk, type Area, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
+import { AREAS, DESK_FEEDS, deriveDesk, listFor, seasonsWords, type Area, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
 
 /* ================================================================== store */
@@ -572,7 +572,7 @@ function RequestsTab() {
                     <div className="m-card__body">
                       <span className="m-card__eyebrow">No. {formatSlot(r.slot)} · {KIND_LABEL[r.kind as keyof typeof KIND_LABEL] ?? r.kind}</span>
                       <h3 className="m-card__title">{r.title}</h3>
-                      {seasonsLabel(r.seasons) ? <span className="m-chip">{seasonsLabel(r.seasons)}</span> : null}
+                      {seasonsWords(r.seasons) ? <span className="m-chip">{seasonsWords(r.seasons)}</span> : null}
                       <span className="m-card__who"><Initial name={r.requester} /><span>{r.requester} asked {since(r.requestedAt)}</span></span>
                     </div>
                     <div className="m-card__actions">
@@ -1560,8 +1560,11 @@ function ArrFinder({ app, onPick }: { app: "sonarr" | "radarr"; onPick: (item: A
   const { found: rows, searching, failed, retry } = useDebouncedSearch(words, (w) => api.arrLibrary(app, w).then((x) => x.rows), 250);
   return (
     <div className="m-blocked__finder">
-      <input className="m-select" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
-        placeholder={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} aria-label={app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"} />
+      <label className="m-blocked__field m-blocked__findlabel">
+        <span>{app === "sonarr" ? "Find the show in Sonarr" : "Find the film in Radarr"}</span>
+        <span className="m-search m-search--field"><Search size={16} aria-hidden />
+          <input type="search" className="m-select" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="A title" /></span>
+      </label>
       {searching ? <p className="muted">Searching…</p> : failed ? (
         <LoadFailed text={`Couldn’t search ${app === "sonarr" ? "Sonarr" : "Radarr"} just now.`} onRetry={retry} />
       ) : rows ? (rows.length ? (
@@ -1595,7 +1598,7 @@ function BlockedList({ checks }: { checks: number }) {
   if (!rows.length && !unreachable.length && !res.failed) return null;
   return (
     <section className="section" id="m-part-blocked">
-      <div className="m-head"><h2>Waiting for you to look</h2></div>
+      <div className="m-head"><h3>Waiting for you to look</h3></div>
       {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
       {unreachable.map((app) => (
         <p key={app} className="field__error">Couldn’t reach {app === "sonarr" ? "Sonarr" : "Radarr"} just now, so a download it won’t import by itself can’t show here.</p>
@@ -1639,7 +1642,7 @@ function SignOutOthers() {
   };
   return (
     <section className="section" id="m-part-security">
-      <div className="m-head"><h2>Sign out everywhere else</h2></div>
+      <div className="m-head"><h3>Sign out everywhere else</h3></div>
       <div className="m-set-row">
         <span><b>Sign out every other session</b><span className="muted">For a sign-in that wasn’t you: every website and app sign-in ends except this one, alerts turned on elsewhere stop, and the rest of the household signs in again.</span></span>
         <HoldButton label="Sign out others" icon={<LogOut size={16} aria-hidden />} ms={1400} disabled={readOnly || busy.has("sign-out")} onConfirm={() => void go()} />
@@ -1663,9 +1666,9 @@ function HealthTab() {
   return (
     <>
     <BlockedList checks={checks} />
-    <section className="section">
+    <section className="section m-services">
       <div className="m-head">
-        <h2>Services</h2>
+        <h3>Services</h3>
         <button type="button" className="btn m-btn" onClick={again} disabled={spinning}>
           <RefreshCw size={16} aria-hidden className={spinning ? "m-spin" : undefined} /> Check again
         </button>
@@ -1726,9 +1729,9 @@ function FreshLink({ made, onAnother }: { made: NewInvite; onAnother: () => void
   return (
     <motion.div
       className="m-fresh" role="status"
-      initial={{ opacity: 0, transform: "translateY(8px) scale(0.98)" }}
-      animate={{ opacity: 1, transform: "translateY(0px) scale(1)" }}
-      transition={{ type: "spring", duration: 0.45, bounce: 0.2 }}
+      initial={{ opacity: 0, transform: "translateY(8px)" }}
+      animate={{ opacity: 1, transform: "translateY(0px)" }}
+      transition={{ duration: 0.24, ease: EASE_OUT }}
     >
       <span className="m-fresh__eyebrow"><Ticket size={14} aria-hidden /> Invite ready</span>
       <h3 className="m-card__title">For {made.invite.label}</h3>
@@ -2508,7 +2511,7 @@ function AllRequestRow({ r, onOpen }: { r: AdminRequestRow; onOpen: () => void }
       <span className="slot__no">No.<b>{formatSlot(r.slot)}</b></span>
       <span className="slot__poster"><Art title={r.title} size="w185" /></span>
       <span className="slot__body">
-        <span className="slot__title">{r.title.title}{seasonsLabel(r.seasons) ? <span className="muted"> · {seasonsLabel(r.seasons)}</span> : null}</span>
+        <span className="slot__title">{r.title.title}{seasonsWords(r.seasons) ? <span className="muted"> · {seasonsWords(r.seasons)}</span> : null}</span>
         <span className="m-card__who"><Initial name={r.requester} /><span>{r.requester} · <b>{stageLabel(r.stage, r.title.kind)}</b></span></span>
         <Journey stage={r.stage} kind={r.title.kind} compact />
         {r.stuck.length ? (
@@ -2678,7 +2681,7 @@ function RequestSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const titleId = useId();
   return (
     <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet"
-      title={r ? <>{r.title.title}{seasonsLabel(r.seasons) ? <span className="muted"> · {seasonsLabel(r.seasons)}</span> : null}</> : "Request"}>
+      title={r ? <>{r.title.title}{seasonsWords(r.seasons) ? <span className="muted"> · {seasonsWords(r.seasons)}</span> : null}</> : "Request"}>
       <RequestBody id={id} res={res} onLeave={onClose} />
     </BottomSheet>
   );
@@ -2760,7 +2763,7 @@ function TicketRow({ t, onOpen }: { t: AdminTicketRow; onOpen: () => void }) {
   return (
     <button type="button" className={`m-ticket is-${state.tone}`} onClick={onOpen}>
       <span className="m-card__eyebrow">{ticketKind(t)} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} · {since(t.updatedAt)}</span>
-      <span className="m-ticket__title">{ticketTitle(t)}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</span>
+      <span className="m-ticket__title">{ticketTitle(t)}{seasonsWords(t.seasons) ? <span className="muted"> · {seasonsWords(t.seasons)}</span> : null}</span>
       <span className="m-ticket__reason">{t.reason}</span>
       {t.last ? <span className="m-ticket__last"><b>{t.last.by}:</b> {t.last.text}</span> : null}
       <span className="m-ticket__tags">
@@ -2819,8 +2822,10 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead }: {
   // A title ticket is searched for by its own TMDB id; a general one has nothing to search for.
   const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
   const mine = t.owner && t.owner === session?.user.name;
+  // Leading the pane, Take it is the one pink key; beside Look inside (or in a sheet) it's a quiet pill.
+  const lookLeads = !!(lead && blockedRow && !looking && t.blocked && t.status === "open");
   const take = (
-    <button type="button" className={`btn${lead ? "" : " btn--quiet"} m-btn m-ticket__take`} disabled={readOnly || busy.size > 0}
+    <button type="button" className={`btn${lead && !lookLeads ? " btn--primary" : " btn--quiet"} m-btn m-ticket__take`} disabled={readOnly || busy.size > 0}
       onClick={() => void run("take", () => api.ticketTake(id), mine ? "Let go" : "It’s yours")}>
       {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
     </button>
@@ -2836,8 +2841,8 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead }: {
       : <BlockedImport target={t.blocked} onDone={after} />
   ) : null;
   // In the pane a blocked import's Look inside is the main key, and Take it joins the chips.
-  const lookKey = lead && blockedRow && !looking && t.blocked && t.status === "open"
-    ? <button type="button" className="btn m-btn" onClick={() => setLooking(true)}><Search size={18} aria-hidden /> Look inside</button> : null;
+  const lookKey = lookLeads
+    ? <button type="button" className="btn btn--primary m-btn" onClick={() => setLooking(true)}><Search size={18} aria-hidden /> Look inside</button> : null;
   return (
     <div className="m-reqsheet__body">
       {lead ? <div className="m-pane__acts">{lookKey ?? (t.status === "open" ? take : reopen)}{lead}</div> : null}
@@ -2948,7 +2953,7 @@ function TicketSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const titleId = useId();
   return (
     <BottomSheet titleId={titleId} onClose={onClose} className="m-reqsheet m-ticketsheet"
-      title={t ? <>{ticketTitle(t)}{seasonsLabel(t.seasons) ? <span className="muted"> · {seasonsLabel(t.seasons)}</span> : null}</> : "Ticket"}>
+      title={t ? <>{ticketTitle(t)}{seasonsWords(t.seasons) ? <span className="muted"> · {seasonsWords(t.seasons)}</span> : null}</> : "Ticket"}>
       <TicketBody id={id} res={res} />
     </BottomSheet>
   );
@@ -3002,6 +3007,7 @@ function MenuDrawer({ groups, facts, onClose, onPick }: {
 }) {
   const panel = useRef<HTMLDivElement>(null);
   useSheet(panel, onClose);
+  useTabWrap(panel);
   const titleId = useId();
   const group = (g: MenuGroup) => (
     <section key={g.id} className="m-mgroup" aria-labelledby={`${titleId}-${g.id}`}>
@@ -3320,8 +3326,10 @@ function useOpenFull() {
 }
 
 /** A row's two keys: what you'd most likely do, and the next thing. */
-function RowActions({ item, a, open, look, reply }: {
+function RowActions({ item, a, open, look, reply, selected = false }: {
   item: Item; a: DeskActions; open: () => void; look: () => void; reply: () => void;
+  /** Selected beside the detail, which leads with the same key: this one goes quiet. */
+  selected?: boolean;
 }) {
   const { session } = useSession();
   const full = useOpenFull();
@@ -3339,7 +3347,7 @@ function RowActions({ item, a, open, look, reply }: {
       if (item.group === "done") return <>{key("Open", open, false, false)}{key("Reopen", () => void a.reopen(t), true)}</>;
       if (item.group === "waiting") return <>{key("Open", open, false, false)}{key("Back to open", () => void a.reopen(t), true)}</>;
       const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
-      if (src.blocked) return <>{key("Look inside", look, false, false)}{key("Search again", () => void a.searchTicket(t), true)}</>;
+      if (src.blocked) return <>{key("Look inside", look, selected, false)}{key("Search again", () => void a.searchTicket(t), true)}</>;
       if (t.owner && t.owner === session?.user.name) return <>{video ? key("Search again", () => void a.searchTicket(t)) : null}{openKey}</>;
       return <>{key(t.owner ? "Take it over" : "Take it", () => void a.take(t, false))}{openKey}</>;
     }
@@ -3374,7 +3382,7 @@ function QueueRow({ item, selected, onSelect, actions }: {
         <ItemArt item={item} />
         <span className="m-row__text">
           <span className="m-row__kind"><span className="caps">{item.eyebrow}</span>{item.age ? <span className="m-row__age">{item.age}</span> : null}</span>
-          <span className="m-row__title">{item.title}{item.sub ? <span className="muted"> · {item.sub}</span> : null}</span>
+          <span className="m-row__title">{item.title}{item.sub ? <span className={`muted${item.subIsSeason ? " m-row__season" : ""}`}> · {item.sub}</span> : null}</span>
           <span className="m-row__meta">{item.meta}</span>
         </span>
       </button>
@@ -3409,8 +3417,9 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
   );
   const acts = (main: ReactNode, pill: ReactNode) => <div className="m-pane__acts">{main}{pill}</div>;
   const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={off} onConfirm={run} />;
-  const key = (label: ReactNode, onClick: () => void, disabled = off, primary = false) =>
-    <button type="button" className={`btn${primary ? " btn--primary" : ""} m-btn`} disabled={disabled} onClick={onClick}>{label}</button>;
+  // The pane's main key is its one pink key, above the fold.
+  const key = (label: ReactNode, onClick: () => void, disabled = off) =>
+    <button type="button" className="btn btn--primary m-btn" disabled={disabled} onClick={onClick}>{label}</button>;
   const pill = (label: ReactNode, onClick: () => void) =>
     <button type="button" className="btn btn--quiet m-btn" onClick={onClick}>{label}</button>;
   switch (src.type) {
@@ -3435,7 +3444,7 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
       }
       return (
         <>
-          {acts(key(<><Check size={18} aria-hidden /> Approve</>, () => void a.approve(src.r, true), off, true), hold("Decline", () => void a.approve(src.r, false)))}
+          {acts(key(<><Check size={18} aria-hidden /> Approve</>, () => void a.approve(src.r, true)), hold("Decline", () => void a.approve(src.r, false)))}
           <RequestPane id={src.r.id} />
         </>
       );
@@ -3591,10 +3600,31 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
   );
 }
 
+/** Tab and Shift+Tab go round inside a sheet: from the last control to the first, never out to the page. */
+function useTabWrap(panel: { current: HTMLElement | null }) {
+  useEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const all = [...el.querySelectorAll<HTMLElement>("a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])")]
+        .filter((x) => x.offsetParent !== null);
+      if (!all.length) return;
+      const first = all[0], last = all[all.length - 1];
+      const at = document.activeElement;
+      if (e.shiftKey && (at === first || !el.contains(at))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (at === last || !el.contains(at))) { e.preventDefault(); first.focus(); }
+    };
+    el.addEventListener("keydown", on);
+    return () => el.removeEventListener("keydown", on);
+  }, [panel]);
+}
+
 /** The phone's detail: a full-height sheet over the queue (Back, Escape or × closes it). */
 function DetailSheet(props: Parameters<typeof Detail>[0]) {
   const panel = useRef<HTMLDivElement>(null);
   useSheet(panel, props.onClose);
+  useTabWrap(panel);
   return <div ref={panel} className="m-pane-sheet" role="dialog" aria-modal="true" aria-label={props.item ? props.item.title : "Detail"}><Detail {...props} /></div>;
 }
 
@@ -3633,7 +3663,8 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
   const [focus, setFocus] = useState(0);
   const loading = desk.loading;
   const missing = desk.missing;
-  const list = view === "needs" ? (filter ? desk.needs.filter((i) => i.area === filter) : desk.needs) : view === "waiting" ? desk.waiting : desk.done;
+  // A monitor narrows Needs you only.
+  const { list, filtered } = listFor(desk, view, filter);
   const found = list.findIndex((i) => i.key === sel.key);
   // An item acted on leaves the list: the next one takes its place.
   const index = found >= 0 ? found : list.length ? Math.min(sel.at, list.length - 1) : -1;
@@ -3652,6 +3683,7 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
     requestAnimationFrame(() => document.querySelector<HTMLElement>(`.m-row[data-key="${CSS.escape(next.key)}"] .m-row__main`)?.focus({ preventScroll: !wide }));
   };
   const toggle = (area: Area | null) => { setView("needs"); setFilter((f) => (f === area ? null : area)); };
+  const showView = (v: DeskView) => { setView(v); setSel({ key: null, at: 0 }); if (v !== "needs") setFilter(null); };
   const groups = view === "needs" ? (["urgent", "today", "soon"] as Group[]) : [view as Group];
   const label = AREAS.find((x) => x.id === filter)?.label;
   const where = current ? { group: GROUP_HEAD[current.group].label.replace(" · last 2 days", ""), place: `${index + 1}\u00a0of ${list.length}`, first: index === 0, last: index === list.length - 1 }
@@ -3688,7 +3720,7 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
     if (/^[1-5]$/.test(e.key)) { e.preventDefault(); toggle(AREAS[Number(e.key) - 1].id); return; }
     if (k === "j" || (inQueue && e.key === "ArrowDown")) { e.preventDefault(); step(1); return; }
     if (k === "k" || (inQueue && e.key === "ArrowUp")) { e.preventDefault(); step(-1); return; }
-    if (e.key === "Escape" && filter) { toggle(null); return; }
+    if (e.key === "Escape" && filtered) { toggle(null); return; }
     if (!current || a.readOnly) return;
     const src = current.src;
     if (k === "e" && current.group !== "done") {
@@ -3701,6 +3733,34 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
     }
   };
   useEffect(() => { keys.current = onKey; });
+  // Focus stays in the queue after an action takes a row away: on the next row (the one
+  // before, at the end), or on the queue's heading when nothing's left; in the detail, on the
+  // next item's title.
+  const keep = useRef<{ at: number; pane: boolean } | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const keys2 = list.map((i) => i.key).join("|");
+  useEffect(() => {
+    const k = keep.current;
+    if (!k) return;
+    const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+    const t = window.setTimeout(() => {
+      keep.current = null;
+      const still = document.activeElement && document.activeElement !== document.body && document.activeElement.isConnected;
+      if (!lost && still) return;
+      const rows = [...document.querySelectorAll<HTMLElement>(".m-queue .m-row__main")];
+      if (k.pane && wide && rows.length) { setFocus((n) => n + 1); return; }
+      const next = rows[Math.min(k.at, rows.length - 1)];
+      if (next) next.focus({ preventScroll: true });
+      else heading.current?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [keys2, wide]);
+  const remember = (e: React.MouseEvent | React.KeyboardEvent) => {
+    const row = (e.target as HTMLElement).closest<HTMLElement>(".m-row");
+    const pane = !!(e.target as HTMLElement).closest(".m-pane");
+    const at = row ? [...document.querySelectorAll(".m-queue .m-row")].indexOf(row) : index;
+    keep.current = { at: Math.max(0, at), pane };
+  };
   useEffect(() => {
     const on = (e: KeyboardEvent) => keys.current(e);
     window.addEventListener("keydown", on);
@@ -3712,7 +3772,6 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
     focus, state: (loading ? "loading" : missing.length ? "missing" : "clear") as "loading" | "missing" | "clear",
     onStep: step, onClose: () => setSheet(false),
   };
-  const count = (n: number) => (loading ? "–" : n);
 
   return (
     <>
@@ -3724,16 +3783,16 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
               <span className="m-headline__long"><b>{missing.length ? "At least " : ""}{desk.needs.length === 1 ? "1\u00a0thing needs" : `${desk.needs.length}\u00a0things need`} you.</b>{desk.urgent ? <> <b>{`${desk.urgent}\u00a0${desk.urgent === 1 ? "is" : "are"} urgent.`}</b></> : null}</span>
               <span className="m-headline__short"><b>{`${desk.needs.length}\u00a0need you`}</b>{desk.urgent ? <> · <b>{`${desk.urgent}\u00a0urgent`}</b></> : null}</span>
             </>}
-            {" "}<span className="m-headline__more">The rest is under Everything else.</span>
+            {" "}<span className="m-headline__more"><span className="m-headline__wide">The rest is under Everything else.</span><span className="m-headline__phone">The rest is in the menu.</span></span>
           </p>
         </div>
         {menu}
       </div>
 
       <section className="m-strip" aria-label="At a glance. Press a monitor to show only that part of the queue">
-        <div className={`m-monitors${filter ? " is-filtered" : ""}`} role="group" aria-label="Filter the queue">
+        <div className={`m-monitors${filtered ? " is-filtered" : ""}`} role="group" aria-label="Filter the queue">
           {desk.monitors.map((m, n) => (
-            <button key={m.area} type="button" className={`m-mon${m.hot && m.known ? " is-urgent" : ""}`} aria-pressed={filter === m.area} onClick={() => toggle(m.area)}
+            <button key={m.area} type="button" className={`m-mon${m.hot && m.known ? " is-urgent" : ""}`} aria-pressed={filtered && filter === m.area} onClick={() => toggle(m.area)}
               aria-keyshortcuts={String(n + 1)}
               aria-label={`${m.label}: ${m.failed ? "couldn’t load" : m.known ? `${m.count}, ${m.makeup}` : "loading"}${m.hot ? ", urgent" : ""}${m.first ? `. First: ${m.first.title}, ${m.first.top}` : ""}`}>
               <span className="m-mon__label"><span className="m-lamp" aria-hidden /><span className="caps">{m.label}</span></span>
@@ -3757,17 +3816,17 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
 
       <div className="m-panes">
         <section ref={column} className="m-queue-col" aria-labelledby="m-queue-h">
-          <h2 id="m-queue-h" className="visually-hidden">{VIEW_LABEL[view]}</h2>
+          <h2 id="m-queue-h" className="visually-hidden" ref={heading} tabIndex={-1}>{VIEW_LABEL[view]}</h2>
           <div className="m-seg3" role="group" aria-label="Show">
             {(["needs", "waiting", "done"] as DeskView[]).map((v) => (
-              <button key={v} type="button" aria-pressed={view === v} onClick={() => { setView(v); setSel({ key: null, at: 0 }); }}>
+              <button key={v} type="button" aria-pressed={view === v} onClick={() => showView(v)}>
                 {v === "needs" ? "Needs you" : v === "waiting" ? "Waiting" : "Done"}
-                {v === "done" ? null : <span className="m-seg3__n">{count(v === "needs" ? desk.needs.length : desk.waiting.length)}</span>}
+                {v === "done" ? null : <span className="m-seg3__n">{loading ? "–" : v === "needs" ? desk.counts.needs : desk.counts.waiting}</span>}
               </button>
             ))}
           </div>
-          <p className="visually-hidden" aria-live="polite">{filter ? `Showing ${label} only, ${list.length} items.` : ""}</p>
-          {filter && view === "needs" ? (
+          <p className="visually-hidden" aria-live="polite">{filtered ? `Showing ${label} only, ${list.length} items.` : ""}</p>
+          {filtered ? (
             <div className="m-filterline">
               <span>Showing <b>{label}</b> only</span>
               <button type="button" className="btn btn--quiet m-btn m-rowbtn" onClick={() => toggle(null)}>Show all</button>
@@ -3777,10 +3836,12 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
             <LoadFailed text={`Couldn’t load ${listed(missing.map((f) => FEED_NAME[f]))}, so the queue may be missing some of what needs you.`}
               onRetry={() => onRetry(missing)} />
           ) : stale ? <Stale at={stale.at} onRetry={() => onRetry("stale")} /> : null}
-          <div className="m-queue" aria-busy={loading}>
+          <div className="m-queue" aria-busy={loading} onClickCapture={remember} onKeyDownCapture={remember}>
             {/* Until everything has answered: rows the size of the real ones, swapped in once. */}
             {loading ? (
               <div className="m-group" aria-hidden>
+                {/* The slot a "couldn't load" notice would take, so it never pushes the queue down. */}
+                <div className="m-skel-notice" />
                 <div className="m-group__head"><span className="skeleton m-skel-caps" /></div>
                 <ul className="m-rows2">{[0, 1, 2, 3].map((n) => <li key={n} className="skeleton m-skel-row" />)}</ul>
               </div>
@@ -3793,7 +3854,7 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
                   <ul className="m-rows2">
                     {rows.map((item) => (
                       <QueueRow key={item.key} item={item} selected={wide && current?.key === item.key} onSelect={() => select(item, true)}
-                        actions={<RowActions item={item} a={a} open={() => select(item, true)}
+                        actions={<RowActions item={item} a={a} selected={wide && current?.key === item.key} open={() => select(item, true)}
                           look={() => { select(item, true); setLook(item.key); }}
                           reply={() => { select(item, true); setReply((r) => ({ key: item.key, n: r.n + 1 })); }} />} />
                     ))}
@@ -3805,14 +3866,14 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
             {!loading && !missing.length && !list.length ? (
               <AllClear title="All clear">
                 {view === "waiting" ? "Nobody owes you an answer." : view === "done" ? "Nothing decided, solved or marked done in the last two days."
-                  : filter ? `Nothing in ${label} needs you.` : "Nothing needs you right now."}
+                  : filtered ? `Nothing in ${label} needs you.` : "Nothing needs you right now."}
               </AllClear>
             ) : null}
           </div>
           {view === "needs" && list.length && !loading ? (
             <p className="m-queue__end">
               <Check size={18} aria-hidden />
-              {filter ? <span>That’s all for {label}. {desk.needs.length - list.length}{" "}more in the full queue.</span>
+              {filtered ? <span>That’s all for {label}. {desk.needs.length - list.length}{" "}more in the full queue.</span>
                 : up.length ? <span>That’s all. {up.length > 1 ? `${up.slice(0, -1).join(", ")} and ${up[up.length - 1]}` : up[0]} {up.length > 1 ? "are" : "is"} up.</span> : <span>That’s all.</span>}
             </p>
           ) : null}
@@ -3822,7 +3883,7 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
             <span>(in the queue, the monitors or the detail)</span>
           </div>
         </section>
-        {wide ? <Detail {...detail} sheet={false} /> : null}
+        {wide ? <div className="m-pane-wrap" onClickCapture={remember}><Detail {...detail} sheet={false} /></div> : null}
       </div>
       {!wide && sheet && current ? createPortal(<DetailSheet {...detail} sheet />, document.body) : null}
     </>
@@ -3857,6 +3918,12 @@ export function Manage() {
   const reduced = useReducedMotion();
   const now = useNow();
   const [menuOpen, setMenuOpen] = useState(false);
+  // The strip's ambient light holds still while the tab is out of sight.
+  useEffect(() => {
+    const on = () => document.documentElement.classList.toggle("is-hidden", document.hidden);
+    document.addEventListener("visibilitychange", on);
+    return () => { document.removeEventListener("visibilitychange", on); document.documentElement.classList.remove("is-hidden"); };
+  }, []);
   // "/" opens Everything else from a full view (the queue has its own, beside its other keys).
   useEffect(() => {
     const on = (e: KeyboardEvent) => { if (e.key === "/" && !keysOff(e, "#m-panel, .page-head")) { e.preventDefault(); setMenuOpen(true); } };
@@ -4005,7 +4072,7 @@ export function Manage() {
   // A refresh of this tab failed over what's already on screen: say so, and how old it is.
   const stale = shows(tab).filter((s) => failed[s] && data[s as keyof Store]);
 
-  const menu = <EverythingElse groups={groups} dot={desk.needs.length > 0} hot={desk.urgent > 0} facts={facts} onPick={pick}
+  const menu = <EverythingElse groups={groups} dot={!desk.loading && desk.needs.length > 0} hot={!desk.loading && desk.urgent > 0} facts={facts} onPick={pick}
     open={menuOpen} setOpen={setMenuOpen} />;
 
   if (!full) {
@@ -4058,6 +4125,12 @@ export function Manage() {
 
 /** One section in full, as the menu (and a push alert's ?tab=) opens it. */
 function FullView({ tab }: { tab: Section }) {
+  const { data, failed } = useManage();
+  // Until its first answer: cards at their final height, so nothing below jumps when it lands.
+  const first = shows(tab)[0] as keyof Store | undefined;
+  if (first && data[first] === undefined && !failed[first as Section]) {
+    return <div className="m-stack" aria-busy="true" aria-label="Loading">{[0, 1, 2].map((n) => <div key={n} className="skeleton m-skel-card" />)}</div>;
+  }
   return tab === "requests" ? <RequestsTab /> : tab === "all" ? <AllRequestsTab /> : tab === "tickets" ? <TicketsTab />
     : tab === "joins" ? <JoinsTab /> : tab === "invites" ? <InvitesTab /> : tab === "people" ? <PeopleTab />
       : tab === "cleanup" ? <CleanupTab /> : tab === "discord" ? <DiscordTab /> : tab === "messages" ? <MessagesTab />

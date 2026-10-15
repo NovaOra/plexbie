@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BlockedRow } from "../api/types";
-import { clamp, deriveDesk, listFor, span, type Desk, type DeskData } from "./manageQueue";
+import { clamp, deriveDesk, listFor, seasonsWords, span, type Desk, type DeskData } from "./manageQueue";
 
 /** The sample household's Manage page: the numbers the approved design shows for it. */
 
@@ -201,6 +201,11 @@ describe("the queue's words", () => {
     expect(span(90 * 60_000)).toBe(`90${NB}min`);
     expect(span(5 * 36e5)).toBe(`5${NB}h`);
     expect(span(48 * 36e5 + 5)).toBe(`2${NB}days`);
+  });
+
+  it("says seasons in words", () => {
+    expect([seasonsWords([1]), seasonsWords([1, 2]), seasonsWords([1, 2, 3]), seasonsWords("all"), seasonsWords(null)])
+      .toEqual(["Season 1", "Seasons 1 and 2", "Seasons 1, 2 and 3", "All seasons", null]);
   });
 
   it("cuts a long quote at a word, with a tight ellipsis", () => {

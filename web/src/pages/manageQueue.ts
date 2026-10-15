@@ -474,3 +474,12 @@ export function listFor(desk: Desk, view: View, filter: Area | null): { list: It
   if (view === "done") return { list: desk.done, filtered: false };
   return filter ? { list: desk.needs.filter((i) => i.area === filter), filtered: true } : { list: desk.needs, filtered: false };
 }
+
+/** A season choice in words, for admins' titles and lines: "Season 1", "Seasons 1 and 2", "All seasons". */
+export function seasonsWords(s?: number[] | "all" | "latest" | null) {
+  if (s === "all") return "All seasons";
+  if (s === "latest") return "Latest season + new episodes";
+  if (!s?.length) return null;
+  if (s.length === 1) return `Season ${s[0]}`;
+  return `Seasons ${s.slice(0, -1).join(", ")} and ${s[s.length - 1]}`;
+}
