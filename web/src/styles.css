@@ -1821,6 +1821,9 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
   transition: opacity 200ms ease;
 }
 .m-card.is-busy { opacity: 0.6; }
+/* A card of lines and a key, no poster (a blocked import): one column. */
+.m-card--stack { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+.m-card--stack > * { margin: 0; max-width: 100%; }
 .m-card__poster { width: 68px; aspect-ratio: 2 / 3; border-radius: 8px; overflow: hidden; background: var(--panel-raised); }
 .m-card__poster img { width: 100%; height: 100%; object-fit: cover; -webkit-user-drag: none; pointer-events: none; }
 .m-card__body { display: grid; gap: 5px; min-width: 0; justify-items: start; }

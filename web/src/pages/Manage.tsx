@@ -1604,7 +1604,7 @@ function BlockedList({ checks }: { checks: number }) {
         {rows.map((r) => {
           const key = `${r.app}:${r.downloadId}`;
           return (
-            <li key={key} className="m-card">
+            <li key={key} className="m-card m-card--stack">
               <p className="m-card__eyebrow">{r.app === "sonarr" ? "Sonarr" : "Radarr"} · import blocked{r.episodes.length ? ` · ${r.episodes.join(", ")}` : ""}</p>
               <h3 className="m-card__title">{r.title}{r.year ? <span className="muted"> ({r.year})</span> : null}</h3>
               {open === key ? <BlockedImport target={r} onDone={() => window.setTimeout(() => void load(), 1500)} /> : (
