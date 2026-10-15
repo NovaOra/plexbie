@@ -107,9 +107,24 @@
   --key-lip-pink-down: inset 0 -1px 0 var(--screen-deep);
   --key-highlight: inset 0 1px 0 rgb(255 255 255 / 0.12);
   --key-press: 2px;
-  /* A lit screen: light from the screen colour, never a pink fill. */
-  --screen-glow: inset 0 0 40px rgb(255 209 228 / 0.08);
-  --screen-edge: rgb(255 209 228 / 0.14);
+  /* A lit object (the sign-in set): its screen lights the cabinet, the deck and the
+     room behind. Gradients on hardware only; pink stays light, never a fill. */
+  --cab-top: color-mix(in srgb, var(--slate) 82%, white);
+  --cab-bot: color-mix(in srgb, var(--slate) 70%, var(--field-deep));
+  --cab-wash: color-mix(in srgb, var(--screen) 10%, transparent);
+  --cab-shading: inset 0 2px 0 rgb(255 255 255 / 0.28), inset 2px 0 0 rgb(255 255 255 / 0.1),
+    inset -2px 0 0 rgb(3 6 18 / 0.25), inset 0 -6px 0 rgb(3 6 18 / 0.28), 0 30px 60px -18px rgb(3 6 18 / 0.75);
+  --room-glow: color-mix(in srgb, var(--screen) 30%, transparent);
+  --screen-light: color-mix(in srgb, var(--panel) 72%, var(--screen));
+  --screen-light-soft: color-mix(in srgb, var(--panel) 90%, var(--screen));
+  --screen-rim: color-mix(in srgb, var(--screen) 16%, transparent);
+  --screen-shading: inset 0 0 50px rgb(0 0 0 / 0.35), 0 0 60px color-mix(in srgb, var(--screen) 22%, transparent);
+  --glare: rgb(255 255 255 / 0.1);
+  --glare-soft: rgb(255 255 255 / 0.03);
+  --deck-shading: inset 0 2px 6px rgb(0 0 0 / 0.45), 0 1px 0 rgb(255 255 255 / 0.15);
+  --knob-hi: color-mix(in srgb, var(--panel-raised) 65%, white);
+  --knob-shading: 0 3px 6px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.25);
+  --mascot-glow: 0 0 0 1px rgb(255 255 255 / 0.2), 0 10px 40px color-mix(in srgb, var(--screen) 35%, transparent);
   /* Things that float: menus, sheets, toasts. */
   --shadow-float: 0 10px 30px -12px rgb(3 6 18 / 0.7), 0 2px 6px -2px rgb(3 6 18 / 0.5);
   --shadow: var(--shadow-float);
@@ -1037,12 +1052,20 @@ html, body { overflow-x: clip; }
 .studio-clock { color: var(--ink); }
 
 .air-stage {
+  position: relative; isolation: isolate;
   /* The first screen under the masthead (60px and its 1px rule). */
   min-height: calc(100svh - 61px);
   display: grid; place-items: center;
   padding: clamp(24px, 1rem + 2vw, 48px) var(--pad-r) clamp(24px, 1rem + 2vw, 48px) var(--pad-l);
 }
-.air-set { width: min(660px, 100%); display: flex; flex-direction: column; align-items: center; }
+.air-set { position: relative; width: min(660px, 100%); display: flex; flex-direction: column; align-items: center; }
+/* The screen lights the room behind the set. */
+.air-set::before {
+  content: ""; position: absolute; z-index: -1; left: 50%; top: 42%;
+  width: min(1100px, 160vw); height: 760px; translate: -50% -50%;
+  background: radial-gradient(closest-side, var(--room-glow), transparent 72%);
+  pointer-events: none;
+}
 
 .air-antennae { display: block; width: clamp(150px, 120px + 8vw, 200px); height: auto; aspect-ratio: 200 / 58; margin-bottom: -4px; }
 .air-antennae line { stroke: var(--slate); stroke-width: 3; stroke-linecap: round; }
@@ -1053,18 +1076,29 @@ html, body { overflow-x: clip; }
   position: relative; width: 100%;
   display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px);
   padding: clamp(12px, 0.5rem + 1vw, 16px);
-  background: var(--slate); border: 1px solid var(--field-deep); border-radius: var(--r-lg);
-  box-shadow: var(--shadow-object), var(--bevel-light), var(--bevel-dark);
+  /* Lit from the top and a little by its own screen, shaded towards the floor. */
+  background:
+    radial-gradient(80% 40% at 50% 0%, var(--cab-wash), transparent 70%),
+    linear-gradient(180deg, var(--cab-top) 0%, var(--slate) 38%, var(--cab-bot) 100%);
+  border: 1px solid var(--field-deep); border-radius: var(--r-lg);
+  box-shadow: var(--cab-shading);
 }
 .air-tv__front { display: grid; gap: clamp(12px, 0.5rem + 1vw, 16px); }
 .air-bezel { padding: 8px; background: var(--field-deep); border-radius: var(--r-md); }
 .air-screen {
   display: grid; grid-template-rows: auto 1fr;
   padding: clamp(12px, 0.5rem + 1vw, 16px) clamp(16px, 0.75rem + 1.5vw, 24px) 24px;
-  overflow: hidden;
-  background: var(--panel); color: var(--ink);
-  border: 1px solid var(--screen-edge); border-radius: var(--r-md);
-  box-shadow: var(--screen-glow);
+  position: relative; overflow: hidden;
+  /* Lit from its centre, darker towards the glass's edges, and glowing a little past them. */
+  background: radial-gradient(120% 95% at 50% 42%, var(--screen-light) 0%, var(--screen-light-soft) 38%, var(--panel) 70%, var(--field-deep) 100%);
+  color: var(--ink);
+  border: 1px solid var(--screen-rim); border-radius: var(--r-md);
+  box-shadow: var(--screen-shading);
+}
+/* Glare on the glass. */
+.air-screen::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(115deg, var(--glare) 0%, var(--glare-soft) 28%, transparent 42%);
 }
 
 /* On-screen display: the channel readout, and the tally, lit only while a sign-in is under way. */
@@ -1089,7 +1123,7 @@ html, body { overflow-x: clip; }
   padding: 16px 0 4px;
   text-align: center;
 }
-.air-mascot { width: clamp(64px, 3.5rem + 2vw, 76px); height: auto; aspect-ratio: 1; border-radius: 24%; }
+.air-mascot { width: clamp(64px, 3.5rem + 2vw, 76px); height: auto; aspect-ratio: 1; border-radius: 24%; box-shadow: var(--mascot-glow); }
 .air-title {
   font-size: clamp(2.4rem, 1.6rem + 2.6vw, 3.6rem); font-weight: 820; line-height: 0.92;
   letter-spacing: -0.01em; font-stretch: 70%; text-transform: uppercase;
@@ -1134,8 +1168,10 @@ html, body { overflow-x: clip; }
 .air-knobs { display: flex; gap: 12px; }
 .air-knob {
   position: relative; width: clamp(28px, 4px + 4vw, 44px); aspect-ratio: 1;
-  background: var(--panel-raised); border: 1px solid var(--slate-ink); border-radius: var(--r-full);
-  box-shadow: var(--bevel-light), var(--bevel-dark);
+  /* Domed: lit from the top left. */
+  background: radial-gradient(circle at 35% 30%, var(--knob-hi), var(--panel-raised) 45%, var(--field-deep));
+  border: 1px solid var(--slate-ink); border-radius: var(--r-full);
+  box-shadow: var(--knob-shading);
   transition: transform 260ms var(--ease-out);
 }
 .air-knob::after {
@@ -1151,7 +1187,10 @@ html, body { overflow-x: clip; }
 /* The deck: the set's own keys, each with its legend printed under it. */
 .air-deck {
   display: grid; gap: 12px; padding: 12px;
-  background: var(--panel); border: 1px solid var(--field-deep); border-radius: var(--r-md);
+  /* A little of the screen's light falls on it. */
+  background: linear-gradient(180deg, var(--screen-light-soft) 0%, var(--panel) 40%);
+  border: 1px solid var(--field-deep); border-radius: var(--r-md);
+  box-shadow: var(--deck-shading);
 }
 .air-seg { display: grid; }
 .air-key {
@@ -1223,7 +1262,7 @@ html, body { overflow-x: clip; }
 .air-feet { display: flex; justify-content: space-between; width: 76%; }
 .air-feet i {
   display: block; width: 44px; height: 12px;
-  background: var(--slate); border: 1px solid var(--field-deep); border-top: 0; border-radius: 0 0 var(--r) var(--r);
+  background: var(--cab-bot); border: 1px solid var(--field-deep); border-top: 0; border-radius: 0 0 var(--r) var(--r);
 }
 
 @media (min-width: 720px) {
