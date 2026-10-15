@@ -120,6 +120,17 @@
 }
 
 /* -------------------------------------------------------------------- base */
+/* Reduced motion, everywhere: animations and transitions finish at once, and
+   presses keep their colour and lip without moving. Rules below may go further. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  .btn:active, .btn[aria-busy="true"], .m-step__btn:active, .brand:active img { transform: none !important; }
+}
 .skip-link {
   position: fixed; left: 12px; top: 8px; z-index: 100; padding: 10px 16px; border-radius: 10px;
   background: var(--screen); color: var(--on-screen); font-weight: 760; text-decoration: none;
@@ -270,7 +281,10 @@ html, body { overflow-x: clip; }
   color: var(--ink); text-decoration: none;
   font-weight: 780; font-size: 1.15rem; letter-spacing: -0.02em; font-stretch: 92%;
 }
-.brand img { width: 34px; height: 34px; border-radius: 8px; }
+.brand img { width: 34px; height: 34px; border-radius: 8px; transition: transform var(--t-press) var(--ease-out); }
+.brand { transition: color var(--t-color) var(--ease-out); }
+@media (hover: hover) and (pointer: fine) { .brand:hover { color: var(--screen-hover); } }
+.brand:active img { transform: scale(0.96); }
 .masthead__nav { display: none; gap: 4px; margin-left: 12px; }
 .masthead__nav a {
   color: var(--slate-ink); text-decoration: none; font-weight: 560;
