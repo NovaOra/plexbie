@@ -27,8 +27,8 @@ export function BottomSheet({ titleId, title, onClose, className, children }: {
       <motion.div ref={panel} className={className ? `m-sheet__panel ${className}` : "m-sheet__panel"}
         initial={reduced ? { opacity: 0 } : { transform: "translateY(100%)" }}
         animate={reduced ? { opacity: 1 } : { transform: "translateY(0%)" }}
-        exit={reduced ? { opacity: 0 } : { transform: "translateY(100%)", transition: { duration: 0.2, ease: EASE_OUT } }}
-        transition={{ type: "spring", duration: 0.45, bounce: 0.12 }}
+        exit={reduced ? { opacity: 0 } : { transform: "translateY(100%)", transition: { duration: 0.2, ease: [0.4, 0, 1, 1] } }}
+        transition={{ duration: 0.28, ease: EASE_OUT }}
         drag="y" dragListener={false} dragControls={drag} dragConstraints={{ top: 0, bottom: 0 }} dragElastic={{ top: 0, bottom: 0.6 }}
         onDragEnd={(_, i) => { if (i.offset.y > 120 || i.velocity.y > 600) onClose(); }}>
         <span className="m-sheet__grab" aria-hidden onPointerDown={(e) => drag.start(e)} />

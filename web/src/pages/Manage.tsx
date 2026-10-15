@@ -325,7 +325,7 @@ function Switch({ on, label, onChange, disabled }: { on: boolean; label: string;
       className={`m-switch${on ? " is-on" : ""}`}
       onClick={() => { buzz(6); onChange(!on); }}
     >
-      <motion.span className="m-switch__knob" layout transition={{ type: "spring", duration: 0.32, bounce: 0.25 }}>
+      <motion.span className="m-switch__knob" layout transition={{ duration: 0.2, ease: EASE_OUT }}>
         {on ? <ShieldCheck size={12} aria-hidden /> : null}
       </motion.span>
     </button>
@@ -475,11 +475,12 @@ function SwipeCard({ yes, no, yesLabel, noLabel, enabled, children }: {
   );
 }
 
-/** List items leave by folding away, so the next card slides up into place. */
+/** List items leave by folding away, so the next card slides up into place: the row's grid
+ *  track goes from 1fr to 0fr (styles.css: the item's child can shrink to nothing), not its height. */
 const fold = {
-  initial: { opacity: 0, height: 0 },
-  animate: { opacity: 1, height: "auto", transition: { duration: 0.25, ease: EASE_OUT } },
-  exit: { opacity: 0, height: 0, transition: { duration: 0.22, ease: EASE_OUT } },
+  initial: { opacity: 0, gridTemplateRows: "0fr" },
+  animate: { opacity: 1, gridTemplateRows: "1fr", transition: { duration: 0.24, ease: EASE_OUT } },
+  exit: { opacity: 0, gridTemplateRows: "0fr", transition: { duration: 0.22, ease: EASE_OUT } },
 } as const;
 
 /* ================================================================= tabs */
@@ -493,7 +494,7 @@ function Segmented<T extends string | number>({ id, label, labelledBy, options, 
       <div className="m-seg" role="group" aria-label={label} aria-labelledby={labelledBy}>
         {options.map((o) => (
           <button key={o.id} type="button" aria-pressed={value === o.id} className="m-seg__item" onClick={() => onChange(o.id)}>
-            {value === o.id ? <motion.span layoutId={`${id}-pill`} className="m-seg__pill" transition={{ type: "spring", duration: 0.35, bounce: 0.15 }} /> : null}
+            {value === o.id ? <motion.span layoutId={`${id}-pill`} className="m-seg__pill" transition={{ duration: 0.24, ease: EASE_OUT }} /> : null}
             {o.label}
           </button>
         ))}
@@ -1108,12 +1109,12 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
         {open ? (
           <motion.div
             id="m-cleanup-settings" className="m-settings2"
-            initial={reduced ? { opacity: 0 } : { opacity: 0, height: 0 }}
-            animate={reduced ? { opacity: 1 } : { opacity: 1, height: "auto" }}
-            exit={reduced ? { opacity: 0 } : { opacity: 0, height: 0 }}
-            transition={{ duration: 0.25, ease: EASE_OUT }}
+            initial={reduced ? { opacity: 0 } : { opacity: 0, gridTemplateRows: "0fr" }}
+            animate={reduced ? { opacity: 1 } : { opacity: 1, gridTemplateRows: "1fr" }}
+            exit={reduced ? { opacity: 0 } : { opacity: 0, gridTemplateRows: "0fr" }}
+            transition={{ duration: 0.24, ease: EASE_OUT }}
           >
-            <div className="m-settings2__inner">
+            <div className="m-settings2__clip"><div className="m-settings2__inner">
               <div className="m-set-row" ref={enableRow}>
                 <span><b>Cleanup</b><span className="muted">Check every day for titles nobody watches.{!settings.enabled && !settings.practice ? " Practice mode is off: turn it on in practice, or hold to go live." : ""}</span></span>
                 {/* With practice off, turning it on is going live: the same hold as Go live, next to a plain way in through practice. */}
@@ -1180,6 +1181,7 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
                     <RefreshCw size={16} aria-hidden className={scanning ? "m-spin" : undefined} /> {scanning ? "Scanning…" : "Scan now"}
                   </button>}
               </div>
+            </div>
             </div>
           </motion.div>
         ) : null}
@@ -1611,7 +1613,7 @@ function BlockedList({ checks }: { checks: number }) {
   if (!rows.length && !unreachable.length && !res.failed) return null;
   return (
     <section className="section" id="m-part-blocked">
-      <div className="m-head"><h3>Waiting for you to look</h3></div>
+      <div className="m-head"><h3>Blocked imports</h3></div>
       {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
       {unreachable.map((app) => (
         <p key={app} className="field__error">Couldn’t reach {app === "sonarr" ? "Sonarr" : "Radarr"} just now, so a download it won’t import by itself can’t show here.</p>
