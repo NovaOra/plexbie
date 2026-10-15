@@ -102,8 +102,8 @@ export function Landing() {
   const lead = leadFor(search);
   const invite = inviteOutcome(search)?.outcome;
   // One sentence per span, so a line breaks between them rather than inside one.
-  const lede = invite === "ok" ? ["Your invite worked."]
-    : invite === "already" ? ["You’re already in."]
+  const lede = invite === "ok" ? ["Your invite worked.", "Sign in with Plex to use Plexbie too."]
+    : invite === "already" ? ["You’re already in.", "Sign in with Plex to use Plexbie too."]
     : ["Plexbie is your household’s Plex helper.", "Members sign in below."];
 
   const [ch, setCh] = useState<1 | 2>(() => (hash === "#getting-in" ? 2 : 1));
