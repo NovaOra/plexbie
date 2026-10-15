@@ -1950,17 +1950,27 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
    dimmed page, so they don't cover the sheet's own buttons) */
 .m-toasts { position: fixed; z-index: 90; left: 50%; bottom: calc(var(--tabbar) + env(safe-area-inset-bottom) + 12px); transform: translateX(-50%); display: grid; gap: 8px; width: min(440px, calc(100vw - 2 * var(--gutter))); pointer-events: none; }
 @media (min-width: 860px) { .m-toasts { bottom: 24px; } }
+/* Phone: floating above the tab bar, the page's width less its gutters. */
+@media (max-width: 859px) { .m-toasts { left: var(--pad-l); right: var(--pad-r); width: auto; transform: none; bottom: calc(var(--tabbar) + 8px + env(safe-area-inset-bottom)); } }
+/* Beside the queue: floating in the queue's column, 16px in from its sides. */
+@media (min-width: 1000px) { html.has-desk .m-toasts { left: calc(var(--m-qcol-left, 0px) + 16px); width: calc(var(--m-qcol-width, 560px) - 32px); transform: none; } }
 html.has-sheet .m-toasts { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; }
 /* only the newest then, so a stack doesn't grow down over the sheet */
 html.has-sheet .m-toast:not(:last-child) { display: none; }
-.m-toast { pointer-events: auto; display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 16px; border-radius: 14px; background: var(--ink); color: var(--on-screen); box-shadow: var(--shadow-float); font-size: 0.92rem; font-weight: 600; cursor: grab; touch-action: pan-y; }
-.m-toast > svg { flex: none; }
-.m-toast.is-error { background: var(--tally); color: var(--on-tally); }
-.m-toast__text { flex: 1; min-width: 0; display: grid; gap: 2px; }
-.m-toast__text b { font-weight: 760; }
-.m-toast__text small { font-size: 0.8rem; font-weight: 500; opacity: 0.75; }
-.m-toast__undo { flex: none; min-height: 44px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--on-screen); color: var(--screen); font: inherit; font-weight: 800; cursor: pointer; transition: transform 140ms var(--ease-out); }
-.m-toast__undo:active { transform: scale(0.95); }
+.m-toast {
+  pointer-events: auto; display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; min-height: 58px; border-radius: var(--r);
+  background: var(--panel-raised); color: var(--ink); border: 1px solid var(--rule); box-shadow: var(--bevel-light), var(--shadow-float-strong);
+  font-size: 0.94rem; font-weight: 600; cursor: grab; touch-action: pan-y;
+}
+@media (max-width: 859px) { .m-toast { border-radius: var(--r-md); } }
+.m-toast > svg { flex: none; color: var(--slate-ink); }
+.m-toast.is-error { background: var(--tally); color: var(--on-tally); border-color: var(--tally); }
+.m-toast.is-error > svg { color: inherit; }
+.m-toast__text { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 6px 0; }
+.m-toast__text b { font-weight: 640; }
+.m-toast__text small { font-size: 0.8rem; font-weight: 500; color: var(--slate-ink); }
+.m-toast.is-error .m-toast__text small { color: inherit; opacity: 0.8; }
+.m-toast__undo { flex: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .m-tile__dot, .m-mode.is-live .m-mode__dot, .m-health__dot::after, .m-spin { animation: none; }

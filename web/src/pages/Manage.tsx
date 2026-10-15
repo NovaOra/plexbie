@@ -30,7 +30,12 @@ type Store = {
   requests?: AdminRequests; all?: AdminAllRequests; tickets?: AdminTickets; joins?: AdminJoin[]; invites?: AdminInvite[]; plexinvites?: PlexInvite[]; people?: AdminPerson[]; cleanup?: AdminCleanup;
   discord?: DiscordOverview; messages?: MessagePerson[]; health?: HealthCheck[];
 };
-type ToastIn = { tone?: "ok" | "error"; text: string; detail?: string; undo?: () => void };
+type ToastIn = {
+  tone?: "ok" | "error"; text: string; detail?: string; undo?: () => void;
+  /** Runs when the toast goes without its Undo pressed (timed out, swiped away, the tab hidden,
+   *  the page left): a decision held back for Undo is sent then. */
+  onGone?: () => void;
+};
 type Toast = ToastIn & { id: number };
 
 const SECTIONS: Section[] = ["requests", "all", "tickets", "joins", "invites", "plexinvites", "people", "cleanup", "discord", "messages", "health"];
@@ -58,6 +63,9 @@ interface ManageState {
   /** The invite link just made, shown on Invites until "Make another". */
   freshInvite: NewInvite | null;
   setFreshInvite: (made: NewInvite | null) => void;
+  /** A decision from the queue, held back for Undo: its row leaves at once, and `run` sends it
+   *  once the toast goes (Undo puts the row back and sends nothing). */
+  defer: (key: string, text: string, run: () => Promise<unknown>) => void;
 }
 const ManageCtx = createContext<ManageState | null>(null);
 /** What each tab shows (most show only their own section). */
@@ -3040,7 +3048,7 @@ function EverythingElse({ groups, dot, hot, facts, onPick, open, setOpen }: {
 /** What Undo's shortcut is called on this keyboard. */
 const UNDO_KEYS = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "Option+Z" : "Alt+Z";
 
-function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number) => void; hold: boolean }) {
+function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number, undone?: boolean) => void; hold: boolean }) {
   // The clock pauses while the tab is hidden, or while the pointer or keyboard
   // focus is on the toast (reaching Undo takes a moment), so nothing vanishes unread.
   // With `hold` (an Undo while the keyboard is in use) it waits until it's let go.
@@ -3095,7 +3103,7 @@ function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number) => vo
         {t.undo ? <span className="visually-hidden"> {UNDO_KEYS} undoes it.</span> : null}
       </span>
       {t.undo ? (
-        <button type="button" className="m-toast__undo" aria-keyshortcuts="Alt+Z" onClick={() => { t.undo!(); dismiss(t.id); }}>Undo</button>
+        <button type="button" className="btn btn--quiet m-btn m-toast__undo" aria-keyshortcuts="Alt+Z" onClick={() => { t.undo!(); dismiss(t.id, true); }}>Undo</button>
       ) : null}
     </motion.div>
   );
@@ -3111,13 +3119,41 @@ function ToastHost({ register }: { register: (push: (t: ToastIn) => void) => voi
   const nextId = useRef(1);
   const [keyboard, setKeyboard] = useState(false);
   const [letGo, setLetGo] = useState<Set<number>>(() => new Set());
-  const dismiss = useCallback((id: number) => setToasts((all) => all.filter((t) => t.id !== id)), []);
-  useLayoutEffect(() => register((t) => setToasts((all) => {
+  // The toasts as they are now, kept in step on every change (a push and a dismiss in the
+  // same moment both see the other), and each held-back decision sent once only.
+  const latest = useRef<Toast[]>([]);
+  const set = useCallback((next: Toast[]) => { latest.current = next; setToasts(next); }, []);
+  const gone = useCallback((t: Toast) => { const run = t.onGone; t.onGone = undefined; run?.(); }, []);
+  const dismiss = useCallback((id: number, undone = false) => {
+    const t = latest.current.find((x) => x.id === id);
+    if (t && !undone) gone(t);
+    set(latest.current.filter((x) => x.id !== id));
+  }, [gone, set]);
+  useLayoutEffect(() => register((t) => {
+    const all = latest.current;
     const rest = all.length && all[all.length - 1].text === t.text ? all.slice(0, -1) : all;
-    return [...rest.slice(-2), { ...t, id: nextId.current++ }];
-  })), [register]);
-  const latest = useRef(toasts);
-  useEffect(() => { latest.current = toasts; }, [toasts]);
+    const kept = rest.slice(-2);
+    // Pushed off the stack is gone too: what it held back is sent.
+    all.filter((x) => !kept.includes(x)).forEach(gone);
+    set([...kept, { ...t, id: nextId.current++ }]);
+  }), [register, gone, set]);
+  // Leaving the tab (a phone app switch, closing it) or the page sends what's held back now.
+  useEffect(() => {
+    const flush = () => {
+      if (!document.hidden) return;
+      const held = latest.current.filter((t) => t.onGone);
+      if (!held.length) return;
+      held.forEach(gone);
+      set(latest.current.filter((t) => !held.includes(t)));
+    };
+    document.addEventListener("visibilitychange", flush);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", flush);
+      window.removeEventListener("pagehide", flush);
+      latest.current.forEach(gone);
+    };
+  }, [gone, set]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -3135,7 +3171,7 @@ function ToastHost({ register }: { register: (push: (t: ToastIn) => void) => voi
         // Holding the keys down undoes one thing, not one after another.
         if (e.repeat) return;
         t.undo!();
-        dismiss(t.id);
+        dismiss(t.id, true);
       }
     };
     const onPointer = () => setKeyboard(false);
@@ -3152,7 +3188,8 @@ function ToastHost({ register }: { register: (push: (t: ToastIn) => void) => voi
   return createPortal(
     <div className="m-toasts" role="status" aria-live="polite">
       <AnimatePresence initial={false}>
-        {toasts.map((t) => <ToastItem key={t.id} t={t} dismiss={dismiss} hold={keyboard && !!t.undo && !letGo.has(t.id)} />)}
+        {/* A decision held back for Undo isn't held forever: only an Undo of something already done waits for the keyboard. */}
+        {toasts.map((t) => <ToastItem key={t.id} t={t} dismiss={dismiss} hold={keyboard && !!t.undo && !t.onGone && !letGo.has(t.id)} />)}
       </AnimatePresence>
     </div>,
     document.body,
@@ -3198,7 +3235,7 @@ function ItemArt({ item, big = false }: { item: Item; big?: boolean }) {
 
 /** Every action the queue offers, the same ones the full views use. */
 function useDeskActions() {
-  const { refresh, toast, readOnly } = useManage();
+  const { refresh, toast, readOnly, defer } = useManage();
   const { busy, act } = useAct();
   const requests = useDecideRequest();
   const joins = useDecideJoin();
@@ -3218,8 +3255,11 @@ function useDeskActions() {
     readOnly,
     busy: (key: string) => busy.has(key) || requests.busy.has(key.replace(/^request:/, "")) || joins.busy.has(key.replace(/^join:/, ""))
       || plex.busy.size > 0 && key.startsWith("plex:") || links.busy.size > 0 && key.startsWith("link:"),
-    approve: (r: AdminRequest, yes: boolean) => requests.decide(r, yes),
-    invite: (j: AdminJoin, yes: boolean) => joins.decide(j, yes),
+    // Decisions wait out an Undo before they're sent (the full views send theirs at once).
+    approve: (r: AdminRequest, yes: boolean) =>
+      defer(`request:${r.id}`, `${yes ? "Approved" : "Declined"} ${r.title}.`, () => requests.decide(r, yes, true)),
+    invite: (j: AdminJoin, yes: boolean) =>
+      defer(`join:${j.key}`, yes ? `Invited ${j.name.replace(/\s*\(Plex sign-in\)$/i, "")} to Plex.` : `Denied ${j.name.replace(/\s*\(Plex sign-in\)$/i, "")}.`, () => joins.decide(j, yes, true)),
     take: (t: AdminTicketRow, mine: boolean) => say(`ticket:${t.id}`, () => api.ticketTake(t.id), mine ? "Let go" : "It’s yours", "tickets"),
     searchTicket: (t: AdminTicketRow) => say(`ticket:${t.id}`, () => api.helpSearch(t.id), SEARCHING.again, "tickets", "all"),
     searchRequest: (r: AdminRequestRow) => say(`stuck:${r.id}`, () => api.requestSearch(r.id!, "again"), SEARCHING.again, "all"),
@@ -3227,8 +3267,8 @@ function useDeskActions() {
     chatDone: (p: MessagePerson, done: boolean) => say(`chat:${p.id}`, () => api.messageDone(p.id, done), done ? "Marked done" : "Marked unread", "messages"),
     keepPerson: (p: AdminPerson) => keepPerson(p, true),
     keepTitle: (c: AdminCleanupRow) => keepTitle(c, true),
-    cancelPlex: (i: PlexInvite) => plex.cancel(i),
-    cancelLink: (i: AdminInvite) => links.revoke(i),
+    cancelPlex: (i: PlexInvite) => defer(`plex:${i.email || `${i.name}|${i.sentAt}`}`, `Cancelled the Plex invite to ${i.email || i.name}.`, () => plex.cancel(i, true)),
+    cancelLink: (i: AdminInvite) => defer(`link:${i.id}`, `Cancelled ${i.label}’s invite link.`, () => links.revoke(i, true)),
     checkAgain: async () => {
       await refresh("health");
       toast({ text: "Checked again" });
@@ -3541,6 +3581,24 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
   const where = current ? { group: GROUP_HEAD[current.group].label.replace(" · last 2 days", ""), place: `${index + 1}\u00a0of ${list.length}` }
     : { group: VIEW_LABEL[view], place: "nothing here" };
   const up = (data.health ?? []).filter((h) => h.ok).map((h) => h.name);
+  // Toasts float over the bottom of the queue column on a wide screen (styles.css).
+  const column = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const el = column.current;
+    const html = document.documentElement;
+    if (!el) return;
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      html.style.setProperty("--m-qcol-left", `${r.left}px`);
+      html.style.setProperty("--m-qcol-width", `${r.width}px`);
+    };
+    place();
+    html.classList.add("has-desk");
+    const seen = new ResizeObserver(place);
+    seen.observe(el);
+    window.addEventListener("resize", place);
+    return () => { seen.disconnect(); window.removeEventListener("resize", place); html.classList.remove("has-desk"); };
+  }, []);
   const detail = {
     item: current, where, a, look: !!current && look === current.key,
     solve: current && solve.key === current.key ? solve.n : 0, reply: current && reply.key === current.key ? reply.n : 0,
@@ -3584,7 +3642,7 @@ function ManageDesk({ desk, checked, menu }: { desk: Desk; checked: string | nul
       </p>
 
       <div className="m-panes">
-        <section className="m-queue-col" aria-labelledby="m-queue-h">
+        <section ref={column} className="m-queue-col" aria-labelledby="m-queue-h">
           <h2 id="m-queue-h" className="visually-hidden">{VIEW_LABEL[view]}</h2>
           <div className="m-seg3" role="group" aria-label="Show">
             {(["needs", "waiting", "done"] as DeskView[]).map((v) => (
@@ -3694,6 +3752,16 @@ export function Manage() {
   // A new invite link, held here so it's still shown after switching sections, and lands
   // even when it's made after switching away.
   const [freshInvite, setFreshInvite] = useState<NewInvite | null>(null);
+  // Queue rows whose decision is waiting out its Undo: out of the queue and every count.
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const show = useCallback((key: string) => setHidden((h) => { const n = new Set(h); n.delete(key); return n; }), []);
+  const defer = useCallback((key: string, text: string, run: () => Promise<unknown>) => {
+    setHidden((h) => new Set(h).add(key));
+    buzz(12);
+    // Whatever happens, the row comes back off hold: gone from the data once it's done,
+    // back in the queue if it didn't go through (the error says so).
+    toast({ text, undo: () => show(key), onGone: () => { void run().finally(() => show(key)); } });
+  }, [toast, show]);
 
   // Each section's newest ask (`n`) and when it went. An answer to an older ask, or to one
   // sent before a change made here, is dropped, so a slow reply never puts back what's
@@ -3789,12 +3857,12 @@ export function Manage() {
     setParams(() => { const p = new URLSearchParams(); p.set("tab", t); if (row.part) p.set("part", row.part); return p; });
   };
   const deskData: DeskData = { ...data, blocked };
-  const desk = deriveDesk(deskData, now, { me: session?.user.name ?? null });
+  const desk = deriveDesk(deskData, now, { me: session?.user.name ?? null, hidden });
   const groups = menuGroups(desk, deskData);
   const facts = [desk.facts.party ? `Watch party: ${desk.facts.party}.` : "",
     desk.facts.cleanup ? `${desk.facts.cleanup}.` : "", loadedAt.health ? `Checked ${clock(loadedAt.health)}, again every minute.` : ""].filter(Boolean).join(" ");
   const label = TABS.find((t) => t.id === tab)?.label ?? "";
-  const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed, freshInvite, setFreshInvite };
+  const ctx: ManageState = { data, refresh, patch, toast, readOnly: !!session?.preview, failed, freshInvite, setFreshInvite, defer };
   // A refresh of this tab failed over what's already on screen: say so, and how old it is.
   const stale = shows(tab).filter((s) => failed[s] && data[s as keyof Store]);
 
