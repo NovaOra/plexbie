@@ -2089,8 +2089,10 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .m-step { display: grid; gap: 8px; }
 .m-step__row { display: flex; align-items: center; gap: 8px; }
 .m-step__btn { width: 48px; height: 48px; flex: none; border: 0; border-radius: 12px; background: var(--panel-raised); color: var(--ink); font: 700 var(--fs-h2)/1 var(--font); cursor: pointer; box-shadow: var(--key-lip), var(--key-highlight); transition: transform var(--t-press) var(--ease-out), box-shadow var(--t-press) var(--ease-out); }
-.m-step__btn:active:not(:disabled) { transform: translateY(var(--key-press)); box-shadow: var(--key-lip-down), var(--key-highlight); }
+.m-step__btn:active:not(:disabled):not([aria-disabled="true"]) { transform: translateY(var(--key-press)); box-shadow: var(--key-lip-down), var(--key-highlight); }
 .m-step__btn:disabled { opacity: 0.4; cursor: default; }
+/* At a limit: flat and slate, still focusable. */
+.m-step__btn[aria-disabled="true"] { color: var(--slate-ink); box-shadow: none; cursor: not-allowed; }
 .m-step__input { width: 76px; min-height: 48px; border: 1.5px solid var(--slate); border-radius: 12px; background: var(--field-deep); color: var(--ink); text-align: center; font: 800 var(--fs-lead)/1 var(--font); -moz-appearance: textfield; }
 .m-step__input::-webkit-outer-spin-button, .m-step__input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .m-step__suffix { font-size: var(--fs-small); color: var(--slate-ink); min-width: 0; margin-left: 4px; }
@@ -2993,3 +2995,11 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 /* Sentences that explain, in sheets and cards, at the body size. */
 .m-via.is-failed { font-size: var(--fs-body); font-weight: 560; }
 .m-person__meta, .m-blocked__folder { font-size: var(--fs-body); }
+
+/* ---- Manage: eighth QA pass */
+/* Approve and Invite to Plex press down raised, never pink. */
+.m-btn--go:not(:disabled):not([aria-disabled="true"]):active { --btn-bg: var(--rule); }
+/* Desk monitors hold the lines their words may take, loading or loaded, so the queue never moves when they fill in. */
+@media (min-width: 1000px) and (max-width: 1179px) { .m-mon__top b, .m-mon__top span { min-height: 2lh; } }
+@media (min-width: 1000px) and (max-width: 1100px) { .m-mon__make { min-height: calc(2lh + var(--space-1) + 1px); } }
+@media (min-width: 1100px) { .m-mon--help .m-mon__top b { min-height: 2lh; } }

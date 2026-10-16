@@ -106,14 +106,23 @@ async function attempt(act: () => Promise<Ack>): Promise<Ack & { unsure?: boolea
 function useAct() {
   const { toast, refresh } = useManage();
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
-  const mark = (key: string, on: boolean) => setBusy((was) => {
-    const now = new Set(was);
-    if (on) now.add(key); else now.delete(key);
-    return now;
-  });
+  // Which of an item's actions is running (`what`), so its own key spins and the others just wait.
+  const [whats, setWhats] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const mark = (key: string, on: boolean, what?: string) => {
+    setBusy((was) => {
+      const now = new Set(was);
+      if (on) now.add(key); else now.delete(key);
+      return now;
+    });
+    setWhats((was) => {
+      const now = new Map(was);
+      if (on && what) now.set(key, what); else now.delete(key);
+      return now;
+    });
+  };
   const act = async (key: string | null, call: () => Promise<Ack>,
-    opts: { failText?: string; unsure?: string; buzzOnFail?: boolean; onFail?: (message: string, unsure: boolean) => void } = {}) => {
-    if (key !== null) mark(key, true);
+    opts: { failText?: string; unsure?: string; buzzOnFail?: boolean; what?: string; onFail?: (message: string, unsure: boolean) => void } = {}) => {
+    if (key !== null) mark(key, true, opts.what);
     const out = await attempt(call);
     if (key !== null) mark(key, false);
     if (out.ok) return out;
@@ -128,7 +137,8 @@ function useAct() {
     return null;
   };
   const later = (section: Section, ms: number) => window.setTimeout(() => void refresh(section), ms);
-  return { busy, act, later };
+  const running = (key: string) => whats.get(key);
+  return { busy, act, later, running };
 }
 
 /**
@@ -190,10 +200,12 @@ function useKept<T>(load: () => Promise<T>, deps: unknown[]) {
  * assistive tech that "clicks" without a press gets a two-step confirm instead,
  * said out loud when armed and disarmed again after a few seconds.
  */
-function HoldButton({ label, icon, onConfirm, disabled, busy = false, ms = 1000, stages, bail, quiet = false, primary = false }: {
+function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = false, ms = 1000, stages, bail, quiet = false, primary = false }: {
   label: string; icon?: ReactNode; onConfirm: () => void; disabled?: boolean; ms?: number;
-  /** Its action is running: the key stays focusable but ignores holds and presses, and its icon spins. */
+  /** Its own action is running: the key stays focusable but ignores holds and presses, looks pressed, and its icon spins. */
   busy?: boolean;
+  /** Another action on the same item is running: focusable, ignores presses, flat and slate, no spinner. */
+  blocked?: boolean;
   /** A hollow pill (Manage's queue rows), not a key. */
   quiet?: boolean;
   /** The view's one pink key (a blocked import ready to go in). */
@@ -214,8 +226,8 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, ms = 1000,
   const pressed = useRef(false);
   const self = useRef<HTMLButtonElement>(null);
   // The props as they are now: a hold's timer fires when the hold is done, and they may have changed by then.
-  const latest = useRef({ onConfirm, disabled, busy });
-  useEffect(() => { latest.current = { onConfirm, disabled, busy }; });
+  const latest = useRef({ onConfirm, disabled, busy: busy || blocked });
+  useEffect(() => { latest.current = { onConfirm, disabled, busy: busy || blocked }; });
 
   // Armed by a "click" with no press: a stray one much later shouldn't still confirm.
   const arm = (on: boolean) => {
@@ -232,7 +244,7 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, ms = 1000,
   };
 
   const start = () => {
-    if (disabled || busy || pressed.current) return;
+    if (disabled || busy || blocked || pressed.current) return;
     pressed.current = true;
     setHolding(true);
     setBailed(false);
@@ -278,7 +290,7 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, ms = 1000,
         className={`btn${quiet ? " btn--quiet" : primary ? " btn--primary" : ""} m-btn m-hold${holding ? " is-holding" : ""}${armed ? " is-armed" : ""}`}
         style={{ "--hold": `${ms}ms` } as CSSProperties}
         disabled={disabled}
-        aria-disabled={busy || undefined}
+        aria-disabled={busy || blocked || undefined}
         aria-busy={busy || undefined}
         // The name starts with the words on the button, so "click Hold to remove" works
         // for voice control; how it works is the description.
@@ -295,7 +307,7 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, ms = 1000,
         onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
         onKeyUp={(e) => { if (isKey(e)) { e.preventDefault(); cancel(); } }}
         onClick={(e) => {
-          if (e.detail !== 0 || pressed.current || busy) return;
+          if (e.detail !== 0 || pressed.current || busy || blocked) return;
           if (armed) { arm(false); confirm(); } else arm(true);
         }}
         onBlur={() => { cancel(); arm(false); }}
@@ -522,9 +534,9 @@ function SwipeHint() {
 function useDecideRequest() {
   const { patch, toast } = useManage();
   const { session } = useSession();
-  const { busy, act, later } = useAct();
+  const { busy, act, later, running } = useAct();
   const decide = async (r: AdminRequest, approve: boolean, quiet = false) => {
-    const out = await act(r.id, () => api.decide("requests", r.id, approve), { buzzOnFail: true });
+    const out = await act(r.id, () => api.decide("requests", r.id, approve), { buzzOnFail: true, what: approve ? "yes" : "no" });
     if (!out) return false;
     buzz(12);
     if (!quiet) toast({ text: approve ? `Approved ${r.title}` : `Declined ${r.title}`, detail: out.message });
@@ -537,13 +549,13 @@ function useDecideRequest() {
     later("all", 2500);
     return true;
   };
-  return { busy, decide };
+  return { busy, decide, running };
 }
 
 function RequestsTab() {
   const { data, readOnly } = useManage();
   const part = usePart();
-  const { busy, decide } = useDecideRequest();
+  const { busy, decide, running } = useDecideRequest();
   const res = data.requests;
   if (!res) {
     return (
@@ -577,11 +589,12 @@ function RequestsTab() {
                     </div>
                     <div className="m-card__actions">
                       <button type="button" className="btn m-btn m-btn--go" disabled={readOnly}
-                        aria-disabled={busy.has(r.id) || undefined} aria-busy={busy.has(r.id) || undefined}
+                        aria-disabled={busy.has(r.id) || undefined} aria-busy={running(r.id) === "yes" || undefined}
                         onClick={(e) => { if (busy.has(r.id)) return; guardFocus(e.currentTarget, pastCard(e.currentTarget), 20000); void decide(r, true); }}>
-                        {busy.has(r.id) ? <RefreshCw size={18} aria-hidden className="m-spin" /> : <Check size={18} aria-hidden />} {busy.has(r.id) ? "Working…" : "Approve"}
+                        {running(r.id) === "yes" ? <RefreshCw size={18} aria-hidden className="m-spin" /> : <Check size={18} aria-hidden />} {running(r.id) === "yes" ? "Working…" : "Approve"}
                       </button>
-                      <HoldButton label="Decline" icon={<X size={16} aria-hidden />} disabled={readOnly} busy={busy.has(r.id)} onConfirm={() => void decide(r, false)} />
+                      <HoldButton label="Decline" icon={<X size={16} aria-hidden />} disabled={readOnly}
+                        busy={running(r.id) === "no"} blocked={running(r.id) === "yes"} onConfirm={() => void decide(r, false)} />
                     </div>
                   </article>
                 </SwipeCard>
@@ -639,9 +652,9 @@ function RequestsTab() {
 /** Invite someone who asked to join, or deny them: here, and from Manage's queue. */
 function useDecideJoin() {
   const { patch, toast } = useManage();
-  const { busy, act, later } = useAct();
+  const { busy, act, later, running } = useAct();
   const decide = async (j: AdminJoin, approve: boolean, quiet = false) => {
-    const out = await act(j.key, () => api.decide("joins", j.messageId, approve), { buzzOnFail: true });
+    const out = await act(j.key, () => api.decide("joins", j.messageId, approve), { buzzOnFail: true, what: approve ? "yes" : "no" });
     if (!out) return false;
     buzz(12);
     if (!quiet) toast({ text: approve ? `Invited ${j.name}` : `Denied ${j.name}`, detail: out.message });
@@ -649,12 +662,12 @@ function useDecideJoin() {
     later("joins", 2500);
     return true;
   };
-  return { busy, decide };
+  return { busy, decide, running };
 }
 
 function JoinsTab() {
   const { data, readOnly } = useManage();
-  const { busy, decide } = useDecideJoin();
+  const { busy, decide, running } = useDecideJoin();
   const rows = data.joins;
   if (!rows) return <div className="skeleton" style={{ height: 240 }} />;
   const pending = rows.filter((j) => j.status === "pending");
@@ -684,11 +697,12 @@ function JoinsTab() {
                         {j.messageId ? (
                           <>
                             <button type="button" className="btn m-btn m-btn--go" disabled={readOnly}
-                              aria-disabled={working || undefined} aria-busy={working || undefined}
+                              aria-disabled={working || undefined} aria-busy={running(j.key) === "yes" || undefined}
                               onClick={(e) => { if (working) return; guardFocus(e.currentTarget, pastCard(e.currentTarget), 20000); void decide(j, true); }}>
-                              {working ? <RefreshCw size={18} aria-hidden className="m-spin" /> : <UserPlus size={18} aria-hidden />} {working ? "Inviting…" : "Invite to Plex"}
+                              {running(j.key) === "yes" ? <RefreshCw size={18} aria-hidden className="m-spin" /> : <UserPlus size={18} aria-hidden />} {running(j.key) === "yes" ? "Inviting…" : "Invite to Plex"}
                             </button>
-                            <HoldButton label="Deny" icon={<X size={16} aria-hidden />} disabled={readOnly} busy={working} onConfirm={() => void decide(j, false)} />
+                            <HoldButton label="Deny" icon={<X size={16} aria-hidden />} disabled={readOnly}
+                              busy={running(j.key) === "no"} blocked={running(j.key) === "yes"} onConfirm={() => void decide(j, false)} />
                           </>
                         ) : <span className="muted m-card__note">Answer this one in Discord.</span>}
                       </div>
@@ -738,7 +752,7 @@ function useKeepPerson() {
 
 function PeopleTab() {
   const { data, patch, toast, readOnly } = useManage();
-  const { busy, act, later } = useAct();
+  const { busy, act, later, running } = useAct();
   const keep = useKeepPerson();
   const [query, setQuery] = useState("");
   const [linking, setLinking] = useState<AdminPerson | null>(null);
@@ -773,7 +787,7 @@ function PeopleTab() {
 
   const rename = async (p: AdminPerson) => {
     const name = newName.trim();
-    const out = await act(p.plexName, () => api.renamePerson(p.plexName, name));
+    const out = await act(p.plexName, () => api.renamePerson(p.plexName, name), { what: "rename" });
     if (!out) return;
     buzz(12);
     toast({ text: out.message });
@@ -786,7 +800,7 @@ function PeopleTab() {
 
 
   const match = async (p: AdminPerson, account: string) => {
-    const out = await act(p.plexName, () => api.matchPerson(p.plexName, account));
+    const out = await act(p.plexName, () => api.matchPerson(p.plexName, account), { what: "match" });
     if (!out) return;
     buzz(12);
     toast({ text: `${p.plexName} → ${account}`, detail: out.message });
@@ -796,7 +810,7 @@ function PeopleTab() {
   };
 
   const remove = async (p: AdminPerson) => {
-    const out = await act(p.plexName, () => api.removePerson(p.plexName), { buzzOnFail: true });
+    const out = await act(p.plexName, () => api.removePerson(p.plexName), { buzzOnFail: true, what: "remove" });
     if (!out) return;
     toast({ text: p.hasAccess === false ? `Forgot ${p.plexName}` : `Removed ${p.plexName}`, detail: out.message });
     patch("people", (d) => d.filter((x) => x.plexName !== p.plexName));
@@ -870,12 +884,12 @@ function PeopleTab() {
                             onChange={(e) => setNewName(e.target.value)} />
                           <button type="button" className="btn m-btn" onClick={() => setRenaming(null)}>Back</button>
                           <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || !newName.trim()}
-                            aria-disabled={busy.has(p.plexName) || undefined} aria-busy={busy.has(p.plexName) || undefined}>{busy.has(p.plexName) ? "Saving…" : "Save"}</button>
+                            aria-disabled={busy.has(p.plexName) || undefined} aria-busy={running(p.plexName) === "rename" || undefined}>{running(p.plexName) === "rename" ? "Saving…" : "Save"}</button>
                         </div>
                       </form>
                     ) : null}
                     {p.hasAccess === false && p.candidates?.length ? (
-                      <MatchPicker person={p} disabled={readOnly} busy={busy.has(p.plexName)} onMatch={(a) => void match(p, a)} />
+                      <MatchPicker person={p} disabled={readOnly} busy={busy.has(p.plexName)} spinning={running(p.plexName) === "match"} onMatch={(a) => void match(p, a)} />
                     ) : null}
                     {p.owner ? (
                       <span className="m-person__note">Owns the server.</span>
@@ -896,7 +910,8 @@ function PeopleTab() {
                         <Switch on={!!p.neverRemove} label={`Never remove ${p.plexName}`} disabled={readOnly} onChange={(on) => void keep(p, on)} />
                         <span>Never remove</span>
                       </label>
-                      <HoldButton label={p.hasAccess === false ? "Forget" : "Remove"} icon={<Trash2 size={16} aria-hidden />} ms={1400} disabled={readOnly} busy={busy.has(p.plexName)} onConfirm={() => void remove(p)} />
+                      <HoldButton label={p.hasAccess === false ? "Forget" : "Remove"} icon={<Trash2 size={16} aria-hidden />} ms={1400} disabled={readOnly}
+                        busy={running(p.plexName) === "remove"} blocked={busy.has(p.plexName) && running(p.plexName) !== "remove"} onConfirm={() => void remove(p)} />
                     </div>
                   )}
                 </article>
@@ -928,7 +943,7 @@ function PeopleTab() {
 
 /** "No longer on Plex" can just mean Plexbie has the wrong account name (an invite
  * that went to the wrong email, say). Say which shared account they really are. */
-function MatchPicker({ person, disabled, busy, onMatch }: { person: AdminPerson; disabled: boolean; busy: boolean; onMatch: (account: string) => void }) {
+function MatchPicker({ person, disabled, busy, spinning, onMatch }: { person: AdminPerson; disabled: boolean; busy: boolean; spinning: boolean; onMatch: (account: string) => void }) {
   const [pick, setPick] = useState("");
   const id = `match-${person.plexName}`;
   return (
@@ -939,9 +954,9 @@ function MatchPicker({ person, disabled, busy, onMatch }: { person: AdminPerson;
           <option value="">Choose a Plex account…</option>
           {person.candidates!.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button type="button" className="btn btn--primary m-btn" disabled={disabled || !pick} aria-disabled={busy || undefined} aria-busy={busy || undefined}
+        <button type="button" className="btn btn--primary m-btn" disabled={disabled || !pick} aria-disabled={busy || undefined} aria-busy={spinning || undefined}
           onClick={() => { if (!busy) onMatch(pick); }}>
-          {busy ? <RefreshCw size={16} aria-hidden className="m-spin" /> : <Link2 size={16} aria-hidden />} That’s them
+          {spinning ? <RefreshCw size={16} aria-hidden className="m-spin" /> : <Link2 size={16} aria-hidden />} That’s them
         </button>
       </div>
     </div>
@@ -1032,13 +1047,14 @@ function Stepper({ id, label, value, min, max, step = 1, suffix, onChange, disab
     <div className="m-step">
       <label htmlFor={id} className="m-field-label">{label}</label>
       <div className="m-step__row">
-        <button type="button" className="m-step__btn" aria-label={`${label}: fewer`} disabled={disabled || value <= min}
-          onClick={() => { buzz(5); onChange(clamp(value - step)); }}>−</button>
+        {/* At a limit the key stays focusable (aria-disabled), so holding it down never drops focus. */}
+        <button type="button" className="m-step__btn" aria-label={`${label}: fewer`} disabled={disabled} aria-disabled={value <= min || undefined}
+          onClick={() => { if (value <= min) return; buzz(5); onChange(clamp(value - step)); }}>−</button>
         <input id={id} className="m-step__input" type="number" inputMode="numeric" min={min} max={max} value={draft} disabled={disabled}
           onChange={(e) => setDraft(e.target.value)} onBlur={commit}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }} />
-        <button type="button" className="m-step__btn" aria-label={`${label}: more`} disabled={disabled || value >= max}
-          onClick={() => { buzz(5); onChange(clamp(value + step)); }}>+</button>
+        <button type="button" className="m-step__btn" aria-label={`${label}: more`} disabled={disabled} aria-disabled={value >= max || undefined}
+          onClick={() => { if (value >= max) return; buzz(5); onChange(clamp(value + step)); }}>+</button>
         <span className="m-step__suffix" aria-hidden>{suffix}</span>
       </div>
     </div>
@@ -1098,7 +1114,8 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
   const enableRow = useRef<HTMLDivElement>(null);
   const modeRow = useRef<HTMLDivElement>(null);
   const focusRow = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { focusRow.current?.querySelector<HTMLElement>("button")?.focus(); focusRow.current = null; }, [settings.enabled, settings.practice]);
+  // In the render that swaps them, so focus never sits on the page in between.
+  useLayoutEffect(() => { focusRow.current?.querySelector<HTMLElement>("button")?.focus({ preventScroll: true }); focusRow.current = null; }, [settings.enabled, settings.practice]);
 
   const scan = async () => {
     setScanning(true);
@@ -1144,7 +1161,11 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
                       <HoldButton label="Turn on, live" ms={1400} disabled={readOnly} onConfirm={() => { focusRow.current = enableRow.current; void save({ enabled: true }); }} />
                     </span>
                   // Sends the mode on screen too, so a practice save that failed meanwhile can't make this go live.
-                  : <Switch on={settings.enabled} label="Cleanup on" disabled={readOnly} onChange={(on) => void save(on ? { enabled: true, practice: settings.practice } : { enabled: false })} />}
+                  : <Switch on={settings.enabled} label="Cleanup on" disabled={readOnly} onChange={(on) => {
+                      // Off swaps the switch for the two Turn on keys: focus goes to the first.
+                      if (!on) focusRow.current = enableRow.current;
+                      void save(on ? { enabled: true, practice: settings.practice } : { enabled: false });
+                    }} />}
               </div>
 
               <div className="m-set-row" ref={modeRow}>
@@ -1154,7 +1175,7 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
                 </span>
                 {settings.practice
                   ? <HoldButton label="Go live" ms={1400} disabled={readOnly || !settings.enabled} onConfirm={() => { focusRow.current = modeRow.current; void save({ practice: false }); }} />
-                  : <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => void save({ practice: true })}>Switch to practice</button>}
+                  : <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => { focusRow.current = modeRow.current; void save({ practice: true }); }}>Switch to practice</button>}
               </div>
 
               <div className="m-set-grid">
@@ -1292,6 +1313,17 @@ function CleanupTab() {
   const res = data.cleanup;
   if (!res) return <div className="skeleton" style={{ height: 300 }} />;
   const { settings, warning, upcoming, exempt } = res;
+  // Keeping a title (or putting it back) takes its row off this list: focus goes to the next
+  // row's switch, else to the list's chosen tab.
+  const keepFrom = (row: Parameters<typeof keep>[0], on: boolean) => {
+    const from = document.activeElement instanceof HTMLElement && document.activeElement.matches('[role="switch"]') ? document.activeElement : null;
+    if (from) {
+      const next = from.closest("li")?.nextElementSibling ?? null;
+      const tab = from.closest("section")?.querySelector<HTMLElement>('.m-seg__item[aria-pressed="true"]') ?? null;
+      guardFocus(from, () => (next?.isConnected ? next.querySelector<HTMLElement>('[role="switch"]') : null) ?? tab);
+    }
+    void keep(row, on);
+  };
 
   const row = (c: AdminCleanupRow) => (
     <motion.li key={c.ratingKey} {...fold}>
@@ -1306,7 +1338,7 @@ function CleanupTab() {
         </div>
         <span className="m-keep">
           <span aria-hidden>Keep</span>
-          <Switch on={false} label={`Keep ${c.title} forever`} disabled={readOnly} onChange={() => void keep(c, true)} />
+          <Switch on={false} label={`Keep ${c.title} forever`} disabled={readOnly} onChange={() => keepFrom(c, true)} />
         </span>
       </article>
     </motion.li>
@@ -1348,7 +1380,7 @@ function CleanupTab() {
                       </div>
                       <span className="m-keep">
                         <span aria-hidden>Keep</span>
-                        <Switch on label={`Keep ${e.title} forever`} disabled={readOnly} onChange={() => void keep(e, false)} />
+                        <Switch on label={`Keep ${e.title} forever`} disabled={readOnly} onChange={() => keepFrom(e, false)} />
                       </span>
                     </article>
                   </motion.li>
@@ -1580,7 +1612,7 @@ function BlockedImport({ target, onDone, focusOnOpen = false }: { target: Blocke
               {blocker ? <p className="m-blocked__nope">{blocker}</p> : null}
               {notDone ? notDoneLine : null}
               <HoldButton primary={!blocker} label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Not imported."
-                disabled={readOnly || !!blocker} busy={busy.size > 0} onConfirm={() => void go()} />
+                disabled={readOnly || !!blocker} busy={busy.has("import")} blocked={busy.size > 0 && !busy.has("import")} onConfirm={() => void go()} />
             </>
           )}
         </>
@@ -1873,7 +1905,7 @@ function PlexInvites() {
                     <button type="button" className="btn m-btn" disabled={readOnly} data-change-email={i.email} onClick={() => { setEditing(i.email); setNext(""); }}>
                       <Mail size={16} aria-hidden /> Change email
                     </button>
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} busy={busy.has(i.email) || cancelling.has(i.email)} onConfirm={() => void cancel(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} busy={cancelling.has(i.email)} blocked={busy.has(i.email)} onConfirm={() => void cancel(i)} />
                   </div>
                 )}
                   {i.email && editing === i.email ? (
@@ -1983,8 +2015,9 @@ function InvitesTab() {
   const active = (rows ?? []).filter((i) => i.status === "active");
   const past = (rows ?? []).filter((i) => i.status !== "active");
   const renewButton = (i: AdminInvite, label = "New link") => (
-    <button type="button" className="btn m-btn" disabled={readOnly} aria-disabled={renewing === i.id || undefined} aria-busy={renewing === i.id || undefined}
-      onClick={() => { if (renewing !== i.id) void renew(i); }}>
+    <button type="button" className="btn m-btn" disabled={readOnly}
+      aria-disabled={renewing === i.id || revoking.has(i.id) || acting.has(i.id) || undefined} aria-busy={renewing === i.id || undefined}
+      onClick={() => { if (renewing !== i.id && !revoking.has(i.id) && !acting.has(i.id)) void renew(i); }}>
       <RefreshCw size={16} aria-hidden className={renewing === i.id ? "m-spin" : undefined} /> {renewing === i.id ? "Making it…" : label}
     </button>
   );
@@ -2058,7 +2091,7 @@ function InvitesTab() {
                   </div>
                   <div className="m-person__actions m-person__actions--two">
                     {renewButton(i)}
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} busy={acting.has(i.id) || revoking.has(i.id) || renewing === i.id} onConfirm={() => void revoke(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} busy={revoking.has(i.id)} blocked={acting.has(i.id) || renewing === i.id} onConfirm={() => void revoke(i)} />
                   </div>
                 </article>
               </motion.li>
@@ -2091,7 +2124,7 @@ function InvitesTab() {
                     <div className={`m-person__actions${i.status === "used" ? "" : " m-person__actions--two"}`}>
                       {renewButton(i, i.status === "used" ? "Invite again" : "New link")}
                       {i.status === "used" ? null : (
-                        <HoldButton label="Delete" icon={<Trash2 size={16} aria-hidden />} ms={700} disabled={readOnly} busy={acting.has(i.id) || renewing === i.id} onConfirm={() => void remove(i)} />
+                        <HoldButton label="Delete" icon={<Trash2 size={16} aria-hidden />} ms={700} disabled={readOnly} busy={acting.has(i.id)} blocked={renewing === i.id} onConfirm={() => void remove(i)} />
                       )}
                     </div>
                   </article>
@@ -3500,7 +3533,8 @@ function RowActions({ item, a, open, look, reply, selected = false }: {
       }}>{label}</button>
   );
   const openKey = key("Open", open, true, false);
-  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} busy={busy} onConfirm={() => { if (!busy) run(); }} />;
+  // A hold's own decision waits out its Undo off the queue, so a busy row is busy with its other key.
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} blocked={busy} onConfirm={() => { if (!busy) run(); }} />;
   const src = item.src;
   switch (src.type) {
     case "ticket": {
@@ -3674,7 +3708,8 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
     <dl className="m-facts">{rows.filter(([, v]) => v !== null && v !== "").map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>
   );
   const acts = (main: ReactNode, pill: ReactNode) => <div className="m-pane__acts">{main}{pill}</div>;
-  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} busy={busy} onConfirm={() => { if (!busy) run(); }} />;
+  // A hold's own decision waits out its Undo off the queue, so a busy row is busy with its other key.
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} blocked={busy} onConfirm={() => { if (!busy) run(); }} />;
   // The pane's main key is its one pink key, above the fold. Busy, it stays focusable (aria-disabled);
   // if it goes while the item stays, focus moves to the pane's new first key.
   // Words in the detail's reply box: Send as Plexbie is the pink key then, so the lead key goes quiet.
