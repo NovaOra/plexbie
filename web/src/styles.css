@@ -2910,7 +2910,7 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .m-rowbtn--wide { display: contents; }
 @media (max-width: 480px) { .m-rowbtn--wide { display: none; } }
 /* Monitor captions may take two lines on mid-size screens. */
-@media (min-width: 1000px) and (max-width: 1179px) {
+@media (min-width: 1000px) and (max-width: 1199px) {
   .m-mon__top b, .m-mon__top span { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 }
 @media (max-width: 359px) { .m-mon__label .caps { font-size: var(--fs-caps); letter-spacing: 0; font-stretch: 80%; } }
@@ -3024,7 +3024,7 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 /* A select that's wrong has a tally edge, in a blocked import too. */
 .m-select[aria-invalid="true"], .m-blocked .m-select[aria-invalid="true"] { border-color: var(--tally); }
 /* Desk monitors: the make-up line may take two lines just past the phone layout; Help's first title from 1100px. */
-@media (min-width: 1000px) and (max-width: 1100px) {
+@media (min-width: 1000px) and (max-width: 1120px) {
   .m-mon__make { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 }
 @media (min-width: 1100px) {
@@ -3041,9 +3041,13 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 /* Approve and Invite to Plex press down raised, never pink. */
 .m-btn--go:not(:disabled):not([aria-disabled="true"]):active { --btn-bg: var(--rule); }
 /* Desk monitors hold the lines their words may take, loading or loaded, so the queue never moves when they fill in. */
-@media (min-width: 1000px) and (max-width: 1179px) { .m-mon__top b, .m-mon__top span { min-height: 2lh; } }
-@media (min-width: 1000px) and (max-width: 1100px) { .m-mon__make { min-height: calc(2lh + var(--space-1) + 1px); } }
-@media (min-width: 1100px) { .m-mon--help .m-mon__top b { min-height: 2lh; } }
+/* The room is kept on the title-and-meta block as a whole (a one-line title has its meta right under it):
+   two lines each up to 1199px, and Help's two-line title over one line of meta from 1200px. */
+@media (min-width: 1000px) and (max-width: 1199px) { .m-mon__top { min-height: calc(var(--fs-small) * (2 * 1.25 + 2 * 1.3)); align-content: start; } }
+@media (min-width: 1000px) and (max-width: 1120px) { .m-mon__make { min-height: calc(2lh + var(--space-1) + 1px); } }
+@media (min-width: 1200px) { .m-mon--help .m-mon__top { min-height: calc(var(--fs-small) * (2 * 1.25 + 1.3)); align-content: start; } }
+/* Every count sits on its title's first line. */
+@media (min-width: 1000px) { .m-mon__num { align-self: start; margin-top: 2px; } }
 
 /* ---- Shared layout helpers (page .tsx files use these, never inline sizes) */
 .stack { display: grid; }
