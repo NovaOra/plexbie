@@ -2095,7 +2095,10 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .m-sheet__list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: grid; gap: 4px; align-content: start; overscroll-behavior: contain; }
 .m-sheet__list > li.muted { padding: 12px 4px; }
 .m-sheet__pick { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px; border: 0; border-radius: 12px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; transition: background-color 140ms ease, transform 120ms var(--ease-out); }
-.m-sheet__pick:active:not(:disabled) { transform: scale(0.98); background: var(--panel-raised); }
+.m-sheet__pick:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(0.98); background: var(--panel-raised); }
+/* While one link is being made the others wait (aria-disabled, so focus stays where it is). */
+.m-sheet__pick[aria-disabled="true"]:not([aria-busy="true"]) { opacity: 0.55; cursor: not-allowed; }
+.m-sheet__pick[aria-busy="true"] { cursor: progress; }
 @media (hover: hover) and (pointer: fine) { .m-sheet__pick:hover { background: var(--panel-raised); } }
 .m-sheet__pick > span:nth-child(2) { display: grid; flex: 1; min-width: 0; }
 .m-sheet__pick .muted { font-size: var(--fs-small); }

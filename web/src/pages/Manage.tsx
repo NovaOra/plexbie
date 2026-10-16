@@ -190,8 +190,10 @@ function useKept<T>(load: () => Promise<T>, deps: unknown[]) {
  * assistive tech that "clicks" without a press gets a two-step confirm instead,
  * said out loud when armed and disarmed again after a few seconds.
  */
-function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail, quiet = false, primary = false }: {
+function HoldButton({ label, icon, onConfirm, disabled, busy = false, ms = 1000, stages, bail, quiet = false, primary = false }: {
   label: string; icon?: ReactNode; onConfirm: () => void; disabled?: boolean; ms?: number;
+  /** Its action is running: the key stays focusable but ignores holds and presses, and its icon spins. */
+  busy?: boolean;
   /** A hollow pill (Manage's queue rows), not a key. */
   quiet?: boolean;
   /** The view's one pink key (a blocked import ready to go in). */
@@ -212,8 +214,8 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail,
   const pressed = useRef(false);
   const self = useRef<HTMLButtonElement>(null);
   // The props as they are now: a hold's timer fires when the hold is done, and they may have changed by then.
-  const latest = useRef({ onConfirm, disabled });
-  useEffect(() => { latest.current = { onConfirm, disabled }; });
+  const latest = useRef({ onConfirm, disabled, busy });
+  useEffect(() => { latest.current = { onConfirm, disabled, busy }; });
 
   // Armed by a "click" with no press: a stray one much later shouldn't still confirm.
   const arm = (on: boolean) => {
@@ -225,23 +227,12 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail,
   // Confirming usually removes this card, and focus would drop to the page:
   // keep it nearby instead, on the next card or the section's heading.
   const confirm = () => {
-    const card = self.current?.closest("li, article");
-    const next = card?.nextElementSibling?.querySelector<HTMLElement>("button, a")
-      ?? card?.previousElementSibling?.querySelector<HTMLElement>("button, a");
-    const heading = self.current?.closest("section")?.querySelector<HTMLElement>("h2, h3");
+    guardFocus(self.current, pastCard(self.current));
     latest.current.onConfirm();
-    window.setTimeout(() => {
-      const at = document.activeElement;
-      if (at && at !== document.body && at.isConnected) return;
-      const target = next?.isConnected ? next : heading?.isConnected ? heading : null;
-      if (!target) return;
-      if (target.matches("h2, h3") && !target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
-      target.focus();
-    }, 400);
   };
 
   const start = () => {
-    if (disabled || pressed.current) return;
+    if (disabled || busy || pressed.current) return;
     pressed.current = true;
     setHolding(true);
     setBailed(false);
@@ -255,7 +246,7 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail,
       window.clearInterval(ticker.current);
       pressed.current = false;
       setHolding(false);
-      if (latest.current.disabled) return;
+      if (latest.current.disabled || latest.current.busy) return;
       buzz(16);
       confirm();
     }, ms);
@@ -277,6 +268,7 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail,
   const isKey = (e: ReactKeyboardEvent) => e.key === " " || e.key === "Enter";
   const text = armed ? "Again to confirm" : bailed && bail ? bail : `Hold to ${label.toLowerCase()}`;
   const hint = useId();
+  const shownIcon = icon && busy ? <RefreshCw size={16} aria-hidden className="m-spin" /> : icon;
 
   return (
     <>
@@ -286,6 +278,8 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail,
         className={`btn${quiet ? " btn--quiet" : primary ? " btn--primary" : ""} m-btn m-hold${holding ? " is-holding" : ""}${armed ? " is-armed" : ""}`}
         style={{ "--hold": `${ms}ms` } as CSSProperties}
         disabled={disabled}
+        aria-disabled={busy || undefined}
+        aria-busy={busy || undefined}
         // The name starts with the words on the button, so "click Hold to remove" works
         // for voice control; how it works is the description.
         aria-label={armed ? `Again to confirm: ${label}` : text}
@@ -301,16 +295,16 @@ function HoldButton({ label, icon, onConfirm, disabled, ms = 1000, stages, bail,
         onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
         onKeyUp={(e) => { if (isKey(e)) { e.preventDefault(); cancel(); } }}
         onClick={(e) => {
-          if (e.detail !== 0 || pressed.current) return;
+          if (e.detail !== 0 || pressed.current || busy) return;
           if (armed) { arm(false); confirm(); } else arm(true);
         }}
         onBlur={() => { cancel(); arm(false); }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <span className="m-hold__label">{icon}{holding && stages?.length ? stages[stage] : text}</span>
+        <span className="m-hold__label">{shownIcon}{holding && stages?.length ? stages[stage] : text}</span>
         <span id={hint} hidden>Press and hold, or press twice, to confirm.</span>
         <span className="m-hold__fill" aria-hidden>
-          <span className="m-hold__label">{icon}{holding ? (stages?.[stage] ?? "Keep holding…") : text}</span>
+          <span className="m-hold__label">{shownIcon}{holding ? (stages?.[stage] ?? "Keep holding…") : text}</span>
         </span>
       </button>
       {/* Said out loud: a new name on the focused button often isn't. */}
@@ -582,10 +576,12 @@ function RequestsTab() {
                       <span className="m-card__who"><Initial name={r.requester} /><span>{r.requester} asked {since(r.requestedAt)}</span></span>
                     </div>
                     <div className="m-card__actions">
-                      <button type="button" className="btn m-btn m-btn--go" disabled={readOnly || busy.has(r.id)} onClick={() => void decide(r, true)}>
-                        <Check size={18} aria-hidden /> {busy.has(r.id) ? "Working…" : "Approve"}
+                      <button type="button" className="btn m-btn m-btn--go" disabled={readOnly}
+                        aria-disabled={busy.has(r.id) || undefined} aria-busy={busy.has(r.id) || undefined}
+                        onClick={(e) => { if (busy.has(r.id)) return; guardFocus(e.currentTarget, pastCard(e.currentTarget), 20000); void decide(r, true); }}>
+                        {busy.has(r.id) ? <RefreshCw size={18} aria-hidden className="m-spin" /> : <Check size={18} aria-hidden />} {busy.has(r.id) ? "Working…" : "Approve"}
                       </button>
-                      <HoldButton label="Decline" icon={<X size={16} aria-hidden />} disabled={readOnly || busy.has(r.id)} onConfirm={() => void decide(r, false)} />
+                      <HoldButton label="Decline" icon={<X size={16} aria-hidden />} disabled={readOnly} busy={busy.has(r.id)} onConfirm={() => void decide(r, false)} />
                     </div>
                   </article>
                 </SwipeCard>
@@ -673,6 +669,7 @@ function JoinsTab() {
           <AnimatePresence initial={false}>
             {pending.map((j) => {
               const can = !readOnly && !!j.messageId && !busy.has(j.key);
+              const working = busy.has(j.key);
               return (
                 <motion.li key={j.key} {...fold}>
                   <SwipeCard enabled={can} yes={() => decide(j, true)} no={() => decide(j, false)} yesLabel="Invite" noLabel="Deny">
@@ -686,10 +683,12 @@ function JoinsTab() {
                       <div className="m-card__actions">
                         {j.messageId ? (
                           <>
-                            <button type="button" className="btn m-btn m-btn--go" disabled={!can} onClick={() => void decide(j, true)}>
-                              <UserPlus size={18} aria-hidden /> {busy.has(j.key) ? "Inviting…" : "Invite to Plex"}
+                            <button type="button" className="btn m-btn m-btn--go" disabled={readOnly}
+                              aria-disabled={working || undefined} aria-busy={working || undefined}
+                              onClick={(e) => { if (working) return; guardFocus(e.currentTarget, pastCard(e.currentTarget), 20000); void decide(j, true); }}>
+                              {working ? <RefreshCw size={18} aria-hidden className="m-spin" /> : <UserPlus size={18} aria-hidden />} {working ? "Inviting…" : "Invite to Plex"}
                             </button>
-                            <HoldButton label="Deny" icon={<X size={16} aria-hidden />} disabled={!can} onConfirm={() => void decide(j, false)} />
+                            <HoldButton label="Deny" icon={<X size={16} aria-hidden />} disabled={readOnly} busy={working} onConfirm={() => void decide(j, false)} />
                           </>
                         ) : <span className="muted m-card__note">Answer this one in Discord.</span>}
                       </div>
@@ -745,13 +744,16 @@ function PeopleTab() {
   const [linking, setLinking] = useState<AdminPerson | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const focusLater = useFocusLater();
   const rows = data.people;
   if (!rows) return <div className="skeleton" style={{ height: 300 }} />;
+  // A person's card by name, for focus that follows a change to it.
+  const cardOf = (name: string) => document.querySelector<HTMLElement>(`[data-person="${CSS.escape(name)}"]`);
   const q = query.trim().toLowerCase();
   const shown = q ? rows.filter((p) => `${p.plexName} ${p.discordName ?? ""}`.toLowerCase().includes(q)) : rows;
 
   const link = async (p: AdminPerson, member: { id: string; name: string }, quiet = false) => {
-    const out = await act(null, () => api.linkPerson(p.plexName, member.id));
+    const out = await act(`link:${p.plexName}`, () => api.linkPerson(p.plexName, member.id));
     if (!out) return false;
     if (!quiet) toast({ text: `Linked ${p.plexName}`, detail: p.tracked === false ? `${out.message} They’re tracked for inactivity from now on.` : out.message });
     patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, linked: true, discordName: member.name, discordId: member.id } : x)));
@@ -760,8 +762,10 @@ function PeopleTab() {
   };
 
   const unlink = async (p: AdminPerson) => {
-    const out = await act(null, () => api.unlinkPerson(p.plexName));
+    const out = await act(`link:${p.plexName}`, () => api.unlinkPerson(p.plexName));
     if (!out) return;
+    // Unlink gives way to Link Discord: focus follows.
+    focusLater(() => cardOf(p.plexName)?.querySelector<HTMLElement>(".m-linkbtn--add") ?? null);
     const was = p.discordId ? { id: p.discordId, name: p.discordName ?? "" } : null;
     toast({ text: `Unlinked ${p.plexName}`, detail: out.message, undo: was ? () => void link(p, was, true) : undefined });
     patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, linked: false, discordName: null, discordId: null } : x)));
@@ -774,6 +778,8 @@ function PeopleTab() {
     buzz(12);
     toast({ text: out.message });
     patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, displayName: name === p.plexName ? null : name } : x)));
+    // The form gives way to the name: focus goes back to Rename.
+    focusLater(() => cardOf(p.plexName)?.querySelector<HTMLElement>(".m-person__rename") ?? null);
     setRenaming(null);
     later("people", 1200);
   };
@@ -785,6 +791,7 @@ function PeopleTab() {
     buzz(12);
     toast({ text: `${p.plexName} → ${account}`, detail: out.message });
     patch("people", (d) => d.map((x) => (x.plexName === p.plexName ? { ...x, plexName: account, hasAccess: true, candidates: undefined } : x)));
+    focusLater(() => cardOf(account)?.querySelector<HTMLElement>("button:not([disabled])") ?? null);
     later("people", 1200);
   };
 
@@ -815,7 +822,7 @@ function PeopleTab() {
             const tone = p.removalIn === null ? "safe" : p.removalIn <= 7 ? "hot" : p.daysIdle >= p.warnAfter ? "warm" : "calm";
             return (
               <motion.li key={p.plexName} {...fold}>
-                <article className={`m-person${busy.has(p.plexName) ? " is-busy" : ""}`}>
+                <article className={`m-person${busy.has(p.plexName) ? " is-busy" : ""}`} data-person={p.plexName}>
                   <Initial name={p.displayName || p.plexName} big />
                   <div className="m-person__body">
                     {/* The heading is just the person; Rename and the status pills sit beside it. */}
@@ -825,7 +832,7 @@ function PeopleTab() {
                         {p.displayName ? <span className="muted m-person__plexname">{p.plexName} on Plex</span> : null}
                       </h4>
                       {p.tracked === false || renaming === p.plexName ? null : (
-                        <button type="button" className="m-linkbtn" disabled={readOnly}
+                        <button type="button" className="m-linkbtn m-person__rename" disabled={readOnly}
                           onClick={() => { setRenaming(p.plexName); setNewName(p.displayName || p.plexName); }}>Rename</button>
                       )}
                       {p.owner ? <span className="m-pill m-pill--safe">Owner</span> : null}
@@ -839,7 +846,8 @@ function PeopleTab() {
                       {p.linked ? (
                         <>
                           <span className="muted">Discord: <b className="m-link-row__name">{p.discordName ?? "linked"}</b></span>
-                          <button type="button" className="m-linkbtn" disabled={readOnly} onClick={() => void unlink(p)}>Unlink</button>
+                          <button type="button" className="m-linkbtn m-person__unlink" disabled={readOnly} aria-disabled={busy.has(`link:${p.plexName}`) || undefined}
+                            onClick={() => { if (!busy.has(`link:${p.plexName}`)) void unlink(p); }}>Unlink</button>
                         </>
                       ) : (
                         <button type="button" className="m-linkbtn m-linkbtn--add" disabled={readOnly} onClick={() => setLinking(p)}>
@@ -851,7 +859,7 @@ function PeopleTab() {
                       <span className="muted m-person__meta">{p.lastWatched ? `Watched ${since(p.lastWatched)}` : "No watch recorded"}</span>
                     )}
                     {renaming === p.plexName ? (
-                      <form className="m-match" onSubmit={(e) => { e.preventDefault(); void rename(p); }}>
+                      <form className="m-match" onSubmit={(e) => { e.preventDefault(); if (!busy.has(p.plexName) && newName.trim()) void rename(p); }}>
                         <label htmlFor={`rn-${p.plexName}`} className="m-person__note"><b>Display name</b></label>
                         <p id={`rn-${p.plexName}-hint`} className="m-person__note">
                           Shown everywhere in Plexbie and in Tautulli. Their Plex username stays {p.plexName}.
@@ -861,12 +869,13 @@ function PeopleTab() {
                             aria-describedby={`rn-${p.plexName}-hint`}
                             onChange={(e) => setNewName(e.target.value)} />
                           <button type="button" className="btn m-btn" onClick={() => setRenaming(null)}>Back</button>
-                          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy.has(p.plexName) || !newName.trim()}>Save</button>
+                          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || !newName.trim()}
+                            aria-disabled={busy.has(p.plexName) || undefined} aria-busy={busy.has(p.plexName) || undefined}>{busy.has(p.plexName) ? "Saving…" : "Save"}</button>
                         </div>
                       </form>
                     ) : null}
                     {p.hasAccess === false && p.candidates?.length ? (
-                      <MatchPicker person={p} disabled={readOnly || busy.has(p.plexName)} onMatch={(a) => void match(p, a)} />
+                      <MatchPicker person={p} disabled={readOnly} busy={busy.has(p.plexName)} onMatch={(a) => void match(p, a)} />
                     ) : null}
                     {p.owner ? (
                       <span className="m-person__note">Owns the server.</span>
@@ -887,7 +896,7 @@ function PeopleTab() {
                         <Switch on={!!p.neverRemove} label={`Never remove ${p.plexName}`} disabled={readOnly} onChange={(on) => void keep(p, on)} />
                         <span>Never remove</span>
                       </label>
-                      <HoldButton label={p.hasAccess === false ? "Forget" : "Remove"} icon={<Trash2 size={16} aria-hidden />} ms={1400} disabled={readOnly || busy.has(p.plexName)} onConfirm={() => void remove(p)} />
+                      <HoldButton label={p.hasAccess === false ? "Forget" : "Remove"} icon={<Trash2 size={16} aria-hidden />} ms={1400} disabled={readOnly} busy={busy.has(p.plexName)} onConfirm={() => void remove(p)} />
                     </div>
                   )}
                 </article>
@@ -901,7 +910,14 @@ function PeopleTab() {
         <AnimatePresence>
           {linking ? (
             <LinkSheet key="sheet" person={linking} onClose={() => setLinking(null)}
-              onPick={async (m) => { if (await link(linking, m)) setLinking(null); }} />
+              onPick={async (m) => {
+                if (!(await link(linking, m))) return;
+                // The sheet hands focus back to what opened it, Link Discord, which is now Unlink.
+                const name = linking.plexName;
+                guardFocus(document.activeElement as HTMLElement | null,
+                  () => cardOf(name)?.querySelector<HTMLElement>(".m-person__unlink, .m-linkbtn--add") ?? null);
+                setLinking(null);
+              }} />
           ) : null}
         </AnimatePresence>,
         document.body,
@@ -912,19 +928,20 @@ function PeopleTab() {
 
 /** "No longer on Plex" can just mean Plexbie has the wrong account name (an invite
  * that went to the wrong email, say). Say which shared account they really are. */
-function MatchPicker({ person, disabled, onMatch }: { person: AdminPerson; disabled: boolean; onMatch: (account: string) => void }) {
+function MatchPicker({ person, disabled, busy, onMatch }: { person: AdminPerson; disabled: boolean; busy: boolean; onMatch: (account: string) => void }) {
   const [pick, setPick] = useState("");
   const id = `match-${person.plexName}`;
   return (
     <div className="m-match">
       <label htmlFor={id} className="m-person__note">Still watching under another Plex account? Which one is {person.discordName || person.plexName}?</label>
       <div className="m-match__row">
-        <select id={id} className="m-select" value={pick} onChange={(e) => setPick(e.target.value)} disabled={disabled}>
+        <select id={id} className="m-select" value={pick} onChange={(e) => setPick(e.target.value)} disabled={disabled} aria-disabled={busy || undefined}>
           <option value="">Choose a Plex account…</option>
           {person.candidates!.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button type="button" className="btn btn--primary m-btn" disabled={disabled || !pick} onClick={() => onMatch(pick)}>
-          <Link2 size={16} aria-hidden /> That’s them
+        <button type="button" className="btn btn--primary m-btn" disabled={disabled || !pick} aria-disabled={busy || undefined} aria-busy={busy || undefined}
+          onClick={() => { if (!busy) onMatch(pick); }}>
+          {busy ? <RefreshCw size={16} aria-hidden className="m-spin" /> : <Link2 size={16} aria-hidden />} That’s them
         </button>
       </div>
     </div>
@@ -956,8 +973,8 @@ function LinkSheet({ person, onClose, onPick }: {
         {members && !shown.length ? <li className="muted">{members.length ? "Nobody matches." : "Everyone in the server is already linked."}</li> : null}
         {shown.map((m) => (
           <li key={m.id}>
-            <button type="button" className="m-sheet__pick" disabled={!!busy}
-              onClick={async () => { buzz(8); setBusy(m.id); await onPick(m); setBusy(null); }}>
+            <button type="button" className="m-sheet__pick" aria-disabled={!!busy || undefined} aria-busy={busy === m.id || undefined}
+              onClick={async () => { if (busy) return; buzz(8); setBusy(m.id); await onPick(m); setBusy(null); }}>
               <Initial name={m.name} />
               <span><b>{m.name}</b><span className="muted">@{m.username}</span></span>
               <span className="m-sheet__go">{busy === m.id ? "Linking…" : "Link"}</span>
@@ -1179,7 +1196,7 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
               <div className="m-set-row">
                 <span><b>Run a scan now</b><span className="muted">{live ? "Live: anything whose warning has run out is deleted right away, with no daily limit." : "Same check the daily run does, without its daily limit."}</span></span>
                 {live
-                  ? <HoldButton label="Scan now" ms={1400} disabled={readOnly || scanning} onConfirm={() => void scan()} />
+                  ? <HoldButton label="Scan now" icon={<RefreshCw size={16} aria-hidden />} ms={1400} disabled={readOnly} busy={scanning} onConfirm={() => void scan()} />
                   : <button type="button" className="btn m-btn" disabled={readOnly || !settings.enabled} aria-disabled={scanning || undefined} aria-busy={scanning || undefined}
                     onClick={() => { if (!scanning) void scan(); }}>
                     <RefreshCw size={16} aria-hidden className={scanning ? "m-spin" : undefined} /> {scanning ? "Scanning…" : "Scan now"}
@@ -1363,7 +1380,8 @@ function BlockedImport({ target, onDone, focusOnOpen = false }: { target: Blocke
 }) {
   const head = useRef<HTMLHeadingElement>(null);
   const hint = useId();
-  useEffect(() => { if (focusOnOpen) head.current?.focus(); }, [focusOnOpen]);
+  // In the render that replaced Look inside, so focus never drops to the page in between.
+  useLayoutEffect(() => { if (focusOnOpen) head.current?.focus({ preventScroll: true }); }, [focusOnOpen]);
   const { toast, readOnly } = useManage();
   const { busy, act } = useAct();
   const [p, setP] = useState<BlockedPreview | null>(null);
@@ -1561,7 +1579,7 @@ function BlockedImport({ target, onDone, focusOnOpen = false }: { target: Blocke
               {blocker ? <p className="m-blocked__nope">{blocker}</p> : null}
               {notDone ? notDoneLine : null}
               <HoldButton primary={!blocker} label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
-                disabled={readOnly || busy.size > 0 || !!blocker} onConfirm={() => void go()} />
+                disabled={readOnly || !!blocker} busy={busy.size > 0} onConfirm={() => void go()} />
             </>
           )}
         </>
@@ -1629,7 +1647,7 @@ function BlockedList({ checks }: { checks: number }) {
             <li key={key} className="m-card m-card--stack">
               <p className="m-card__eyebrow">{r.app === "sonarr" ? "Sonarr" : "Radarr"} · import blocked{r.episodes.length ? ` · ${r.episodes.join(", ")}` : ""}</p>
               <h4 className="m-card__title">{r.title}{r.year ? <span className="muted"> ({r.year})</span> : null}</h4>
-              {open === key ? <BlockedImport target={r} onDone={() => window.setTimeout(() => void load(), 1500)} /> : (
+              {open === key ? <BlockedImport target={r} onDone={() => window.setTimeout(() => void load(), 1500)} focusOnOpen /> : (
                 <button type="button" className="btn m-btn" onClick={() => setOpen(key)}>Look inside</button>
               )}
             </li>
@@ -1664,7 +1682,7 @@ function SignOutOthers() {
       <div className="m-head"><h3>Sign out everywhere else</h3></div>
       <div className="m-set-row">
         <span><span className="muted">For a sign-in that wasn’t you: every website and app sign-in ends except this one, alerts turned on elsewhere stop, and the rest of the household signs in again.</span></span>
-        <HoldButton label="Sign out others" icon={<LogOut size={16} aria-hidden />} ms={1400} disabled={readOnly || busy.has("sign-out")} onConfirm={() => void go()} />
+        <HoldButton label="Sign out others" icon={<LogOut size={16} aria-hidden />} ms={1400} disabled={readOnly} busy={busy.has("sign-out")} onConfirm={() => void go()} />
       </div>
     </section>
   );
@@ -1722,8 +1740,13 @@ function daysUntil(iso: string) {
 }
 
 /** The new link, shown once: share it straight from the phone, or copy it. */
-function FreshLink({ made, onAnother }: { made: NewInvite; onAnother: () => void }) {
+function FreshLink({ made, onAnother, focusTick }: { made: NewInvite; onAnother: () => void;
+  /** Bumped when a key that made this link went away: focus lands on Copy link. */
+  focusTick: number;
+}) {
   const [copied, flashCopied] = useCopied(1800);
+  const copyKey = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => { if (focusTick) focusOn(copyKey.current); }, [focusTick, made]);
   const canShare = typeof navigator !== "undefined" && "share" in navigator;
   const copy = async () => {
     try {
@@ -1760,7 +1783,7 @@ function FreshLink({ made, onAnother }: { made: NewInvite; onAnother: () => void
         {canShare ? (
           <button type="button" className="btn m-btn m-btn--go" onClick={share}><Share2 size={18} aria-hidden /> Send it</button>
         ) : null}
-        <button type="button" className={`btn m-btn${canShare ? "" : " m-btn--go"}`} onClick={copy}>
+        <button type="button" ref={copyKey} className={`btn m-btn${canShare ? "" : " m-btn--go"}`} onClick={copy}>
           {copied ? <Check size={18} aria-hidden /> : <Copy size={18} aria-hidden />} {copied ? "Copied" : "Copy link"}
         </button>
       </div>
@@ -1811,6 +1834,7 @@ function PlexInvites() {
   const [nextError, setNextError] = useState("");
   const { busy, act, later } = useAct();
   const { busy: cancelling, cancel } = useCancelPlexInvite();
+  const focusLater = useFocusLater();
   if (!rows || !rows.length) return null;
 
   const change = async (i: PlexInvite) => {
@@ -1818,6 +1842,9 @@ function PlexInvites() {
     if (!out) return;
     buzz(14);
     toast({ text: out.message });
+    // The form gives way to the card again (under its new address): focus goes to its Change email.
+    const to = next.trim();
+    focusLater(() => document.querySelector<HTMLElement>(`[data-change-email="${CSS.escape(to)}"]`));
     setEditing(null);
     setNext("");
     patch("plexinvites", (d) => d.map((x) => (x.email === i.email ? { ...x, email: next.trim(), sentAt: new Date().toISOString() } : x)));
@@ -1842,10 +1869,10 @@ function PlexInvites() {
                 </div>
                 {!i.email || editing === i.email ? null : (
                   <div className="m-person__actions m-person__actions--two">
-                    <button type="button" className="btn m-btn" disabled={readOnly} onClick={() => { setEditing(i.email); setNext(""); }}>
+                    <button type="button" className="btn m-btn" disabled={readOnly} data-change-email={i.email} onClick={() => { setEditing(i.email); setNext(""); }}>
                       <Mail size={16} aria-hidden /> Change email
                     </button>
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || busy.has(i.email) || cancelling.has(i.email)} onConfirm={() => void cancel(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} busy={busy.has(i.email) || cancelling.has(i.email)} onConfirm={() => void cancel(i)} />
                   </div>
                 )}
                   {i.email && editing === i.email ? (
@@ -1892,6 +1919,12 @@ function InvitesTab() {
   const [problem, setProblem] = useState("");
   const [nameError, setNameError] = useState("");
   const [emailError, setEmailError] = useState("");
+  // Focus follows a key that goes: Make invite link and New link to the new link's Copy link,
+  // Make another back to the name field.
+  const [focusCopy, setFocusCopy] = useState(0);
+  const wantName = useRef(false);
+  // The form comes back once the link's card has faded out: focus lands as its name field arrives.
+  const nameField = (el: HTMLInputElement | null) => { if (el && wantName.current) { wantName.current = false; focusOn(el); } };
   const rows = data.invites;
 
   const create = async (e: React.FormEvent) => {
@@ -1904,6 +1937,7 @@ function InvitesTab() {
     try {
       const out = await api.createInvite({ label: label.trim(), email: email.trim() || undefined, days });
       buzz(14);
+      setFocusCopy((n) => n + 1);
       setMade(out);
       setLabel("");
       setEmail("");
@@ -1926,6 +1960,7 @@ function InvitesTab() {
     try {
       const out = await api.renewInvite(i.id);
       buzz(14);
+      setFocusCopy((n) => n + 1);
       setMade(out);
       patch("invites", (d) => [out.invite, ...(i.status === "used" ? d : d.filter((x) => x.id !== i.id))]);
       top.current?.scrollIntoView({ behavior: scrollBehavior(), block: "start" });
@@ -1963,7 +1998,7 @@ function InvitesTab() {
         </p>
         <AnimatePresence mode="wait" initial={false}>
           {made ? (
-            <FreshLink key="made" made={made} onAnother={() => setMade(null)} />
+            <FreshLink key="made" made={made} focusTick={focusCopy} onAnother={() => { wantName.current = true; setMade(null); }} />
           ) : (
             <motion.form
               key="form" className="m-invite-form" onSubmit={create} noValidate
@@ -1971,7 +2006,7 @@ function InvitesTab() {
             >
               <div className="field">
                 <label htmlFor="m-invite-name">Who’s it for?</label>
-                <input id="m-invite-name" value={label} onChange={(e) => { setLabel(e.target.value); setNameError(""); }} placeholder="Mom" maxLength={60} autoComplete="off"
+                <input id="m-invite-name" ref={nameField} value={label} onChange={(e) => { setLabel(e.target.value); setNameError(""); }} placeholder="Mom" maxLength={60} autoComplete="off"
                   aria-invalid={!!nameError || undefined} aria-describedby={nameError ? "m-invite-name-error" : undefined} />
                 {nameError ? <p className="field__error" id="m-invite-name-error" role="alert">{nameError}</p> : null}
               </div>
@@ -2022,7 +2057,7 @@ function InvitesTab() {
                   </div>
                   <div className="m-person__actions m-person__actions--two">
                     {renewButton(i)}
-                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly || acting.has(i.id) || revoking.has(i.id)} onConfirm={() => void revoke(i)} />
+                    <HoldButton label="Cancel" icon={<X size={16} aria-hidden />} ms={800} disabled={readOnly} busy={acting.has(i.id) || revoking.has(i.id) || renewing === i.id} onConfirm={() => void revoke(i)} />
                   </div>
                 </article>
               </motion.li>
@@ -2055,7 +2090,7 @@ function InvitesTab() {
                     <div className={`m-person__actions${i.status === "used" ? "" : " m-person__actions--two"}`}>
                       {renewButton(i, i.status === "used" ? "Invite again" : "New link")}
                       {i.status === "used" ? null : (
-                        <HoldButton label="Delete" icon={<Trash2 size={16} aria-hidden />} ms={700} disabled={readOnly || acting.has(i.id)} onConfirm={() => void remove(i)} />
+                        <HoldButton label="Delete" icon={<Trash2 size={16} aria-hidden />} ms={700} disabled={readOnly} busy={acting.has(i.id) || renewing === i.id} onConfirm={() => void remove(i)} />
                       )}
                     </div>
                   </article>
@@ -2278,9 +2313,13 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
     const out = await act("done", () => api.messageDone(person.id, yes));
     if (out) { toast({ text: yes ? "Marked done" : "Marked unread" }); reload(); }
   };
+  const focusLater = useFocusLater();
   const toTicket = async (key: string) => {
     const out = await act(key, () => api.messageToTicket(key), { failText: "Not added" });
-    if (out) { toast({ text: "Added to their ticket", detail: out.message }); reload(); void refresh("tickets"); }
+    if (!out) return;
+    // The key gives way to "On their ticket": focus goes there, not off to the page.
+    focusLater(() => document.getElementById(`m-onticket-${key}`));
+    toast({ text: "Added to their ticket", detail: out.message }); reload(); void refresh("tickets");
   };
   // On a phone the conversation covers the list: Back returns to the list, not off the page.
   useBackToClose(!inPane, onBack);
@@ -2297,9 +2336,12 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
         <div><h3 className="m-card__title">{person.name}</h3>
           <span className="muted m-person__meta">{person.count} message{person.count === 1 ? "" : "s"} from Plexbie{person.received ? ` · ${person.received} from ${person.name}` : ""} · by {person.via.map((v) => VIA[v].label.toLowerCase()).join(", ")}</span>
           {person.done ? <span className="muted m-person__meta">Marked done{person.done.by ? ` by ${person.done.by}` : ""} {since(person.done.at)}</span> : null}</div>
-        <button type="button" className="btn btn--quiet m-btn m-chat__done" disabled={readOnly || busy.has("done")}
-          onClick={() => void done(!!person.unread || !person.done)}>
-          {person.unread || !person.done ? <><Check size={16} aria-hidden /> Done</> : "Mark unread"}
+        <button type="button" className="btn btn--quiet m-btn m-chat__done" disabled={readOnly}
+          aria-disabled={busy.has("done") || undefined} aria-busy={busy.has("done") || undefined}
+          onClick={() => { if (!busy.has("done")) void done(!!person.unread || !person.done); }}>
+          {person.unread || !person.done
+            ? <>{busy.has("done") ? <RefreshCw size={16} aria-hidden className="m-spin" /> : <Check size={16} aria-hidden />} Done</>
+            : "Mark unread"}
         </button>
       </header>
       <div className="m-chat__body">
@@ -2324,10 +2366,12 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
                   </div>
                   <ViaChip channel={m.channel} delivered={m.delivered} error={m.error} incoming={m.direction === "in"} />
                   {m.by ? <span className="muted m-msg__by">Sent by {m.by}</span> : null}
-                  {m.direction === "in" && m.ticket ? <span className="muted m-msg__by"><LifeBuoy size={13} aria-hidden /> On their ticket</span> : null}
+                  {m.direction === "in" && m.ticket ? <span className="muted m-msg__by" id={`m-onticket-${m.id}`} tabIndex={-1}><LifeBuoy size={13} aria-hidden /> On their ticket</span> : null}
                   {m.direction === "in" && !m.ticket && person.ticket && m.context === "Discord DM" ? (
-                    <button type="button" className="btn btn--quiet m-btn m-msg__action" disabled={readOnly || busy.has(m.id)} onClick={() => void toTicket(m.id)}>
-                      <LifeBuoy size={14} aria-hidden /> Add to their {person.ticket.subject === "general" ? "general ticket" : `ticket on ${person.ticket.title}`}
+                    <button type="button" className="btn btn--quiet m-btn m-msg__action" disabled={readOnly}
+                      aria-disabled={busy.has(m.id) || undefined} aria-busy={busy.has(m.id) || undefined}
+                      onClick={() => { if (!busy.has(m.id)) void toTicket(m.id); }}>
+                      {busy.has(m.id) ? <RefreshCw size={14} aria-hidden className="m-spin" /> : <LifeBuoy size={14} aria-hidden />} Add to their {person.ticket.subject === "general" ? "general ticket" : `ticket on ${person.ticket.title}`}
                     </button>
                   ) : null}
                 </div>
@@ -2442,17 +2486,36 @@ function AllRequestsTab() {
   const [history, setHistory] = useState<AdminAllRequests | null>(null);
   const [historyFailed, setHistoryFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // The rows on screen before "Every request since No. 0001": once the rest arrive, focus goes to the first new one.
+  const before = useRef<Set<string> | null>(null);
+  const [stretch, setStretch] = useState(0);
+  const focusLater = useFocusLater();
   useEffect(() => {
     if (!everything) return;
     let current = true;
     api.adminAll("", true).then(
-      (h) => { if (current) { setHistory(h); setHistoryFailed(false); } },
+      (h) => {
+        if (!current) return;
+        setHistory(h); setHistoryFailed(false);
+        const had = before.current;
+        if (!had) return;
+        before.current = null;
+        const first = h.rows.findIndex((r) => !had.has(r.id ?? ""));
+        if (first < 0) return;
+        // Far down the list? Show the rows down to it, so there's somewhere to land.
+        setStretch(first >= PAGE ? first + PAGE : 0);
+        focusLater(() => list.current?.querySelector<HTMLElement>(`[data-id="${CSS.escape(h.rows[first].id ?? "")}"] button`) ?? null);
+      },
       () => { if (current) setHistoryFailed(true); });
     return () => { current = false; };
-  }, [everything, data.all, attempt]);
-  const loadAll = () => { setEverything(true); setShow("everything"); };
+  }, [everything, data.all, attempt, focusLater]);
+  const loadAll = () => {
+    if (everything) return;
+    before.current = new Set((data.all?.rows ?? []).map((r) => r.id ?? ""));
+    setEverything(true); setShow("everything");
+  };
   const loadAllAgain = () => { setHistoryFailed(false); setAttempt((a) => a + 1); };
-  const backToRecent = () => { setEverything(false); setHistory(null); setHistoryFailed(false); };
+  const backToRecent = () => { setEverything(false); setHistory(null); setHistoryFailed(false); setStretch(0); };
   const loadingAll = everything && !history && !historyFailed;
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(null);
@@ -2465,13 +2528,13 @@ function AllRequestsTab() {
   const view = `${show}|${words}|${everything}`;
   const [paged, setPaged] = useState({ view, limit: PAGE });
   if (paged.view !== view) setPaged({ view, limit: PAGE });
-  const limit = paged.view === view ? paged.limit : PAGE;
+  const limit = Math.max(paged.view === view ? paged.limit : PAGE, everything && !words ? stretch : 0);
   const list = useRef<HTMLUListElement>(null);
   // Focus goes to the first row added, so the keyboard carries on where the list did.
   const more = () => {
     const from = limit;
     setPaged({ view, limit: from + PAGE });
-    requestAnimationFrame(() => list.current?.children[from]?.querySelector("button")?.focus());
+    focusLater(() => list.current?.children[from]?.querySelector<HTMLElement>("button") ?? null);
   };
 
   const recent = data.all;
@@ -2508,7 +2571,7 @@ function AllRequestsTab() {
       ) : null}
       {shown.length ? (
         <ul className="m-rows m-all__rows" ref={list}>
-          {shown.slice(0, limit).map((r) => <li key={r.id}><AllRequestRow r={r} onOpen={() => setOpen(r.id!)} /></li>)}
+          {shown.slice(0, limit).map((r) => <li key={r.id} data-id={r.id}><AllRequestRow r={r} onOpen={() => setOpen(r.id!)} /></li>)}
         </ul>
       ) : !words ? (
         <p className="muted">{show === "stuck" ? "Nothing looks stuck right now." : show === "finished" ? `Nothing reached Plex ${history ? "yet" : "in the last 30 days"}.`
@@ -2530,8 +2593,8 @@ function AllRequestsTab() {
           ) : historyFailed ? (
             <LoadFailed text="Couldn’t load every request." onRetry={loadAllAgain} />
           ) : (
-            <button type="button" className="btn m-btn" disabled={loadingAll} onClick={loadAll}>
-              {loadingAll ? "Loading every request…" : `Every request since No. 0001${recent.total ? ` · ${recent.total}` : ""}`}
+            <button type="button" className="btn m-btn" aria-disabled={loadingAll || undefined} aria-busy={loadingAll || undefined} onClick={loadAll}>
+              {loadingAll ? <><RefreshCw size={16} aria-hidden className="m-spin" /> Loading every request…</> : `Every request since No. 0001${recent.total ? ` · ${recent.total}` : ""}`}
             </button>
           )}
         </div>
@@ -2854,6 +2917,8 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const [asked, setAsked] = useState(solve);
   if (solve !== asked) { setAsked(solve); if (solve && t?.status === "open") setSolving(true); }
 
+  const body = useRef<HTMLDivElement>(null);
+  const focusLater = useFocusLater();
   const run = async (key: string, call: () => Promise<Ack>, done: string | null) => {
     // Busy until this ticket has been read again, so its keys can't be pressed on old state.
     // ...and the queue's row with it, so neither shows a stale Take it.
@@ -2888,8 +2953,14 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
     </button>
   );
   const reopen = (
-    <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0} onClick={() => void run("reopen", () => api.ticketStatus(id, "open"), "Reopened")}>
-      <RefreshCw size={16} aria-hidden /> Reopen
+    <button type="button" className="btn m-btn m-ticket__reopen" disabled={readOnly} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("reopen") || undefined}
+      onClick={async () => {
+        if (busy.size > 0) return;
+        // Reopen gives way to Take it (or the composer): focus follows, in the render that swaps them.
+        focusLater(() => body.current?.querySelector<HTMLElement>(".m-ticket__take, .m-composer button") ?? null);
+        if (!(await run("reopen", () => api.ticketStatus(id, "open"), "Reopened"))) focusLater(() => null, 0);
+      }}>
+      <RefreshCw size={16} aria-hidden className={busy.has("reopen") ? "m-spin" : undefined} /> Reopen
     </button>
   );
   const blockedPart = t.blocked && t.status === "open" ? (
@@ -2901,7 +2972,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const lookKey = lookLeads
     ? <button type="button" className={`btn${look(keys.look)} m-btn`} onClick={() => setLooking(true)}><Search size={18} aria-hidden /> Look inside</button> : null;
   return (
-    <div className="m-reqsheet__body">
+    <div className="m-reqsheet__body" ref={body}>
       {lead ? <div className="m-pane__acts">{waiting ? lead : <>{lookKey ?? (t.status === "open" ? take : reopen)}{lead}</>}</div> : null}
       {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
       {head ? <p className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p> : null}
@@ -2975,9 +3046,9 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
             value={text} onChange={(e) => { setText(e.target.value); setEmpty(false); }} aria-describedby={empty ? `${titleId}-empty` : undefined}
             placeholder={kind === "note" ? "Only admins see this" : `${t.who} gets this as a Discord DM or an alert, and can answer`} />
           <div className="m-person__actions m-person__actions--two">
-            <button type="button" className="btn m-btn" disabled={readOnly || busy.size > 0}
-              onClick={() => void run("status", () => api.ticketStatus(id, t.waiting ? "open" : "waiting"), t.waiting ? "Back with the admins" : `Waiting on ${t.who}`)}>
-              {t.waiting ? "Stop waiting" : `Wait on ${t.who.split(" ")[0]}`}
+            <button type="button" className="btn m-btn" disabled={readOnly} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("status") || undefined}
+              onClick={() => { if (busy.size === 0) void run("status", () => api.ticketStatus(id, t.waiting ? "open" : "waiting"), t.waiting ? "Back with the admins" : `Waiting on ${t.who}`); }}>
+              {busy.has("status") ? <RefreshCw size={16} aria-hidden className="m-spin" /> : null}{t.waiting ? "Stop waiting" : `Wait on ${t.who.split(" ")[0]}`}
             </button>
             <button type="button" className={`btn${look(keys.send)} m-btn`} disabled={readOnly} aria-disabled={busy.has("send") || undefined} aria-busy={busy.has("send") || undefined}
               onClick={() => { if (!busy.has("send")) void send(); }}>
@@ -2992,9 +3063,15 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
                 onChange={(e) => setLast(e.target.value)} placeholder="Grabbed the 4K release, it’ll be on Plex tonight" />
               <div className="m-person__actions m-person__actions--two">
                 <button type="button" className="btn m-btn" onClick={() => { setSolving(false); setLast(""); }}>Back</button>
-                <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("solve")}
-                  onClick={async () => { if (await run("solve", () => api.ticketStatus(id, "resolved", last.trim()), "Solved")) { setSolving(false); setLast(""); } }}>
-                  <Check size={16} aria-hidden /> {busy.has("solve") ? "Solving…" : "Solve it"}
+                <button type="button" className="btn btn--primary m-btn" disabled={readOnly} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("solve") || undefined}
+                  onClick={async () => {
+                    if (busy.size > 0) return;
+                    // The composer gives way to Reopen: focus follows, in the render that swaps them.
+                    focusLater(() => body.current?.querySelector<HTMLElement>(".m-ticket__reopen") ?? null);
+                    if (await run("solve", () => api.ticketStatus(id, "resolved", last.trim()), "Solved")) { setSolving(false); setLast(""); }
+                    else focusLater(() => null, 0);
+                  }}>
+                  {busy.has("solve") ? <RefreshCw size={16} aria-hidden className="m-spin" /> : <Check size={16} aria-hidden />} {busy.has("solve") ? "Solving…" : "Solve it"}
                 </button>
               </div>
             </div>
@@ -3416,7 +3493,7 @@ function RowActions({ item, a, open, look, reply, selected = false }: {
       }}>{label}</button>
   );
   const openKey = key("Open", open, true, false);
-  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} onConfirm={() => { if (!busy) run(); }} />;
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} busy={busy} onConfirm={() => { if (!busy) run(); }} />;
   const src = item.src;
   switch (src.type) {
     case "ticket": {
@@ -3451,6 +3528,63 @@ function RowActions({ item, a, open, look, reply, selected = false }: {
 
 /** After a row's key did its work: if that key went (Take it became Search again) but the row
  *  stayed, focus moves to the row's first key, or the row itself, not off to the page. */
+/** Where focus goes when the card holding `from` leaves: the next card's first key, else the one
+ *  before's, else the section's heading. Looked up when it's needed, so a list that changed meanwhile still works. */
+function pastCard(from: HTMLElement | null) {
+  const card = from?.closest<HTMLElement>("li") ?? from?.closest<HTMLElement>("article") ?? null;
+  const after = card?.nextElementSibling ?? null;
+  const before = card?.previousElementSibling ?? null;
+  const section = from?.closest<HTMLElement>("section") ?? null;
+  const keyIn = (el: Element | null) => el?.isConnected ? el.querySelector<HTMLElement>("button:not([disabled]), a[href]") : null;
+  return () => keyIn(after) ?? keyIn(before) ?? (section?.isConnected ? section.querySelector<HTMLElement>("h2, h3") : null);
+}
+
+/** Focus somewhere real, without scrolling: a heading or a line of text becomes focusable just for this. */
+function focusOn(el: HTMLElement | null) {
+  if (!el) return false;
+  if (!el.matches("button, a[href], input, select, textarea, [tabindex]")) el.setAttribute("tabindex", "-1");
+  el.focus({ preventScroll: true });
+  return document.activeElement === el;
+}
+
+/** Until `from` has left the page (a few seconds at most), the moment focus would fall to the
+ *  page put it on `pick()` instead. Runs as the change lands (and every frame), never on a timer. */
+function guardFocus(from: HTMLElement | null, pick: () => HTMLElement | null, ms = 8000) {
+  if (!from) return;
+  let done = false;
+  let frame = 0;
+  const watch = new MutationObserver(() => check());
+  const stop = () => { done = true; watch.disconnect(); cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  const check = () => {
+    if (done) return;
+    const at = document.activeElement;
+    const lost = !at || at === document.body || !at.isConnected;
+    // A sheet's page is inert until the sheet has fully gone: keep trying, every frame, until focus lands.
+    if (lost) { if (focusOn(pick()) && !from.isConnected) stop(); return; }
+    // Focus moved on by itself (or by the person): nothing to look after.
+    if (at !== from) stop();
+    else if (!from.isConnected) stop();
+  };
+  const tick = () => { check(); if (!done) frame = requestAnimationFrame(tick); };
+  watch.observe(document.body, { childList: true, subtree: true });
+  frame = requestAnimationFrame(tick);
+  const timer = window.setTimeout(stop, ms);
+}
+
+/** Focus for something a coming render brings (the key that replaces the one pressed): ask with
+ *  `focusLater(find)`, and the first commit where `find()` finds it focuses it, before it's painted. */
+function useFocusLater() {
+  const want = useRef<{ find: () => HTMLElement | null; until: number } | null>(null);
+  useLayoutEffect(() => {
+    const w = want.current;
+    if (!w) return;
+    if (Date.now() > w.until) { want.current = null; return; }
+    const el = w.find();
+    if (el && el.isConnected) { want.current = null; focusOn(el); }
+  });
+  return useCallback((find: () => HTMLElement | null, ms = 20000) => { want.current = { find, until: Date.now() + ms }; }, []);
+}
+
 function keepFocusIn(row: HTMLElement | null) {
   // The row's keys can change a moment later (the queue refreshes after the action), so watch
   // for a few seconds: should focus fall to the page while the row is still there, put it back.
@@ -3470,6 +3604,19 @@ function keepFocusIn(row: HTMLElement | null) {
 function QueueRow({ item, selected, onSelect, actions }: {
   item: Item; selected: boolean; onSelect: () => void; actions: ReactNode;
 }) {
+  // A key that goes after its action (Take it, once the ticket's yours) hands focus to the key
+  // now in its place, in the render that took it away. keepFocusIn's watch stays as the fallback.
+  const acts = useRef<HTMLDivElement>(null);
+  const had = useRef<{ el: HTMLElement; at: number } | null>(null);
+  useLayoutEffect(() => {
+    const h = had.current;
+    if (!h || h.el.isConnected) return;
+    had.current = null;
+    const at = document.activeElement;
+    if (at && at !== document.body && at.isConnected) return;
+    const keys = acts.current ? [...acts.current.querySelectorAll<HTMLElement>("button")] : [];
+    focusOn(keys[Math.min(h.at, keys.length - 1)] ?? acts.current?.closest(".m-row")?.querySelector<HTMLElement>(".m-row__main") ?? null);
+  });
   return (
     <li className={`m-row${selected ? " is-selected" : ""}`} data-key={item.key} onClick={onSelect}>
       <button type="button" className="m-row__main" aria-current={selected ? "true" : undefined} onClick={(e) => { e.stopPropagation(); onSelect(); }}>
@@ -3481,7 +3628,10 @@ function QueueRow({ item, selected, onSelect, actions }: {
           <span className="m-row__meta">{item.sub && !item.subIsSeason ? <span className="m-row__subline">{item.sub} · </span> : null}{item.meta}</span>
         </span>
       </button>
-      <div className="m-row__acts">{actions}</div>
+      <div className="m-row__acts" ref={acts} onFocus={(e) => {
+        const keys = [...e.currentTarget.querySelectorAll<HTMLElement>("button")];
+        had.current = { el: e.target as HTMLElement, at: Math.max(0, keys.indexOf(e.target as HTMLElement)) };
+      }}>{actions}</div>
     </li>
   );
 }
@@ -3513,7 +3663,7 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
     <dl className="m-facts">{rows.filter(([, v]) => v !== null && v !== "").map(([k, v]) => <Fragment key={k}><dt>{k}</dt><dd>{v}</dd></Fragment>)}</dl>
   );
   const acts = (main: ReactNode, pill: ReactNode) => <div className="m-pane__acts">{main}{pill}</div>;
-  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} onConfirm={() => { if (!busy) run(); }} />;
+  const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} busy={busy} onConfirm={() => { if (!busy) run(); }} />;
   // The pane's main key is its one pink key, above the fold. Busy, it stays focusable (aria-disabled);
   // if it goes while the item stays, focus moves to the pane's new first key.
   const key = (label: ReactNode, onClick: () => unknown, guarded = true) =>
@@ -3668,8 +3818,9 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
         <span className="m-pane__where"><b>{where.group}</b> · {where.place}</span>
         <div className="m-pane__nav">
           {sheet ? null : <>
-            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Previous (K)" disabled={!item || where.first} onClick={() => onStep(-1)}><ChevronUp size={20} aria-hidden /></button>
-            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Next (J)" disabled={!item || where.last} onClick={() => onStep(1)}><ChevronDown size={20} aria-hidden /></button>
+            {/* At either end the key stays focusable (aria-disabled), so stepping onto the last item keeps focus here. */}
+            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Previous (K)" aria-disabled={!item || where.first || undefined} onClick={() => { if (item && !where.first) onStep(-1); }}><ChevronUp size={20} aria-hidden /></button>
+            <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Next (J)" aria-disabled={!item || where.last || undefined} onClick={() => { if (item && !where.last) onStep(1); }}><ChevronDown size={20} aria-hidden /></button>
           </>}
           {sheet ? <button type="button" className="btn btn--quiet m-iconbtn" aria-label="Back to the queue" onClick={onClose} data-autofocus><X size={20} aria-hidden /></button> : null}
         </div>
@@ -3832,21 +3983,19 @@ function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
   const keep = useRef<{ at: number; pane: boolean } | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const keys2 = list.map((i) => i.key).join("|");
-  useEffect(() => {
+  // In the render that takes the row away, before it's painted: focus never sits on the page.
+  useLayoutEffect(() => {
     const k = keep.current;
     if (!k) return;
-    const lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
-    const t = window.setTimeout(() => {
-      keep.current = null;
-      const still = document.activeElement && document.activeElement !== document.body && document.activeElement.isConnected;
-      if (!lost && still) return;
-      const rows = [...document.querySelectorAll<HTMLElement>(".m-queue .m-row__main")];
-      if (k.pane && wide && rows.length) { setFocus((n) => n + 1); return; }
-      const next = rows[Math.min(k.at, rows.length - 1)];
-      if (next) next.focus({ preventScroll: true });
-      else (document.querySelector<HTMLElement>(".m-queue .m-clear") ?? heading.current)?.focus({ preventScroll: true });
-    }, 0);
-    return () => window.clearTimeout(t);
+    keep.current = null;
+    const at = document.activeElement;
+    if (at && at !== document.body && at.isConnected) return;
+    const rows = [...document.querySelectorAll<HTMLElement>(".m-queue .m-row__main")];
+    const title = k.pane && wide && rows.length ? document.querySelector<HTMLElement>(".m-pane .m-hero__title") : null;
+    if (title) { title.focus({ preventScroll: true }); return; }
+    const next = rows[Math.min(k.at, rows.length - 1)];
+    if (next) next.focus({ preventScroll: true });
+    else focusOn(document.querySelector<HTMLElement>(".m-queue .m-clear") ?? heading.current);
   }, [keys2, wide]);
   const remember = (e: React.MouseEvent | React.KeyboardEvent) => {
     const row = (e.target as HTMLElement).closest<HTMLElement>(".m-row");
