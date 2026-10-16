@@ -571,8 +571,8 @@ def build_app(services, *, who: Who, readonly: bool, dist: Optional[str], image_
             return web.json_response(result, status=200 if result.get("ok") else 409)
 
         async def post_ticket_take(request):
-            await body(request)
-            return web.json_response(await actions.ticket_take(await admin_only(request), request.match_info["id"]))
+            payload = await body(request)
+            return web.json_response(await actions.ticket_take(await admin_only(request), request.match_info["id"], payload))
 
         async def post_member_reply(request):
             payload = await body(request)

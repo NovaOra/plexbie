@@ -212,6 +212,42 @@ def test_a_ticket_on_a_title_on_plex_reaches_the_admins_with_what_plexbie_sees()
     assert [(e["kind"], e["by"]) for e in mine["thread"]] == [("member", "You")]
 
 
+def test_take_and_let_go_say_what_they_mean_so_a_second_press_changes_nothing():
+    """Manage sends what the admin pressed ("take" or "release"): pressing again on a page
+    that hadn't caught up yet must not undo it. Without it (older apps) it still toggles."""
+    from portal import help as helpdesk
+    actions = _actions()
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        hid = (await actions.open_ticket(JORDAN, {"reason": "access", "note": "The TV says no"}))["help"]["id"]
+        out = {"take": await actions.ticket_take(SAM, hid, {"intent": "take"})}
+        out["after_take"] = (await actions._ticket(hid)).get("owner")
+        out["take_again"] = await actions.ticket_take(SAM, hid, {"intent": "take"})
+        out["after_take_again"] = (await actions._ticket(hid)).get("owner")
+        out["release"] = await actions.ticket_take(SAM, hid, {"intent": "release"})
+        out["after_release"] = (await actions._ticket(hid)).get("owner")
+        out["release_again"] = await actions.ticket_take(SAM, hid, {"intent": "release"})
+        out["after_release_again"] = (await actions._ticket(hid)).get("owner")
+        out["thread"] = [e["text"] for e in helpdesk.thread_of(await actions._ticket(hid)) if e["kind"] == "status"]
+        out["toggle_on"] = (await actions.ticket_take(SAM, hid), (await actions._ticket(hid)).get("owner"))
+        out["toggle_off"] = (await actions.ticket_take(SAM, hid), (await actions._ticket(hid)).get("owner"))
+        return out
+
+    with _seen():
+        out = asyncio.run(scenario())
+    assert out["take"]["message"].startswith("It’s yours") and out["after_take"] == "Sam"
+    # Taking what's already yours changes nothing, and says so.
+    assert out["take_again"] == {"ok": True, "message": "It’s already yours."} and out["after_take_again"] == "Sam"
+    assert out["release"]["message"].startswith("Let go") and out["after_release"] is None
+    assert out["release_again"] == {"ok": True, "message": "It isn’t yours, so there’s nothing to let go."}
+    assert out["after_release_again"] is None
+    # Only the real changes are on the timeline: no second "Took it", no second "Let it go".
+    assert out["thread"] == ["Took it", "Let it go"]
+    # No intent (older apps): it toggles as before.
+    assert out["toggle_on"][1] == "Sam" and out["toggle_off"][1] is None
+
+
 def test_a_tickets_reason_has_a_fixed_code_older_tickets_included():
     from portal import help as helpdesk
     from portal.admin import _ticket_row

@@ -294,12 +294,19 @@ async def reopen(hid: str, actor: str) -> Optional[dict]:
                      resolved_by=None, resolved_at=None)
 
 
-async def take(hid: str, actor: str, discord_id: Optional[str], plex_account_id: Optional[str]) -> Optional[dict]:
-    """The admin owns it now (alerted when the member answers). Taking your own releases it."""
+async def take(hid: str, actor: str, discord_id: Optional[str], plex_account_id: Optional[str],
+               intent: Optional[str] = None) -> Optional[dict]:
+    """The admin owns it now (alerted when the member answers). With `intent` ("take" or
+    "release") it does what was asked and nothing when the ticket is already that way, so a
+    second press on a page that hadn't caught up can't undo the first. Without one (older
+    apps), taking your own releases it."""
     rec = await kv_get(NAMESPACE, hid)
     if not isinstance(rec, dict):
         return None
-    if rec.get("owner") == actor:
+    mine = rec.get("owner") == actor
+    if (intent == "take" and mine) or (intent == "release" and not mine):
+        return rec
+    if mine:
         return await add(hid, "status", actor, "Let it go", owner=None, owner_discord_id=None, owner_plex_id=None)
     return await add(hid, "status", actor, "Took it", owner=actor, owner_discord_id=discord_id, owner_plex_id=plex_account_id)
 

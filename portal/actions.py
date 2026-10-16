@@ -1166,13 +1166,19 @@ class Actions:
         self.limit(user["user"]["id"], "lookup")
         return {"rows": await blocked_imports.episodes_of(self.services, series_id)}
 
-    async def ticket_take(self, user: dict, hid: str) -> dict:
+    async def ticket_take(self, user: dict, hid: str, body: Optional[dict] = None) -> dict:
+        """Take a ticket, or let it go. `intent` says which ("take" or "release"): asking for
+        what it already is changes nothing and says so. Without it, it toggles (older apps)."""
         from portal import help as helpdesk
         self.limit(user["user"]["id"], "admin")
-        await self._ticket(hid)
-        h = await helpdesk.take(hid, self.actor(user), user.get("discordId"), user.get("plexAccountId"))
+        before = await self._ticket(hid)
+        intent = (body or {}).get("intent")
+        intent = intent if intent in ("take", "release") else None
+        h = await helpdesk.take(hid, self.actor(user), user.get("discordId"), user.get("plexAccountId"), intent)
         mine = h.get("owner") == self.actor(user)
-        return {"ok": True, "message": "It's yours. You'll get an alert when they answer." if mine else "Let go. Anyone can take it."}
+        if intent and h.get("owner") == before.get("owner"):
+            return {"ok": True, "message": "It’s already yours." if mine else "It isn’t yours, so there’s nothing to let go."}
+        return {"ok": True, "message": "It’s yours. You’ll get an alert when they answer." if mine else "Let go. Anyone can take it."}
 
     async def member_reply(self, user: dict, request_key: str, body: dict) -> dict:
         """The member answers on the ticket on their request (My requests on the website,
