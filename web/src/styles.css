@@ -3139,3 +3139,7 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
   .stage__strapline .strap__detail { -webkit-line-clamp: 1; line-clamp: 1; }
   .strap__when + .strap__detail::before { content: none; }
 }
+/* "More like this" captions while they load: the loaded captions' height. */
+.popular__item--plain .popular__caption-skeleton { height: 43px; }
+@media (max-width: 359px) { .popular__item--plain .popular__caption-skeleton { height: 61px; } }
+@media (hover: hover) and (pointer: fine) { .stage__pause:hover { background: var(--panel-raised); } }
