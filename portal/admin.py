@@ -602,7 +602,7 @@ class Admin:
             async def public_bot() -> None:
                 # On (Discord's default), anyone with the bot's ID can add it to a server of theirs.
                 if (await fetch_app()).get("bot_public") is True:
-                    raise ServiceError(f"Public Bot is on, so anyone with Plexbie's ID can add it to their own "
+                    raise ServiceError(f"Public Bot is on, so anyone with Plexbie’s ID can add it to their own "
                                        f"server. {PUBLIC_BOT_FIX}")
 
             if cfg.discord_client_id and cfg.discord_client_secret and cfg.discord_callback_url and cfg.discord_bot_token:
@@ -618,7 +618,7 @@ class Admin:
                 from portal.inbox import threads_ok
                 missing = threads_ok(self.bot)
                 checks.append({"name": "Discord DM threads", "ok": not missing, "ms": 0,
-                               "detail": f"Give Plexbie's role {missing} in the admin channel, so each DM gets its own thread."
+                               "detail": f"Give Plexbie’s role {missing} in the admin channel, so each DM gets its own thread."
                                if missing else None})
                 checks.extend(home_health_items(self.bot, cfg))
             from portal.ratelimit import untrusted_proxies

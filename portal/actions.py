@@ -1177,7 +1177,9 @@ class Actions:
         h = await helpdesk.take(hid, self.actor(user), user.get("discordId"), user.get("plexAccountId"), intent)
         mine = h.get("owner") == self.actor(user)
         if intent and h.get("owner") == before.get("owner"):
-            return {"ok": True, "message": "It’s already yours." if mine else "It isn’t yours, so there’s nothing to let go."}
+            # Nothing changed (a second press on a page that hadn't caught up): say so, and that it's a no-op.
+            return {"ok": True, "changed": False,
+                    "message": "It’s already yours." if mine else "It isn’t yours, so there’s nothing to let go."}
         return {"ok": True, "message": "It’s yours. You’ll get an alert when they answer." if mine else "Let go. Anyone can take it."}
 
     async def member_reply(self, user: dict, request_key: str, body: dict) -> dict:

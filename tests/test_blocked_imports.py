@@ -195,7 +195,7 @@ def test_odd_files_are_pointed_out():
     p = asyncio.run(body())
     sample, extras = p["files"]
     assert any("sample" in n for n in sample["notes"]) and any("small" in n for n in sample["notes"])
-    assert any("can't tell which episode" in n for n in extras["notes"])
+    assert any("can’t tell which episode" in n for n in extras["notes"])
     assert p["ok"] and not extras["ready"], "an unplaced file is for the admin to place, not a dead end"
     assert any("S01E02" in w for w in p["warnings"]), "grabbed for E02, but nothing in it is E02"
 
@@ -281,11 +281,11 @@ def test_choices_are_checked_against_sonarr():
     two, none = _import(GOOD, [first, {**second, "episodeIds": [901]}])
     assert "both set as the same episode" in two and not none
     other, none = _import(GOOD, [{**first, "episodeIds": [12345]}, second])
-    assert "aren't in that show" in other and not none
+    assert "aren’t in that show" in other and not none
     stale, none = _import(GOOD, [first, second, {"name": "Something.Else.mkv", "skip": True}])
     assert "changed since you looked" in stale and not none
     quality, none = _import(GOOD, [{**first, "qualityId": 99}, second])
-    assert "doesn't have that quality" in quality and not none
+    assert "doesn’t have that quality" in quality and not none
 
 
 def test_a_file_that_turned_up_after_the_look_inside_isnt_imported_blind():
@@ -378,7 +378,7 @@ def test_manage_says_which_app_it_couldnt_reach():
         up = await Actions(bot=None, services=Services(Arr(_folder(), GOOD)), data=None, public_url="").blocked_list({"user": {"id": "1"}})
         return down, up
     down, up = _db(body)
-    assert down["rows"] == [] and down["errors"] == {"sonarr": "Couldn't reach Sonarr just now."}
+    assert down["rows"] == [] and down["errors"] == {"sonarr": "Couldn’t reach Sonarr just now."}
     assert "secret" not in str(down), "the error never carries the address or its key"
     assert len(up["rows"]) == 1 and up["errors"] == {}, "Radarr isn't set up, so it isn't an error"
 

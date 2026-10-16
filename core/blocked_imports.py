@@ -62,7 +62,7 @@ async def blocked(services, unreachable: Optional[Dict[str, str]] = None) -> Lis
         except Exception as e:
             logger.info(f"Blocked imports: couldn't read {client.name}'s queue: {e}")
             if unreachable is not None:
-                unreachable[app] = f"Couldn't reach {client.name} just now."
+                unreachable[app] = f"Couldn’t reach {client.name} just now."
             continue
         groups: Dict[str, List[dict]] = {}
         for r in records:
@@ -153,11 +153,11 @@ async def preview(services, app: str, download_id: str) -> dict:
     from core.blocking import run_blocking
     item = next((b for b in await blocked(services) if b["app"] == app and b["downloadId"] == download_id), None)
     if not item:
-        raise LookupError("That download isn't waiting to be imported any more.")
+        raise LookupError("That download isn’t waiting to be imported any more.")
     client = _client(services, app)
     raw = await client.get("manualimport", folder=item["folder"], downloadId=download_id, filterExistingFiles="false") or []
     if not isinstance(raw, list):
-        raise LookupError(f"{client.name} couldn't look inside the download.")
+        raise LookupError(f"{client.name} couldn’t look inside the download.")
     thing = "episode" if app == "sonarr" else "film"
     files, danger, warnings, seen = [], [], [], {}
     for f in raw:
@@ -170,13 +170,13 @@ async def preview(services, app: str, download_id: str) -> dict:
         notes = []
         ext = os.path.splitext(name)[1].lower()
         if ext and ext not in VIDEO:
-            notes.append(f"{ext} isn't a usual video file")
+            notes.append(f"{ext} isn’t a usual video file")
         if "sample" in name.lower():
             notes.append("Looks like a sample, not the real thing")
         if size and size < SMALL[app]:
             notes.append(f"Very small for a whole {thing}")
         if not where:
-            notes.append(f"{client.name} can't tell which {thing} this is: pick it")
+            notes.append(f"{client.name} can’t tell which {thing} this is: pick it")
         for w in where:
             seen.setdefault(w, []).append(name)
         quality = (f.get("quality") or {}).get("quality") or {}
@@ -198,7 +198,7 @@ async def preview(services, app: str, download_id: str) -> dict:
     others: List[dict] = []
     listing = await run_blocking(_scan_folder, item["folder"])
     if listing is None:
-        warnings.append("Plexbie can't see the download folder itself, so only the video files are listed. "
+        warnings.append("Plexbie can’t see the download folder itself, so only the video files are listed. "
                         "Check the folder for anything else before importing.")
     else:
         videos = {f["name"] for f in files}
@@ -209,7 +209,7 @@ async def preview(services, app: str, download_id: str) -> dict:
             others.append({"name": x["name"], "size": x["size"], "danger": bad})
             if bad:
                 danger.append(x["name"])
-                warnings.append(f"{x['name']} is a program, not a video. Don't import this: delete the download.")
+                warnings.append(f"{x['name']} is a program, not a video. Don’t import this: delete the download.")
     if not files:
         warnings.append(f"{client.name} found no video files it could import.")
     owner = {"id": item["ownerId"], "title": item["title"], "year": item["year"]}
@@ -269,12 +269,12 @@ async def do_import(services, app: str, download_id: str, choices: Optional[List
         if c.get("qualityId") is not None:
             q = qualities.get(c["qualityId"])
             if not q:
-                raise ValueError(f"{client.name} doesn't have that quality.")
+                raise ValueError(f"{client.name} doesn’t have that quality.")
             entry["quality"] = {"quality": {"id": q["id"], "name": q["name"]},
                                 "revision": ((raw.get("quality") or {}).get("revision") or {"version": 1, "real": 0, "isRepack": False})}
         if c.get("languageIds") is not None:
             if not isinstance(c["languageIds"], list) or not all(i in languages for i in c["languageIds"]):
-                raise ValueError(f"{client.name} doesn't have that language.")
+                raise ValueError(f"{client.name} doesn’t have that language.")
             entry["languages"] = [languages[i] for i in c["languageIds"]]
         if c.get("releaseGroup") is not None:
             entry["releaseGroup"] = str(c["releaseGroup"])[:60]
@@ -284,7 +284,7 @@ async def do_import(services, app: str, download_id: str, choices: Optional[List
             if not series_id or not ids:
                 raise ValueError(f"Pick which episode {f['name']} is (or skip it).")
             if not set(ids) <= await series_episodes(series_id):
-                raise ValueError(f"Those episodes aren't in that show ({f['name']}).")
+                raise ValueError(f"Those episodes aren’t in that show ({f['name']}).")
             for i in ids:
                 if i in claimed:
                     raise ValueError(f"{claimed[i]} and {f['name']} are both set as the same episode.")
@@ -297,7 +297,7 @@ async def do_import(services, app: str, download_id: str, choices: Optional[List
             if c.get("movieId") is not None:
                 movie_ids = movie_ids or {m.get("id") for m in await client.movies()}
                 if movie_id not in movie_ids:
-                    raise ValueError("That film isn't in Radarr.")
+                    raise ValueError("That film isn’t in Radarr.")
             # Radarr keeps one file per film: CD1 and CD2, or a sample, as the same film would lose one.
             if movie_id in claimed:
                 raise ValueError(f"{claimed[movie_id]} and {f['name']} are both set as the same film.")
@@ -315,8 +315,8 @@ async def do_import(services, app: str, download_id: str, choices: Optional[List
         if status == "completed":
             return (state.get("message") or f"Imported {len(files)} file{'s' if len(files) != 1 else ''}").rstrip(".") + "."
         if status in ("failed", "aborted", "cancelled"):
-            raise RuntimeError(f"{client.name} couldn't import it: {state.get('message') or status}.")
-    return f"{client.name} is still importing it; it'll be on Plex once that's done."
+            raise RuntimeError(f"{client.name} couldn’t import it: {state.get('message') or status}.")
+    return f"{client.name} is still importing it; it’ll be on Plex once that’s done."
 
 
 async def _request_for(item: dict) -> Optional[str]:

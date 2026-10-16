@@ -238,9 +238,9 @@ def test_take_and_let_go_say_what_they_mean_so_a_second_press_changes_nothing():
         out = asyncio.run(scenario())
     assert out["take"]["message"].startswith("It’s yours") and out["after_take"] == "Sam"
     # Taking what's already yours changes nothing, and says so.
-    assert out["take_again"] == {"ok": True, "message": "It’s already yours."} and out["after_take_again"] == "Sam"
+    assert out["take_again"] == {"ok": True, "changed": False, "message": "It’s already yours."} and out["after_take_again"] == "Sam"
     assert out["release"]["message"].startswith("Let go") and out["after_release"] is None
-    assert out["release_again"] == {"ok": True, "message": "It isn’t yours, so there’s nothing to let go."}
+    assert out["release_again"] == {"ok": True, "changed": False, "message": "It isn’t yours, so there’s nothing to let go."}
     assert out["after_release_again"] is None
     # Only the real changes are on the timeline: no second "Took it", no second "Let it go".
     assert out["thread"] == ["Took it", "Let it go"]
