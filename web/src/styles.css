@@ -3109,3 +3109,6 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 .m-mon__bar { display: inline-block; vertical-align: middle; width: 70%; height: 0.8em; border-radius: 3px; }
 /* The narrowest phones: footer link rows a little further apart still. */
 @media (max-width: 359px) { .footer__links { row-gap: var(--space-8); } }
+/* A switched-off hollow hold on a row the pointer is over (or that's selected) stays slate, its edge the rule. */
+.m-row:hover .m-row__acts .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]),
+.m-row.is-selected .m-row__acts .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) { --btn-fg: var(--slate-ink); border-color: var(--rule); }
