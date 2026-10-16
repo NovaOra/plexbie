@@ -16,7 +16,13 @@ function deviceKind(): Device {
   return "other";
 }
 
-/** The page's one pink key goes to what this device can use; the rest are outline keys. */
+/** A phone, not a tablet: iPads (Safari on iPad says it's a Mac) and Android tablets are "this device". */
+function isPhone(): boolean {
+  const ua = navigator.userAgent;
+  return /iphone|ipod/i.test(ua) || (/android/i.test(ua) && /mobile/i.test(ua));
+}
+
+/** The page's one pink key goes to what this device can use; the rest are 48px outline keys. */
 const keyClass = (lead: boolean) => `btn${lead ? " btn--primary" : " btn--quiet alerts__key"} m-btn`;
 
 /**
@@ -61,7 +67,7 @@ export function AlertsPanel({ compact = false, known, lead = true, device = devi
     <section className={`alerts${state === "on" ? " is-on" : ""}`} aria-labelledby="alerts-h">
       <span className="alerts__icon" aria-hidden>{state === "on" ? <BellRing size={22} /> : state === "blocked" ? <BellOff size={22} /> : <Bell size={22} />}</span>
       <div className="alerts__body">
-        <h2 id="alerts-h" className="h3">{state === "on" ? "Alerts are on" : device === "other" ? "Get alerts on this device" : "Get alerts on this phone"}</h2>
+        <h2 id="alerts-h" className="h3">{state === "on" ? "Alerts are on" : device !== "other" && isPhone() ? "Get alerts on this phone" : "Get alerts on this device"}</h2>
         {state === "install-first" ? (
           <p className="muted">
             On iPhone or iPad, alerts work once Plexbie is on your Home Screen: tap <Share size={14} aria-label="Share" /> in Safari,
@@ -85,8 +91,8 @@ export function AlertsPanel({ compact = false, known, lead = true, device = devi
               </button>
             ) : (
               <>
-                <button type="button" className="btn m-btn" disabled={busy} onClick={() => run(sendTest)}>Send a test</button>
-                <button type="button" className="btn btn--quiet m-btn" disabled={busy} onClick={() => run(turnOff)}>Turn off</button>
+                <button type="button" className={keyClass(false)} disabled={busy} onClick={() => run(sendTest)}>Send a test</button>
+                <button type="button" className={keyClass(false)} disabled={busy} onClick={() => run(turnOff)}>Turn off</button>
               </>
             )}
           </div>
@@ -120,8 +126,9 @@ export function AlertsPage() {
       {ready ? (
         <>
           <AlertsPanel known={alerts} device={device} lead={device === "other"} />
-          <AppDownload app={app ?? null} lead={device === "android"} />
-          <IphoneApp app={app ?? null} lead={device === "ios"} />
+          {/* This device's app first. */}
+          {device === "ios" ? <IphoneApp app={app ?? null} lead /> : <AppDownload app={app ?? null} lead={device === "android"} />}
+          {device === "ios" ? <AppDownload app={app ?? null} lead={false} /> : <IphoneApp app={app ?? null} lead={false} />}
           <p className="muted text-small">
             Alerts come from this site itself, with no outside service involved. They’re per device: turn them on in each
             phone or browser you want them in.
@@ -237,6 +244,23 @@ export function IphoneApp({ app, lead = true }: { app: AppRelease | null; lead?:
     }
   };
 
+  const actions = (
+    <div className="alerts__actions">
+      <button type="button" className={keyClass(lead)} disabled={busy} onClick={() => void source("sidestore")}>
+        <Download size={18} aria-hidden /> Add to SideStore
+      </button>
+      <button type="button" className={keyClass(false)} disabled={busy} onClick={() => void source("altstore")}>
+        Add to AltStore
+      </button>
+      <button type="button" className={keyClass(false)} disabled={busy} onClick={() => void source("copy")}>
+        <Copy size={18} aria-hidden /> Copy the address
+      </button>
+      <button type="button" className={keyClass(false)} disabled={busy} onClick={() => void replace()}
+        onBlur={() => { if (armed) { setArmed(false); setNote(""); } }}>
+        {armed ? "Press again to replace" : "Replace the address"}
+      </button>
+    </div>
+  );
   return (
     <section className="alerts is-on" aria-labelledby="iphone-h">
       <span className="alerts__icon" aria-hidden><Download size={22} /></span>
@@ -246,6 +270,12 @@ export function IphoneApp({ app, lead = true }: { app: AppRelease | null; lead?:
           Version {app.version}, {Math.round(app.ios.size / 1_000_000)} MB. iPhones only install apps from the App Store, so
           Plexbie comes through SideStore, a free app that installs it under your own Apple ID and keeps it working.
         </p>
+        {lead ? (
+          <>
+            <p className="app-lead">Already have SideStore? Tap <b>Add to SideStore</b>. New to it? Set it up with the steps below first.</p>
+            {actions}
+          </>
+        ) : null}
         <ol className="app-steps">
           <li>
             Install SideStore on your iPhone: follow the guide at{" "}
@@ -258,28 +288,14 @@ export function IphoneApp({ app, lead = true }: { app: AppRelease | null; lead?:
             Open <strong>LocalDevVPN</strong> (SideStore’s setup has you install it) and tap <strong>Connect</strong>.
             SideStore can only install or renew apps while it’s connected.
           </li>
-          <li>On your iPhone, tap <strong>Add to SideStore</strong> below, then install Plexbie from it.</li>
+          <li>On your iPhone, tap <strong>Add to SideStore</strong> {lead ? "above" : "below"}, then install Plexbie from it.</li>
           <li>
             SideStore renews Plexbie every week and shows new versions as updates. If it ever says LocalDevVPN isn’t
             connected, open LocalDevVPN, tap Connect, and try again. If it fails with “OperationError error 28” (you
             aren’t signed in), sign in again under SideStore’s Settings.
           </li>
         </ol>
-        <div className="alerts__actions">
-          <button type="button" className={keyClass(lead)} disabled={busy} onClick={() => void source("sidestore")}>
-            <Download size={18} aria-hidden /> Add to SideStore
-          </button>
-          <button type="button" className="btn m-btn" disabled={busy} onClick={() => void source("altstore")}>
-            Add to AltStore
-          </button>
-          <button type="button" className="btn m-btn" disabled={busy} onClick={() => void source("copy")}>
-            <Copy size={18} aria-hidden /> Copy the address
-          </button>
-          <button type="button" className="btn m-btn" disabled={busy} onClick={() => void replace()}
-            onBlur={() => { if (armed) { setArmed(false); setNote(""); } }}>
-            {armed ? "Press again to replace" : "Replace the address"}
-          </button>
-        </div>
+        {lead ? null : actions}
         <p className="muted app-fine">
           With a free Apple ID an iPhone holds three of these apps, SideStore included. The app can’t get alerts on
           iPhone (Apple keeps that for its paid developer program), so for alerts, add this site to your Home Screen

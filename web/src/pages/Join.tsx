@@ -43,8 +43,8 @@ export function Join() {
         + "without Discord is by invite only: ask whoever runs the server to send you an invite link, then open it and "
         + "sign in with this account."
       : session && !session.inGuild
-        ? "This Discord account isn’t in the household server, so Plexbie can’t ask for you from here. Join the "
-          + "Discord server first, or ask whoever runs it for an invite link."
+        ? "This Discord account isn’t in the household server, so Plexbie can’t ask for you from here. Ask whoever "
+          + "runs it for an invite to the Discord server or an invite link."
         : null;
 
   return (

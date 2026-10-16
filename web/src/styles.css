@@ -301,11 +301,12 @@ p { margin: 0; text-wrap: pretty; }
 /* A page still loading holds the screen, so the footer doesn't flash up and jump away. */
 .page--loading { min-height: calc(100svh - var(--masthead-h)); }
 .page-loading__title { height: 48px; width: 40%; }
-/* The page fills the screen under the masthead from its first paint, so the footer starts below
-   the fold: content arriving never pushes a visible footer down (layout shift). */
-#main { min-height: calc(100svh - var(--masthead-h)); }
+/* While something on the page is loading, the page fills the screen under the masthead, so the
+   footer starts below the fold and arriving content never pushes a visible footer down (layout
+   shift). A page that's all there (Not found, Join) ends with its footer under its content. */
+#main:has([aria-busy="true"], .page--loading) { min-height: calc(100svh - var(--masthead-h)); }
 /* Under a stage the masthead floats over the page, so the page is the whole screen. */
-.has-stage #main { min-height: 100svh; }
+.has-stage #main:has([aria-busy="true"], .page--loading) { min-height: 100svh; }
 .split { display: grid; gap: 48px; }
 .page > *, .split > *, .split > * > * { min-width: 0; }
 html, body { overflow-x: clip; }
@@ -865,7 +866,10 @@ html, body { overflow-x: clip; }
   flex: 1; display: grid; align-content: end; gap: 32px;
   padding-top: 96px; padding-bottom: 32px;
 }
-.stage__feature { display: grid; gap: 16px; justify-items: start; }
+/* The title's place holds three lines (its clamp), with the words at its foot: the channel's
+   height and the strap above stay put whichever title is on. */
+.stage__feature { display: grid; gap: 16px; justify-items: start; grid-template-rows: auto calc(3 * 0.88 * var(--fs-stage)); }
+.stage__feature > .stage__title { align-self: end; }
 .stage__strapline { display: flex; align-items: center; gap: 8px; max-width: 100%; }
 .stage__pause {
   flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: var(--r-strap);
@@ -1685,7 +1689,7 @@ main:has(.air) + .shell.footer::before { display: none; }
 }
 
 /* ======================================================= draggable crawl */
-.dcrawl { overflow: hidden; cursor: grab; touch-action: pan-y; user-select: none; -webkit-user-select: none; padding: 4px 0; mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); }
+.dcrawl { overflow: hidden; cursor: grab; touch-action: pan-y; user-select: none; -webkit-user-select: none; padding: 4px 0; mask-image: linear-gradient(90deg, transparent, #000 min(6%, 24px), #000 max(94%, calc(100% - 24px)), transparent); }
 .dcrawl:active { cursor: grabbing; }
 .dcrawl__track { display: flex; width: max-content; will-change: transform; }
 .dcrawl__copy { display: flex; gap: 12px; padding-right: 12px; }
@@ -2329,7 +2333,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 /* ------------------------------------------- Manage → All requests */
 .m-all__lede { margin: -4px 0 16px; }
 .m-all__bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
-.m-all__search { flex: 1 1 280px; min-width: 0; }
+.m-all__search { flex: 1 1 26rem; min-width: 0; }
 .m-all__count { margin: 0 0 12px; }
 .m-all__rows { gap: 8px; }
 /* A request row is a button here (it opens the full request), dressed as the member's card. */
@@ -3069,8 +3073,9 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 /* plexbie.com: the plugins' pause key, 44px like the ticker's. */
 .btn.btn--quiet.plugs__pause { width: 44px; min-height: 44px; padding: var(--space-2); }
 /* Reading measures: legal text, small notes on a page, the invite's privacy line; plexbie.com's credits and plugin intro. */
-.page p.muted.text-small, .invite__privacy { max-width: 25rem; }
-.guide__credit, .plugs__head p { max-width: 33rem; }
+.page p.muted:is(.text-small, .invite__privacy, .app-fine), .invite__privacy { max-width: 25rem; }
+.guide__credit { max-width: 28rem; }
+.plugs__head p { max-width: 32rem; }
 /* The ticker's pause key: 44px to press, whatever the ticker's height. */
 .ticker__pause::after { content: ""; position: absolute; inset: 50% 0 auto; height: 44px; transform: translateY(-50%); }
 /* Your own name on the board wraps on a narrow phone rather than being cut. */
@@ -3084,5 +3089,12 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 .p-anchor { scroll-margin-top: 96px; }
 .plex-status { flex-basis: 100%; margin: 0; }
 .join__switch { justify-self: start; }
+.app-lead { margin: 0; }
 /* A monitor still checking: "Checking…" once, the lines under it as bars of their own line height. */
 .m-mon__bar { display: inline-block; vertical-align: middle; width: 70%; height: 0.8em; border-radius: 3px; }
+<<<<<<< Updated upstream
+.app-lead { margin: 0; }
+=======
+/* The narrowest phones: footer link rows a little further apart still. */
+@media (max-width: 359px) { .footer__links { row-gap: var(--space-8); } }
+>>>>>>> Stashed changes

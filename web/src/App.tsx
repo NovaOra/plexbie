@@ -6,6 +6,7 @@ import { Join } from "./pages/Join";
 import { Landing } from "./pages/Landing";
 import { NotFound } from "./pages/NotFound";
 import { Privacy, Terms } from "./pages/Legal";
+import { StageSkeleton } from "./components/StageSkeleton";
 
 // One household's Plexbie, at the root of its own address: signed out it's the
 // sign-in page, signed in it's Home. (The Plexbie project's own site, plexbie.com,
@@ -21,11 +22,11 @@ const SearchPage = lazy(() => import("./pages/SearchPage").then((m) => ({ defaul
 const TitlePage = lazy(() => import("./pages/TitlePage").then((m) => ({ default: m.TitlePage })));
 
 /** Logged out: landing. Logged in without the role: join. Member: the page. */
-function Gate({ children }: { children: ReactNode }) {
+function Gate({ children, loading }: { children: ReactNode; loading?: ReactNode }) {
   const { session } = useSession();
   if (!session) return <Landing />;
   if (!session.member) return <Join />;
-  return <Suspense fallback={<div className="shell page page--loading" aria-busy="true"><div className="skeleton page-loading__title" /></div>}>{children}</Suspense>;
+  return <Suspense fallback={loading ?? <div className="shell page page--loading" aria-busy="true"><div className="skeleton page-loading__title" /></div>}>{children}</Suspense>;
 }
 
 /** Old addresses (/app/...) from before the household moved to the root: links in
@@ -39,7 +40,7 @@ function Routed() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<Gate><Home /></Gate>} />
+        <Route index element={<Gate loading={<><StageSkeleton /><div className="shell page page--loading" aria-busy="true" /></>}><Home /></Gate>} />
         <Route path="library" element={<Gate><Library /></Gate>} />
         <Route path="search" element={<Gate><SearchPage /></Gate>} />
         <Route path="title/:kind/:id" element={<Gate><TitlePage /></Gate>} />

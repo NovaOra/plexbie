@@ -4,6 +4,7 @@ import { AnimatePresence } from "motion/react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { LifeBuoy, Search } from "../components/icons";
 import { useMedia } from "../components/useMedia";
+import { StageSkeleton } from "../components/StageSkeleton";
 import { api } from "../api/client";
 import { NewTicketSheet, TicketSheet } from "../components/HelpSheet";
 import { afterOverlay } from "../components/overlay";
@@ -305,19 +306,9 @@ export function Home() {
             <OffAir onRetry={arrivals.reload}>Couldn’t get what’s new on Plex. Nothing is lost.</OffAir>
           </div>
         </section>
-      ) : (
-        <section className="stage stage--compact stage--bare" aria-busy="true" aria-label="Just arrived on Plex">
-          <div className="shell stage__inner">
-            {/* The loaded channel's shape (strap, one line of title, the rail of titles), so nothing moves when it arrives. */}
-            <div className="stage__feature">
-              <div className="stage__strapline"><div className="skeleton stage__strap-skeleton" /></div>
-              <span className="stage__title stage__title--skeleton skeleton" aria-hidden>{"\u00a0"}</span>
-            </div>
-            <div className="stage__channels" aria-hidden><div className="skeleton stage__rail-skeleton" /></div>
-          </div>
-        </section>
-      )}
-      <Ticker items={crawl} label="Now" />
+      ) : <StageSkeleton ticker={false} />}
+      {/* The ticker's 40px are held while what it says loads, so the page under it doesn't drop. */}
+      {crawl.length || !(community.loading || arrivals.loading) ? <Ticker items={crawl} label="Now" /> : <div className="ticker" aria-hidden />}
       <div className="shell page">
         <section className="console" aria-label="Request something">
           <h1>What should be on Plexbie?</h1>
