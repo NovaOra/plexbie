@@ -1886,9 +1886,9 @@ def test_kept_titles_stored_as_unknown_take_the_countdowns_name():
     """Titles kept from the website used to be stored as "Unknown"; the countdown still lists them by name."""
     from portal.admin import Admin
     live = {"title": "Sintel", "type": "movie", "year": 2010}
-    assert Admin._kept("7", {"title": "Unknown", "type": "unknown"}, live) == {"ratingKey": "7", **live}
+    assert Admin._kept("7", {"title": "Unknown", "type": "unknown"}, live) == {"ratingKey": "7", **live, "poster": None}
     assert Admin._kept("7", {"title": "Spring", "type": "movie", "year": 2019}, live)["title"] == "Spring"
-    assert Admin._kept("7", {"title": "Unknown"}, {}) == {"ratingKey": "7", "title": "Unknown", "type": None, "year": None}
+    assert Admin._kept("7", {"title": "Unknown"}, {}) == {"ratingKey": "7", "title": "Unknown", "type": None, "year": None, "poster": None}
 
 
 def test_plex_index_reads_new_and_old_agent_ids():
