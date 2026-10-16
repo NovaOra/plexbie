@@ -3082,7 +3082,7 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .channel-you-skeleton { height: 376px; }
 /* Request's shelves while they load. */
 .popular__rowhead { min-height: 44px; }
-.popular__kind-skeleton { display: block; height: 20px; width: 9rem; }
+.popular__kind-skeleton { display: block; height: 14px; width: 9rem; }
 .popular__caption-skeleton { height: 61px; }
 .onair-skeleton { height: 93px; }
 /* Alerts: outline keys are as tall as the pink one; the page waits under a screen-tall placeholder. */

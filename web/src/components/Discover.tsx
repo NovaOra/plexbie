@@ -58,13 +58,13 @@ function GenreShelf({ kind, id, heading }: { kind: "movie" | "tv"; id: number; h
 }
 
 /** A shelf while it loads, in the loaded one's shape (its heading row, posters and captions), so nothing moves when it fills in. */
-function Skeletons() {
+function Skeletons({ ranked = true }: { ranked?: boolean }) {
   return (
     <div className="popular__row" aria-hidden>
       <div className="popular__rowhead"><span className="skeleton popular__kind-skeleton" /></div>
       <div className="popular__list">
         {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} className="popular__item"><div className="skeleton popular__skeleton" /><div className="popular__caption-skeleton" /></div>
+          <div key={i} className={`popular__item${ranked ? "" : " popular__item--plain"}`}><div className="skeleton popular__skeleton" /><div className="popular__caption-skeleton" /></div>
         ))}
       </div>
     </div>
@@ -232,7 +232,7 @@ export function MoreLikeThis({ kind, id }: { kind: "movie" | "tv"; id: string })
   if (s.loading) {
     return (
       <Section id="similar-h" title="More like this" className="popular" busy>
-        <Skeletons />
+        <Skeletons ranked={false} />
       </Section>
     );
   }
