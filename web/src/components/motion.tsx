@@ -173,15 +173,22 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
   // to the new one, in the same render, so the keyboard never lands on the page.
   const pauseKey = useRef<HTMLButtonElement>(null);
   const pauseHad = useRef(false);
+  // A handover isn't the keyboard arriving: it mustn't hold the channel (that's for focus moving in).
+  const handing = useRef(false);
   useLayoutEffect(() => {
     const at = document.activeElement;
-    if (pauseHad.current && (!at || at === document.body) && pauseKey.current) pauseKey.current.focus({ preventScroll: true });
+    if (pauseHad.current && (!at || at === document.body) && pauseKey.current) {
+      handing.current = true;
+      pauseKey.current.focus({ preventScroll: true });
+      handing.current = false;
+    }
   }, [i]);
   return (
     <section className={`stage${bare ? " stage--compact stage--bare" : ""}`} aria-roledescription="carousel" aria-label="Just arrived on Plex"
       // Keyboard focus only: a tap or click also focuses the button it lands on,
       // and that would hold the channel after "Play" until the next tap elsewhere.
-      onFocus={(e) => setHeld(e.target.matches(":focus-visible"))} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setHeld(false); }}>
+      onFocus={(e) => { if (handing.current) { handing.current = false; return; } setHeld(e.target.matches(":focus-visible")); }}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setHeld(false); }}>
       <div className="stage__media" aria-hidden>
         <AnimatePresence>
           {current && !bare ? (
