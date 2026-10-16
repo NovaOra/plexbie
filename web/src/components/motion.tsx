@@ -205,7 +205,9 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
 
         {current ? (
           <div className="stage__feature" aria-live={stopped || reduced ? "polite" : "off"}>
-            <div className="stage__strapline">
+            {/* A new strap with each title (as the title is new): it sits 16px above whichever title is on,
+                so it arrives in its place rather than moving there. */}
+            <div className="stage__strapline" key={`s-${current.title.id}`}>
               <div className="strap strap--available strap--wipe" key={current.title.id}>
                 <span className="strap__tab"><Play aria-hidden />Just arrived</span>
                 <span className="strap__bar"><span>

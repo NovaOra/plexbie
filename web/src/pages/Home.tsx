@@ -307,6 +307,9 @@ export function Home() {
           </div>
         </section>
       ) : <StageSkeleton ticker={false} />}
+      {/* The rest of the page shows once the channel knows its height (an empty one is shorter than
+          its skeleton), so it arrives in place instead of moving up. It loads meanwhile. */}
+      <div className="home__rest" hidden={!arrivals.data && !arrivals.error}>
       {/* The ticker's 40px are held while what it says loads, so the page under it doesn't drop. */}
       {crawl.length || !(community.loading || arrivals.loading) ? <Ticker items={crawl} label="Now" /> : <div className="ticker" aria-hidden />}
       <div className="shell page">
@@ -325,6 +328,7 @@ export function Home() {
             <YourStanding community={community} />
           </div>
         </div>
+      </div>
       </div>
     </>
   );
