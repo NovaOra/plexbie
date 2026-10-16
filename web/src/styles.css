@@ -948,7 +948,7 @@ html, body { overflow-x: clip; }
 @media (hover: hover) and (pointer: fine) { .ticker:hover .ticker__run { animation-play-state: paused; } }
 .ticker--still .ticker__item::after { display: none; }
 .ticker__pause {
-  flex: none; display: grid; place-items: center; width: 44px; border: 0; border-left: 1px solid var(--rule);
+  position: relative; flex: none; display: grid; place-items: center; width: 44px; padding: var(--space-2); border: 0; border-left: 1px solid var(--rule);
   background: var(--field-deep); color: var(--slate-ink); cursor: pointer;
 }
 .ticker__pause:active { transform: scale(0.94); }
