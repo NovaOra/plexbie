@@ -5,6 +5,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { LifeBuoy, Search } from "../components/icons";
 import { useMedia } from "../components/useMedia";
 import { StageSkeleton } from "../components/StageSkeleton";
+import { Mascot } from "../components/Mascot";
 import { api } from "../api/client";
 import { NewTicketSheet, TicketSheet } from "../components/HelpSheet";
 import { afterOverlay } from "../components/overlay";
@@ -292,9 +293,9 @@ export function Home() {
   const community = useLoad(() => api.community());
   const { status, session } = useSession();
   // The rest of the page waits for the channel to know its height (an empty one is shorter than its
-  // skeleton), but not for long: 100ms after the page is up it shows anyway, and the channel then
-  // keeps its skeleton's height for this visit (filling it, its words in the middle), so nothing
-  // under it moves whatever comes back.
+  // skeleton), but not for long: 300ms after the page is up it shows anyway (a usual answer is in by
+  // then), and a channel still out keeps its skeleton's height for this visit, filling it (the mascot
+  // and its words in the middle), so nothing under it moves whatever comes back.
   const settled = !!arrivals.data || !!arrivals.error;
   const settledNow = useRef(settled);
   useEffect(() => { settledNow.current = settled; });
@@ -305,7 +306,7 @@ export function Home() {
     const t = window.setTimeout(() => {
       setWaited(true);
       if (!settledNow.current) setHoldHeight(stageBox.current?.offsetHeight ?? null);
-    }, 100);
+    }, 300);
     return () => window.clearTimeout(t);
   }, []);
   const crawl = [
@@ -318,9 +319,10 @@ export function Home() {
       <div className="shell invite__landed"><InviteOutcome /></div>
       {session?.user.via === "plex" ? <div className="shell home-alerts"><AlertsPanel compact /></div> : null}
       <div ref={stageBox} className={`home__stage${holdHeight ? " is-held" : ""}`} style={holdHeight ? { minHeight: holdHeight } : undefined}>
-      {arrivals.data ? <Stage arrivals={arrivals.data} /> : arrivals.error ? (
+      {arrivals.data ? <Stage arrivals={arrivals.data} kept={!!holdHeight} /> : arrivals.error ? (
         <section className="stage stage--compact stage--bare" aria-label="Just arrived on Plex">
           <div className="shell stage__inner">
+            {holdHeight ? <Mascot /> : null}
             <OffAir tab="Channel" onRetry={arrivals.reload}>Couldn’t get what’s new on Plex just now. Nothing is lost.</OffAir>
           </div>
         </section>

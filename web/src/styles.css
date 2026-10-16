@@ -3152,3 +3152,8 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
   .m-mon__screen { grid-template-rows: auto 1fr; }
   .m-mon__make { align-self: end; }
 }
+/* A held, empty (or unanswered) channel: the mascot over its words, in the middle of the room it keeps. */
+.home__stage.is-held .stage--bare .stage__inner { justify-items: center; text-align: center; gap: var(--space-3); }
+.home__stage.is-held .mascot { width: 96px; height: 96px; }
+.home__stage.is-held .off-air { justify-items: center; }
+.stage--bare .strap { max-width: 560px; }

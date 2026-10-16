@@ -8,6 +8,7 @@ import type { Icon } from "./icons";
 import { artUrl } from "../api/client";
 import type { Arrival, MediaRequest, RequestProgress, RequestStage, Title } from "../api/types";
 import { Art, formatSlot, homeOf, inDays, since, titlePath } from "./ui";
+import { Mascot } from "./Mascot";
 
 export const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
@@ -154,7 +155,10 @@ const SLIDE_MS = 7000;
  * The house channel: real backdrops of what just arrived, one at a time, with
  * a lower-third strap per slide and a channel strip that counts down to the next.
  */
-export function Stage({ arrivals }: { arrivals: Arrival[] }) {
+export function Stage({ arrivals, kept = false }: { arrivals: Arrival[];
+  /** Held at its skeleton's height (the answer came after Home showed): an empty channel fills it with the mascot. */
+  kept?: boolean;
+}) {
   // Backdrops when there are any; otherwise (audiobooks, Plex-only items, demo
   // mode) the same channel without the picture, never an empty screen.
   const withArt = arrivals.filter((a) => a.title.backdrop).slice(0, 5);
@@ -209,6 +213,7 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
       <div className="stage__scrim" aria-hidden />
 
       <div className="shell stage__inner">
+        {!current && kept ? <Mascot /> : null}
         {!current ? (
           <div className="stage__feature">
             <div className="strap strap--closed">
