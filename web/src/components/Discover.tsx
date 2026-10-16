@@ -95,7 +95,15 @@ function LanguagePick({ chosen, options, onChange }: {
     return () => document.removeEventListener("click", away);
   }, []);
   return (
-    <details className="pick-menu" ref={menu} onToggle={place}>
+    <details className="pick-menu" ref={menu} onToggle={place}
+      // Escape closes it and puts focus back on its button; tabbing out of it closes it.
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || !menu.current?.open) return;
+        e.preventDefault();
+        menu.current.open = false;
+        menu.current.querySelector("summary")?.focus();
+      }}
+      onBlur={(e) => { if (menu.current?.open && !e.currentTarget.contains(e.relatedTarget as Node | null)) menu.current.open = false; }}>
       <summary className="select" aria-label={`Language: ${label}`}>{label}</summary>
       <div className="pick-menu__panel" ref={panel} role="group" aria-label="Languages to show">
         <label className="pick-menu__opt">
