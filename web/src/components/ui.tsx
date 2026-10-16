@@ -39,11 +39,15 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = [], refresh
 export type Loaded<T> = ReturnType<typeof useLoad<T>>;
 
 /** A load failed: say so (never "nothing here", which would be a false answer), and offer another go. */
-export function OffAir({ children, onRetry, compact = false }: { children?: ReactNode; onRetry?: () => void; compact?: boolean }) {
+export function OffAir({ children, onRetry, compact = false, tab }: {
+  children?: ReactNode; onRetry?: () => void; compact?: boolean;
+  /** The strap's tab: "No signal" for an outage; a part of the page that just couldn't load says which part. */
+  tab?: string;
+}) {
   return (
     <div className={`off-air${compact ? " off-air--compact" : ""}`} role="alert">
       <div className="strap strap--closed">
-        <span className="strap__tab"><RadioTower size={14} aria-hidden />No signal</span>
+        <span className="strap__tab">{tab ?? <><RadioTower size={14} aria-hidden />No signal</>}</span>
         <span className="strap__bar"><span>{children ?? "Couldn’t reach Plexbie just now. Nothing is lost."}</span></span>
       </div>
       {onRetry ? (

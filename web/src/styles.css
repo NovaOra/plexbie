@@ -3125,3 +3125,8 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 @media (max-width: 532px) { .now, .now-skeleton { min-height: 76px; } }
 /* A short phone screen (an iPhone SE, say): the channel starts closer under the masthead. */
 @media (max-width: 359px) and (max-height: 600px) { .stage .stage__inner, .stage--bare .stage__inner { padding-top: 32px; } }
+/* Home's channel held at its skeleton's height (what's new came back empty after a wait, or not at
+   all): the channel fills the hold, its words in the middle, so there's no band under it. */
+.home__stage.is-held { display: grid; }
+.home__stage.is-held > .stage { min-height: 100%; }
+.home__stage.is-held > .stage--bare .stage__inner { align-content: center; padding-top: 0; }
