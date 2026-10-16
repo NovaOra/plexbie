@@ -3343,7 +3343,7 @@ function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number, undon
   const leave = (from: HTMLElement | null) => guardFocus(from, () =>
     (cameFrom.current?.isConnected ? cameFrom.current : null)
     ?? (t.row ? document.querySelector<HTMLElement>(`.m-row[data-key="${CSS.escape(t.row)}"] .m-row__acts button`) : null)
-    ?? document.querySelector<HTMLElement>("main h1"));
+    ?? document.querySelector<HTMLElement>("main h1"), 8000, true);
   useEffect(() => {
     let left = t.undo ? 6500 : 4200;
     let started = Date.now();
@@ -3673,16 +3673,21 @@ function pastCard(from: HTMLElement | null) {
 }
 
 /** Focus somewhere real, without scrolling: a heading or a line of text becomes focusable just for this. */
-function focusOn(el: HTMLElement | null) {
+function focusOn(el: HTMLElement | null, reveal = false) {
   if (!el) return false;
   if (!el.matches("button, a[href], input, select, textarea, [tabindex]")) el.setAttribute("tabindex", "-1");
   el.focus({ preventScroll: true });
+  // `reveal`: focus that lands somewhere the reader isn't looking brings it into view.
+  if (reveal) {
+    const r = el.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > window.innerHeight) el.scrollIntoView({ block: "center", behavior: scrollBehavior() });
+  }
   return document.activeElement === el;
 }
 
 /** Until `from` has left the page (a few seconds at most), the moment focus would fall to the
  *  page put it on `pick()` instead. Runs as the change lands (and every frame), never on a timer. */
-function guardFocus(from: HTMLElement | null, pick: () => HTMLElement | null, ms = 8000) {
+function guardFocus(from: HTMLElement | null, pick: () => HTMLElement | null, ms = 8000, reveal = false) {
   if (!from) return;
   let done = false;
   let frame = 0;
@@ -3693,7 +3698,7 @@ function guardFocus(from: HTMLElement | null, pick: () => HTMLElement | null, ms
     const at = document.activeElement;
     const lost = !at || at === document.body || !at.isConnected;
     // A sheet's page is inert until the sheet has fully gone: keep trying, every frame, until focus lands.
-    if (lost) { if (focusOn(pick()) && !from.isConnected) stop(); return; }
+    if (lost) { if (focusOn(pick(), reveal) && !from.isConnected) stop(); return; }
     // Focus moved on by itself (or by the person): nothing to look after.
     if (at !== from) stop();
     else if (!from.isConnected) stop();
