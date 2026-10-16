@@ -2827,7 +2827,7 @@ function RequestBody({ id, res, head = true, onLeave, quiet = false }: {
   };
 
   // While it loads, a block where it will go (and the page holds its height meanwhile).
-  if (!r) return res.failed ? <LoadFailed text="Couldn’t load this request." onRetry={load} /> : <div className="m-reqsheet__body" aria-busy="true"><div className="skeleton m-body-skeleton" /></div>;
+  if (!r) return res.failed ? <LoadFailed text="Couldn’t load this request." onRetry={load} /> : <div className="m-reqsheet__body" aria-busy="true"><span className="visually-hidden">Loading this request…</span><div className="skeleton m-body-skeleton" /></div>;
   const openTicket = r.tickets.find((t) => t.status === "open");
   // Only an approved request can be searched for (not one waiting for a decision, or declined).
   const video = ["tv", "movie"].includes(r.title.kind) && !["requested", ...ENDED].includes(r.stage);
@@ -3067,7 +3067,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const search = (how: SearchHow) =>
     run(how, () => ({ again: api.helpSearch, episodes: api.helpEpisodes, name: api.helpByName }[how])(id), SEARCHING[how]);
 
-  if (!t) return res.failed ? <LoadFailed text="Couldn’t load this ticket." onRetry={load} /> : <div className="m-reqsheet__body" aria-busy="true"><div className="skeleton m-body-skeleton" /></div>;
+  if (!t) return res.failed ? <LoadFailed text="Couldn’t load this ticket." onRetry={load} /> : <div className="m-reqsheet__body" aria-busy="true"><span className="visually-hidden">Loading this ticket…</span><div className="skeleton m-body-skeleton" /></div>;
   const state = ticketState(t);
   // A title ticket is searched for by its own TMDB id; a general one has nothing to search for.
   const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
@@ -3973,9 +3973,18 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
     if (!focus) return;
     title.current?.focus({ preventScroll: true });
     // Near the end of the queue the detail can't stick all the way up (the queue ends first), and
-    // its title would sit under the masthead: bring the page down by the difference.
-    const top = box.current?.getBoundingClientRect().top;
-    if (!sheet && top !== undefined && top < 76) window.scrollBy({ top: top - 76, behavior: scrollBehavior() });
+    // its title would sit under the masthead: bring the page down by the difference. Checked again
+    // once the scroll has settled and once the item's insides have replaced their placeholder, as
+    // long as the title still has focus.
+    if (sheet) return;
+    const settle = () => {
+      const top = box.current?.getBoundingClientRect().top;
+      if (top !== undefined && top < 75 && document.activeElement === title.current) window.scrollBy({ top: top - 76, behavior: scrollBehavior() });
+    };
+    settle();
+    const frame = requestAnimationFrame(settle);
+    const later = [450, 1000].map((ms) => window.setTimeout(settle, ms));
+    return () => { cancelAnimationFrame(frame); later.forEach((t) => window.clearTimeout(t)); };
   }, [focus, sheet]);
   const done = item && (item.kind === "ticket" || item.kind === "chat") && item.group !== "done";
   return (
