@@ -2181,7 +2181,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 }
 
 /* two actions side by side on an invite row (phones: two equal buttons) */
-.m-person__actions--two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.m-person__actions--two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr)); gap: 8px; }
 @media (min-width: 760px) { .m-person__actions--two { display: flex; } }
 .m-person--past { opacity: 0.92; }
 
