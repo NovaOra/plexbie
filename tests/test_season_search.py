@@ -89,7 +89,7 @@ def test_seasons_nobody_has_are_handed_to_on_nothing():
 
 def test_cant_be_found_is_a_help_reason():
     from portal import help as helpdesk
-    assert helpdesk.REASONS["notfound"] == "Can't be found"
+    assert helpdesk.REASONS["notfound"] == "Can’t be found"
 
 
 class Later(FakeSonarr):

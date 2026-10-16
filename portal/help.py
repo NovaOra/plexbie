@@ -36,22 +36,22 @@ NAMESPACE = "help_requests"
 #: What can be wrong, as the person picks it.
 REASONS = {
     "stuck": "Stuck downloading",
-    "notfound": "Can't be found",
+    "notfound": "Can’t be found",
     "notonplex": "Downloaded, but not on Plex",
-    "wrongfilm": "Plex says it's a different film",
+    "wrongfilm": "Plex says it’s a different film",
     "quality": "Wrong version or quality",
     "episodes": "Wrong or missing episodes",
-    "playback": "Won't play on Plex",
+    "playback": "Won’t play on Plex",
     "other": "Something else",
 }
 #: Reasons only Plexbie opens tickets for (members don't pick these).
 PLEXBIE_REASONS = {
-    "blocked": "Downloaded, but won't import",
+    "blocked": "Downloaded, but won’t import",
     "notreached": "Approved, but it never reached Sonarr or Radarr",
 }
 #: What can be wrong with a film or show on Plex that the member didn't request.
 TITLE_REASONS = {
-    "playback": "Won't play on Plex",
+    "playback": "Won’t play on Plex",
     "picture": "Picture looks wrong",
     "audio": "Sound or subtitles",
     "wrongfilm": "Wrong film or episode",
@@ -60,17 +60,17 @@ TITLE_REASONS = {
 }
 #: ...and with nothing in particular.
 GENERAL_REASONS = {
-    "access": "Can't get in, or nothing plays",
+    "access": "Can’t get in, or nothing plays",
     "other": "Something else",
 }
 #: A line under each of those, where there's room for one (Discord's picker).
 REASON_HINTS = {
-    "playback": "It won't start, stops, or keeps buffering",
+    "playback": "It won’t start, stops, or keeps buffering",
     "picture": "Washed out, wrong colours, or blurry",
     "audio": "No sound, out of sync, wrong language, or subtitles",
-    "wrongfilm": "It's a different film, or the wrong episode",
+    "wrongfilm": "It’s a different film, or the wrong episode",
     "episodes": "Episodes are missing from a season",
-    "access": "You can't get into Plex, or nothing will play at all",
+    "access": "You can’t get into Plex, or nothing will play at all",
 }
 SUBJECTS = ("request", "title", "general")
 
@@ -82,10 +82,11 @@ def reason_code(h: dict) -> str:
     an admin's own ticket)."""
     if h.get("reason_code"):
         return str(h["reason_code"])
-    words = h.get("reason") or ""
+    # Compared with plain apostrophes: tickets from before the words used curly ones match too.
+    words = (h.get("reason") or "").replace("’", "'")
     for table in (GENERAL_REASONS, PLEXBIE_REASONS, TITLE_REASONS, REASONS):
         for code, label in table.items():
-            if label == words:
+            if label.replace("’", "'") == words:
                 return code
     return ""
 #: Open general tickets one member may have at once.

@@ -218,6 +218,8 @@ def test_a_tickets_reason_has_a_fixed_code_older_tickets_included():
     # Opened now: kept with the ticket, so new words for a reason never change what it is.
     assert helpdesk.reason_code({"reason": "Whatever the words are now", "reason_code": "access"}) == "access"
     # Opened before codes were kept: worked out from the words it was opened with.
+    assert helpdesk.reason_code({"reason": "Can’t get in, or nothing plays"}) == "access"
+    # Words from before the reasons used curly apostrophes still find their code.
     assert helpdesk.reason_code({"reason": "Can't get in, or nothing plays"}) == "access"
     assert helpdesk.reason_code({"reason": "Downloaded, but won't import"}) == "blocked"
     assert helpdesk.reason_code({"reason": "Picture looks wrong"}) == "picture"
