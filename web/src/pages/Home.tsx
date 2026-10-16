@@ -62,7 +62,7 @@ export function Finder({ initialQuery = "", heading = true, live = false, type =
 }) {
   const [q, setQ] = useState(initialQuery);
   // The narrowest phones get the short hint, so it's never cut.
-  const narrow = useMedia("(max-width: 359px)");
+  const narrow = useMedia("(max-width: 379px)");
   const navigate = useNavigate();
   const go = (query: string, replace: boolean) => {
     const params = new URLSearchParams();

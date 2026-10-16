@@ -2545,6 +2545,8 @@ const PAGE = 50;
  */
 function AllRequestsTab() {
   const { data, failed } = useManage();
+  // A phone gets the short hint, so it's never cut.
+  const phone = useMedia("(max-width: 479px)");
   const [show, setShow] = useState<Show>(() => ((data.all?.counts?.stuck ?? 0) > 0 ? "stuck" : "everything"));
   // Every request since No. 0001, loaded when asked for (the list opens on the last 30 days),
   // and again each time the page refreshes the last 30 days, so it's never older than them.
@@ -2621,7 +2623,7 @@ function AllRequestsTab() {
         <label className="finder__field m-all__search">
           <Search size={18} aria-hidden />
           <span className="visually-hidden">Search every request</span>
-          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search every request: a title, a name or a number"
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={phone ? "Title, name or number" : "Search every request: a title, a name or a number"}
             autoComplete="off" enterKeyHint="search" />
         </label>
         {!words ? (

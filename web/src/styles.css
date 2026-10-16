@@ -3035,3 +3035,21 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 @media (hover: hover) and (pointer: fine) { .select:hover:not(:focus) { border-color: var(--slate-ink); } }
 /* A link on its own line with a 44px hit area. */
 .link-hit { display: inline-flex; align-items: center; min-height: 44px; }
+/* A search field's clear key only once there's something to clear, so the hint isn't cut. */
+.finder__field input:placeholder-shown::-webkit-search-cancel-button { display: none; -webkit-appearance: none; }
+/* Home's channel while it loads: the loaded one's shape. */
+.stage__strap-skeleton { height: 34px; width: 220px; max-width: 100%; }
+.stage__title.stage__title--skeleton { display: block; width: 60%; animation: shimmer 1.2s linear infinite; text-shadow: none; }
+.stage__rail-skeleton { height: 67px; grid-column: 1 / -1; }
+/* Channel while the board loads: rows and "You" at their loaded heights. */
+.rank-skeleton { height: 51px; }
+.channel-you-skeleton { height: 376px; }
+/* Request's shelves while they load. */
+.popular__rowhead { min-height: 44px; }
+.popular__kind-skeleton { display: block; height: 20px; width: 9rem; }
+.popular__caption-skeleton { height: 61px; }
+.onair-skeleton { height: 93px; }
+/* Alerts: outline keys are as tall as the pink one; the page waits under a screen-tall placeholder. */
+.alerts__actions .btn.btn--quiet.alerts__key { min-height: 48px; }
+.alerts-wait { display: grid; gap: var(--space-6); min-height: calc(100svh - var(--masthead-h) - 160px); align-content: start; }
+.alerts-wait__card { height: 220px; border-radius: 16px; }
