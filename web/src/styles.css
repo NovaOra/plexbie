@@ -1706,8 +1706,9 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 
 /* pressable things share one feel: a quick dip on press */
 .m-btn { min-height: 44px; padding: 0 16px; font-size: var(--fs-body); gap: 8px; }
-.m-btn--go:not(:disabled) { --btn-bg: var(--screen); --btn-fg: var(--on-screen); --lip: var(--key-lip-pink); --lip-down: var(--key-lip-pink-down); }
-@media (hover: hover) and (pointer: fine) { .m-btn--go:not(:disabled):hover { --btn-bg: var(--screen-hover); } }
+/* Approve and Invite to Plex on every card: a raised key, so a list of cards isn't a column of pink. */
+.m-btn--go:not(:disabled) { --btn-bg: var(--panel-raised); --btn-fg: var(--ink); --lip: var(--key-lip); --lip-down: var(--key-lip-down); }
+@media (hover: hover) and (pointer: fine) { .m-btn--go:not(:disabled):hover { --btn-bg: var(--rule); } }
 .m-btn--go:not(:disabled):active { --btn-bg: var(--screen-deep); }
 .m-spin { animation: m-spin 700ms linear infinite; }
 @keyframes m-spin { to { transform: rotate(360deg); } }
@@ -2900,21 +2901,22 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
   .btn--primary[aria-disabled="true"]:not([aria-busy="true"]):hover, .m-btn--go[aria-disabled="true"]:not([aria-busy="true"]):hover { --btn-bg: var(--panel-raised); }
   .m-check input:not(:checked):hover, .m-blocked__skip input:not(:checked):hover { border-color: var(--slate-ink); }
 }
-/* Phone rows: the reason leaves the title for the line under it, which may take two lines. */
-.m-row__subline { display: none; }
-@media (max-width: 480px) { .m-row__title .m-row__sub { display: none; } .m-row__subline { display: inline; } }
 /* Settings rows at a reading measure. */
-.m-set-row > span:first-child { max-width: 40rem; }
+.m-set-row > span:first-child { max-width: 33rem; }
 /* Narrow phones: the composer's tabs and the monitors use their short names (the full ones are their labels). */
 .m-tab__short, .m-mon__short { display: none; }
 @media (max-width: 359px) {
-  .m-tab__long, .m-mon__name { display: none; }
-  .m-tab__short, .m-mon__short { display: inline; }
+  .m-tab__long { display: none; }
+  .m-tab__short { display: inline; }
+}
+@media (max-width: 399px) {
+  .m-mon__name { display: none; }
+  .m-mon__short { display: inline; }
 }
 /* A field that's wrong has a tally edge. */
 .field input[aria-invalid="true"], .field textarea[aria-invalid="true"], .m-textarea[aria-invalid="true"] { border-color: var(--tally); }
 /* A failed feed's notice at a reading measure. */
-.m-queue__notice .field__error { max-width: 65ch; }
+.m-queue__notice .field__error { max-width: 33rem; }
 /* Segmented controls on a phone: tight gaps, centred words, the count inside the pill; one line from 361px. */
 @media (max-width: 480px) { .m-seg__item { gap: 4px; text-align: center; } .m-seg__item .m-seg__n { margin-left: 4px; } }
 @media (min-width: 361px) { .m-seg__item { white-space: nowrap; } }
@@ -2925,3 +2927,39 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
   .m-person__body { grid-column: 2; }
   .m-person__actions, .m-person__actions--keep { grid-column: 1 / -1; }
 }
+
+/* ---- Manage: sixth QA pass */
+/* Reading measures: settings and the mode card's words, a failed feed's notice, a field's hint. */
+.m-mode__text .muted { max-width: 33rem; }
+.m-page .field__hint, .m-sheet__panel .field__hint { max-width: 29rem; }
+/* Segmented controls on a phone: options as wide as their words, one line each, the row shared out.
+   The whole control wraps only when its words can't fit on one row (Cleanup's and Invites' at 320px). */
+@media (max-width: 480px) {
+  .m-seg:not(.m-composer .m-seg) { display: flex; flex-wrap: wrap; gap: 4px; justify-self: stretch; }
+  .m-seg:not(.m-composer .m-seg) .m-seg__item { flex: 1 1 auto; padding: 0 12px; white-space: nowrap; justify-content: center; }
+}
+@media (max-width: 389px) { .m-seg:not(.m-composer .m-seg) .m-seg__item { padding: 0 8px; } }
+/* Narrow monitors: the label fits its bezel. */
+@media (max-width: 399px) { .m-mon__label { gap: 3px; } .m-mon__label .caps { letter-spacing: 0.02em; } }
+@media (max-width: 359px) { .m-monitors { gap: 4px; } .m-mon__label .caps { font-size: 0.72rem; letter-spacing: 0; } }
+/* Narrow phones: a row's eyebrow may take two lines, and its status and age are never cut. */
+@media (max-width: 359px) {
+  .m-row__kind { flex-wrap: wrap; row-gap: 2px; white-space: normal; }
+  .m-row__kind .caps { white-space: normal; overflow: visible; text-overflow: clip; }
+}
+/* Every width: a row's reason sits on the line under its title (a season stays with the title). */
+.m-row__meta { line-height: 1.5; }
+/* A ticket's links are 44px targets. */
+.m-ticket__links a { display: inline-flex; align-items: center; min-height: 44px; }
+/* A select that's wrong has a tally edge, in a blocked import too. */
+.m-select[aria-invalid="true"], .m-blocked .m-select[aria-invalid="true"] { border-color: var(--tally); }
+/* Desk monitors: the make-up line may take two lines just past the phone layout; Help's first title from 1100px. */
+@media (min-width: 1000px) and (max-width: 1100px) {
+  .m-mon__make { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+}
+@media (min-width: 1100px) {
+  .m-mon--help .m-mon__top b { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+}
+/* Sentences that explain, in sheets and cards, at the body size. */
+.m-via.is-failed { font-size: var(--fs-body); font-weight: 560; }
+.m-person__meta, .m-blocked__folder { font-size: var(--fs-body); }
