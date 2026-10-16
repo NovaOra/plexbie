@@ -82,11 +82,15 @@ export const status = (): Promise<ServerStatus> => wait({
   ],
 });
 
-/** For reviewing Home's channel: ?channel=long (a long title first), strap (a long strap first) or empty (nothing new). */
+/** For reviewing Home's channel: ?channel=long (a long title first), strap (a long strap first) or empty (nothing new);
+ *  ?arrivals=slow holds the answer back 3s, ?arrivals=hang never answers. */
 const channelKnob = () => new URLSearchParams(location.search).get("channel");
 export const arrivals = (): Promise<Arrival[]> => {
   const all = arrivalList();
   const knob = channelKnob();
+  const held = new URLSearchParams(location.search).get("arrivals");
+  if (held === "hang") return new Promise(() => undefined);
+  if (held === "slow") return wait(knob === "empty" ? [] : all, 3000);
   if (knob === "empty") return wait([]);
   const first = knob === "long" ? all.findIndex((a) => a.title.title === "The Wonderful Wizard of Oz")
     : knob === "strap" ? all.findIndex((a) => a.detail?.startsWith("Season")) : 0;

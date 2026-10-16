@@ -164,13 +164,23 @@ function usePageFocus() {
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    const t = window.setTimeout(() => {
+    // The new page's heading may not be laid out yet (its code still loading, or held back until its
+    // data is in): look every 50ms for up to 1.5s, then settle for the page itself.
+    let tries = 0;
+    const t = window.setInterval(() => {
+      // Already moved into the page (a click, a key): leave it there.
+      const at = document.activeElement;
+      if (at && at !== document.body && at.id !== "main" && at.closest("#main")) { window.clearInterval(t); return; }
       const h1 = document.querySelector<HTMLElement>("main h1");
-      if (!h1) return;
-      if (!h1.hasAttribute("tabindex")) h1.setAttribute("tabindex", "-1");
-      h1.focus({ preventScroll: true });
-    }, 60);
-    return () => window.clearTimeout(t);
+      const ready = !!h1 && h1.getClientRects().length > 0;
+      if (!ready && ++tries < 30) return;
+      window.clearInterval(t);
+      const target = ready ? h1! : document.getElementById("main");
+      if (!target) return;
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+      target.focus({ preventScroll: true });
+    }, 50);
+    return () => window.clearInterval(t);
   }, [pathname]);
 }
 

@@ -1,4 +1,4 @@
-import { useState, type FormEvent, useEffect } from "react";
+import { useRef, useState, type FormEvent, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence } from "motion/react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -30,7 +30,7 @@ export function NowStrap() {
       </div>
     );
   }
-  if (!status) return <div className="skeleton" style={{ height: 38, width: 280 }} />;
+  if (!status) return <div className="skeleton now-skeleton" />;
   const films = status.libraries.find((l) => l.kind === "movie")?.count;
   const shows = status.libraries.find((l) => l.kind === "show")?.count;
   const newest = arrivals.data?.[0];
@@ -291,6 +291,22 @@ export function Home() {
   const arrivals = useLoad(() => api.arrivals());
   const community = useLoad(() => api.community());
   const { status, session } = useSession();
+  // The rest of the page waits for the channel to know its height (an empty one is shorter than its
+  // skeleton), but not for long: 300ms after the page is up it shows anyway, and the channel then
+  // keeps its skeleton's height for this visit, so nothing under it moves whatever comes back.
+  const settled = !!arrivals.data || !!arrivals.error;
+  const settledNow = useRef(settled);
+  useEffect(() => { settledNow.current = settled; });
+  const stageBox = useRef<HTMLDivElement>(null);
+  const [waited, setWaited] = useState(false);
+  const [holdHeight, setHoldHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setWaited(true);
+      if (!settledNow.current) setHoldHeight(stageBox.current?.offsetHeight ?? null);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, []);
   const crawl = [
     ...(status ? [`${status.streams} watching right now`] : []),
     ...(community.data?.onAir ?? []).map((o) => `${o.member.split(" ")[0]} is watching ${o.title}`),
@@ -300,6 +316,7 @@ export function Home() {
     <>
       <div className="shell invite__landed"><InviteOutcome /></div>
       {session?.user.via === "plex" ? <div className="shell home-alerts"><AlertsPanel compact /></div> : null}
+      <div ref={stageBox} className="home__stage" style={holdHeight ? { minHeight: holdHeight } : undefined}>
       {arrivals.data ? <Stage arrivals={arrivals.data} /> : arrivals.error ? (
         <section className="stage stage--compact stage--bare" aria-label="Just arrived on Plex">
           <div className="shell stage__inner">
@@ -307,9 +324,10 @@ export function Home() {
           </div>
         </section>
       ) : <StageSkeleton ticker={false} />}
-      {/* The rest of the page shows once the channel knows its height (an empty one is shorter than
-          its skeleton), so it arrives in place instead of moving up. It loads meanwhile. */}
-      <div className="home__rest" hidden={!arrivals.data && !arrivals.error}>
+      </div>
+      {/* It loads meanwhile, and arrives in place, the ticker with it (above a channel that may yet
+          shrink, a ticker on show would move). */}
+      <div className="home__rest" hidden={!settled && !waited}>
       {/* The ticker's 40px are held while what it says loads, so the page under it doesn't drop. */}
       {crawl.length || !(community.loading || arrivals.loading) ? <Ticker items={crawl} label="Now" /> : <div className="ticker" aria-hidden />}
       <div className="shell page">

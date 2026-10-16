@@ -3118,3 +3118,6 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 /* A switched-off hollow hold on a row the pointer is over (or that's selected) stays slate, its edge the rule. */
 .m-row:hover .m-row__acts .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]),
 .m-row.is-selected .m-row__acts .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) { --btn-fg: var(--slate-ink); border-color: var(--rule); }
+/* The "On air now" strip while it loads, at its loaded height (it wraps to two rows on a phone). */
+.now-skeleton { height: 38px; width: 280px; max-width: 100%; }
+@media (max-width: 532px) { .now, .now-skeleton { min-height: 76px; } }

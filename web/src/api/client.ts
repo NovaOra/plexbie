@@ -18,6 +18,9 @@ export class ApiError extends Error {
   }
 }
 
+/** How long Home's channel waits for what's new before it says it's off air. */
+const ARRIVALS_WAIT = 8000;
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     credentials: "same-origin",
@@ -60,7 +63,10 @@ export const api = {
       throw e;
     }),
   status: (): Promise<ServerStatus> => (SAMPLE ? sample.status() : call("/status")),
-  arrivals: (): Promise<Arrival[]> => (SAMPLE ? sample.arrivals() : call("/arrivals")),
+  /** Gives up after 8s (Home then says the channel is off air), rather than leaving it loading forever. */
+  arrivals: (): Promise<Arrival[]> => (SAMPLE
+    ? Promise.race([sample.arrivals(), new Promise<never>((_, no) => setTimeout(() => no(new Error("Plexbie didn’t answer.")), ARRIVALS_WAIT))])
+    : call("/arrivals", { signal: AbortSignal.timeout(ARRIVALS_WAIT) })),
   library: (kind: LibraryKind): Promise<LibraryItem[]> =>
     SAMPLE ? sample.library(kind) : call(`/library?${new URLSearchParams({ kind })}`),
   community: (): Promise<Community> => (SAMPLE ? sample.community() : call("/community")),
