@@ -2636,8 +2636,14 @@ html.has-sheet .m-strip::before, html.has-sheet .m-mon__screen::after { animatio
 
 /* The queue and the detail side by side on a wide screen. Tall enough from the start that
    the footer never jumps as the queue arrives. */
-.m-panes { display: grid; gap: var(--space-6); padding-top: clamp(var(--space-2), 1.5vw, var(--space-4)); min-height: 100vh; align-content: start; }
-@media (min-width: 1000px) { .m-panes { grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: var(--space-8); align-items: start; } }
+.m-panes { display: grid; gap: var(--space-6); padding-top: clamp(var(--space-2), 1.5vw, var(--space-4)); align-content: start; }
+/* The desk holds the screen only while it loads (a short queue then ends at its content). */
+.m-panes:has(:not(button, article)[aria-busy="true"], .skeleton, .m-skel-card) { min-height: 100vh; }
+@media (min-width: 1000px) {
+  .m-panes { grid-template-columns: minmax(0, 560px) minmax(0, 1fr); gap: var(--space-8); align-items: start; }
+  /* The detail's wrapper runs the queue's full height, so the detail inside can stick under the masthead as the queue scrolls. */
+  .m-pane-wrap { align-self: stretch; }
+}
 .m-queue-col { min-width: 0; }
 
 /* Needs you / Waiting / Done */
