@@ -22,6 +22,7 @@ import { afterOverlay, useBackToClose, useSheet, useTabWrap } from "../component
 import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
 import { AREAS, DESK_FEEDS, deriveDesk, listFor, seasonsWords, ticketKeys, type Area, type KeyLook, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
+import { useMedia } from "../components/useMedia";
 
 /* ================================================================== store */
 
@@ -3424,17 +3425,6 @@ const GROUP_HEAD: Record<Group, { label: string; rule: string }> = {
 /** Wide enough for the queue and its detail side by side (styles.css). */
 const WIDE = "(min-width: 1000px)";
 
-function useMedia(query: string) {
-  const [on, setOn] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const q = window.matchMedia(query);
-    const change = () => setOn(q.matches);
-    change();
-    q.addEventListener("change", change);
-    return () => q.removeEventListener("change", change);
-  }, [query]);
-  return on;
-}
 
 /** Typing somewhere, or a sheet or the menu is up: the page's keys stay out of the way. */
 const keysOff = (e: KeyboardEvent, within: string) => {

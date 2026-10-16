@@ -2975,7 +2975,7 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 @media (max-width: 399px) { .m-mon__label { gap: 4px; } .m-mon__label .caps { letter-spacing: 0.02em; } }
 @media (max-width: 359px) { .m-monitors { gap: 4px; } .m-mon__label .caps { font-size: var(--fs-label); letter-spacing: 0; } }
 /* Narrow phones: a row's eyebrow may take two lines, and its status and age are never cut. */
-@media (max-width: 359px) {
+@media (max-width: 389px) {
   .m-row__kind { flex-wrap: wrap; row-gap: 4px; white-space: normal; }
   .m-row__kind .caps { white-space: normal; overflow: visible; text-overflow: clip; }
 }
