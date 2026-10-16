@@ -1777,8 +1777,8 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 @media (max-width: 719px), (min-width: 1000px) and (max-width: 1279px) { .m-menu-btn { width: 48px; padding: 0; } .m-menu-btn__label { display: none; } }
 .m-menu-btn__dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--slate); box-shadow: 0 0 0 2px var(--panel-raised); }
 .m-menu-btn__dot.is-hot { background: var(--tally); }
-.m-iconbtn { width: 44px; height: 44px; min-height: 44px; padding: 0; flex: none; }
-.btn.btn--quiet.m-iconbtn { padding: 0; }
+.m-iconbtn { width: 44px; height: 44px; min-height: 44px; padding: var(--space-2); flex: none; }
+.btn.btn--quiet.m-iconbtn { padding: var(--space-2); }
 
 /* "Everything else": a drawer from the right, two columns on a wide screen. */
 .m-drawer-wrap { position: fixed; inset: 0; z-index: 85; }
@@ -2889,7 +2889,6 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .m-pane .journey__label { font-size: var(--fs-caps); }
 
 /* ---- Manage: fourth QA pass */
-:root { --fs-monitor: clamp(1.55rem, 1rem + 2.2vw, 2.3rem); }
 /* Keys inside cards keep their 44px (the list's min-height reset is for the fold, not for buttons). */
 .m-cards > li > .btn, .m-card.m-card--stack > .btn, .m-cards .btn { min-height: 44px; }
 .m-cards .m-card__actions .m-btn { min-height: 48px; }
@@ -2996,7 +2995,10 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 }
 /* Sentences that explain, in sheets and cards, at the body size. */
 .m-via.is-failed { font-size: var(--fs-body); font-weight: 560; }
-.m-person__meta, .m-blocked__folder { font-size: var(--fs-body); }
+.m-blocked__folder { font-size: var(--fs-body); }
+/* A card's meta line at the small size; a sentence that explains (how a reply is sent) at the body size. */
+.m-person__meta { font-size: var(--fs-small); }
+.m-person__meta--say { font-size: var(--fs-body); }
 
 /* ---- Manage: eighth QA pass */
 /* Approve and Invite to Plex press down raised, never pink. */
@@ -3017,3 +3019,19 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .measure { max-width: 65ch; }
 .form-narrow { max-width: 29rem; }
 .page.page--narrow { gap: var(--space-6); max-width: 40rem; }
+/* A title's small poster on Tickets cards, Cleanup rows and Health's blocked imports. */
+.m-thumb { flex: none; width: 38px; aspect-ratio: 2 / 3; border-radius: 4px; overflow: hidden; background: var(--panel-raised); }
+.m-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.m-ticket.has-thumb { grid-template-columns: 38px minmax(0, 1fr); column-gap: var(--space-3); align-items: start; }
+.m-ticket.has-thumb > .m-thumb { grid-row: 1 / span 4; }
+.m-ticket.has-thumb > :not(.m-thumb) { grid-column: 2; }
+.m-leaving { grid-template-columns: auto 38px minmax(0, 1fr) auto; }
+.m-card__head { display: flex; gap: var(--space-3); align-items: flex-start; }
+.m-card__head > div { display: grid; gap: var(--space-1); min-width: 0; }
+/* Notes on a page, and Sonarr's own words on a blocked import, at a reading measure. */
+.page p.muted, .m-blocked__msg { max-width: 33rem; }
+/* A busy key in the detail: its spinner takes its icon's place. */
+.m-btn[aria-busy="true"]:has(> .m-btn__spin) > svg:not(.m-btn__spin) { display: none; }
+@media (hover: hover) and (pointer: fine) { .select:hover:not(:focus) { border-color: var(--slate-ink); } }
+/* A link on its own line with a 44px hit area. */
+.link-hit { display: inline-flex; align-items: center; min-height: 44px; }

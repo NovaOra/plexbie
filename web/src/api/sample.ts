@@ -374,7 +374,7 @@ export const admin = (section: string): Promise<unknown> => {
   c.upcoming = c.upcoming.filter((r) => !isKept(r));
   // Titles kept from the search are on the server but not on the clock.
   c.exempt = [...all, ...plexTitles.filter((t) => !all.some((r) => r.ratingKey === t.ratingKey))].filter(isKept)
-    .map(({ ratingKey, title, type }) => ({ ratingKey, title, type, year: plexTitles.find((t) => t.ratingKey === ratingKey)?.year ?? null }));
+    .map(({ ratingKey, title, type }) => ({ ratingKey, title, type, year: plexTitles.find((t) => t.ratingKey === ratingKey)?.year ?? null, poster: posterOf(title) }));
   const { slow, fails, empty } = reviewKnobs();
   if (fails.includes(section)) return new Promise((_, no) => setTimeout(() => no(new Error("Plexbie didn’t answer.")), 260 + slow));
   if (empty) return wait(emptied(section, data[section]), 260 + slow);

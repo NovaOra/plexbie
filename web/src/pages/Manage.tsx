@@ -225,6 +225,7 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
   const bailTimer = useRef<number | undefined>(undefined);
   const armTimer = useRef<number | undefined>(undefined);
   const pressed = useRef(false);
+  const pressedAt = useRef(0);
   const self = useRef<HTMLButtonElement>(null);
   // The props as they are now: a hold's timer fires when the hold is done, and they may have changed by then.
   const latest = useRef({ onConfirm, disabled, busy: busy || blocked });
@@ -247,6 +248,7 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
   const start = () => {
     if (disabled || busy || blocked || pressed.current) return;
     pressed.current = true;
+    pressedAt.current = performance.now();
     setHolding(true);
     setBailed(false);
     setStage(0);
@@ -264,10 +266,10 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
       confirm();
     }, ms);
   };
-  const cancel = () => {
+  const cancel = (quietly = false) => {
     window.clearTimeout(timer.current);
     window.clearInterval(ticker.current);
-    if (pressed.current && bail) {
+    if (pressed.current && bail && !quietly) {
       setBailed(true);
       window.clearTimeout(bailTimer.current);
       bailTimer.current = window.setTimeout(() => setBailed(false), 2200);
@@ -303,10 +305,19 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
           e.currentTarget.setPointerCapture(e.pointerId);
           start();
         }}
-        onPointerUp={cancel}
-        onPointerCancel={cancel}
+        onPointerUp={() => cancel()}
+        onPointerCancel={() => cancel()}
         onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
-        onKeyUp={(e) => { if (isKey(e)) { e.preventDefault(); cancel(); } }}
+        onKeyUp={(e) => {
+          if (!isKey(e)) return;
+          e.preventDefault();
+          // A quick press and release is a click, as the description says: the first arms it,
+          // a second confirms. Held and let go early is a bail.
+          const quick = pressed.current && performance.now() - pressedAt.current < 300;
+          cancel(quick);
+          if (!quick || disabled || busy || blocked) return;
+          if (armed) { arm(false); confirm(); } else arm(true);
+        }}
         onClick={(e) => {
           if (e.detail !== 0 || pressed.current || busy || blocked) return;
           if (armed) { arm(false); confirm(); } else arm(true);
@@ -1330,6 +1341,7 @@ function CleanupTab() {
     <motion.li key={c.ratingKey} {...fold}>
       <article className="m-leaving">
         <DaysRing days={c.daysLeft} of={settings.inactivityDays} />
+        <Thumb poster={c.poster} title={c.title} kind={c.type === "show" ? "tv" : "movie"} />
         <div className="m-leaving__body">
           <h4 className="m-card__title">{c.title}</h4>
           <span className="m-person__meta">
@@ -1375,6 +1387,7 @@ function CleanupTab() {
                   <motion.li key={e.ratingKey} {...fold}>
                     <article className="m-leaving">
                       <span className="m-ring is-kept" aria-hidden><ShieldCheck size={20} /></span>
+                      <Thumb poster={e.poster} title={e.title} kind={e.type === "show" ? "tv" : "movie"} />
                       <div className="m-leaving__body">
                         <h4 className="m-card__title">{e.title}</h4>
                         <span className="muted m-person__meta">{e.type === "show" ? "TV" : e.type === "movie" ? "Film" : e.type ?? "Title"}{e.year ? ` · ${e.year}` : ""} · never removed</span>
@@ -1413,6 +1426,7 @@ function BlockedImport({ target, onDone, focusOnOpen = false }: { target: Blocke
   focusOnOpen?: boolean;
 }) {
   const head = useRef<HTMLHeadingElement>(null);
+  const doneLine = useRef<HTMLParagraphElement>(null);
   const hint = useId();
   // In the render that replaced Look inside, so focus never drops to the page in between.
   useLayoutEffect(() => { if (focusOnOpen) head.current?.focus({ preventScroll: true }); }, [focusOnOpen]);
@@ -1486,7 +1500,11 @@ function BlockedImport({ target, onDone, focusOnOpen = false }: { target: Blocke
     });
     if (!out) return;
     setDone(out.message);
-    toast({ text: "Imported", detail: out.message });
+    // The line under the files says it (and is announced); a toast only when that line is out of sight.
+    requestAnimationFrame(() => {
+      const line = doneLine.current?.getBoundingClientRect();
+      if (!line || line.bottom < 0 || line.top > window.innerHeight) toast({ text: "Imported", detail: out.message });
+    });
     onDone?.();
   };
   const pickSeries = async (s: ArrItem) => {
@@ -1606,7 +1624,7 @@ function BlockedImport({ target, onDone, focusOnOpen = false }: { target: Blocke
             ))}
           </ul>
           <p className="muted m-blocked__folder">In {p.folder}</p>
-          {done ? <p className="m-blocked__done"><Check size={16} aria-hidden /> {done}</p> : !p.ok ? (
+          {done ? <p className="m-blocked__done" ref={doneLine} role="status"><Check size={16} aria-hidden /> {done}</p> : !p.ok ? (
             <p className="m-blocked__nope">Not importable from here: sort it out in {app}{unsure ? "" : ", or delete the download"}.</p>
           ) : (
             <>
@@ -1679,8 +1697,13 @@ function BlockedList({ checks }: { checks: number }) {
           const key = `${r.app}:${r.downloadId}`;
           return (
             <li key={key} className="m-card m-card--stack">
-              <p className="m-card__eyebrow">{r.app === "sonarr" ? "Sonarr" : "Radarr"} · import blocked{r.episodes.length ? ` · ${r.episodes.join(", ")}` : ""}</p>
-              <h4 className="m-card__title">{r.title}{r.year ? <span className="muted"> ({r.year})</span> : null}</h4>
+              <div className="m-card__head">
+                <Thumb poster={r.poster} title={r.title} kind={r.app === "sonarr" ? "tv" : "movie"} />
+                <div>
+                  <p className="m-card__eyebrow">{r.app === "sonarr" ? "Sonarr" : "Radarr"} · import blocked{r.episodes.length ? ` · ${r.episodes.join(", ")}` : ""}</p>
+                  <h4 className="m-card__title">{r.title}{r.year ? <span className="muted"> ({r.year})</span> : null}</h4>
+                </div>
+              </div>
               {open === key ? <BlockedImport target={r} onDone={() => window.setTimeout(() => void load(), 1500)} focusOnOpen /> : (
                 <button type="button" className="btn m-btn" onClick={() => setOpen(key)}>Look inside</button>
               )}
@@ -2149,6 +2172,7 @@ function DiscordTab() {
   const { data, refresh, toast, readOnly } = useManage();
   const { act } = useAct();
   const d = data.discord;
+  const [checking, setChecking] = useState(false);
   const [channel, setChannel] = useState("");
   const [text, setText] = useState("");
   const [pings, setPings] = useState(false);
@@ -2187,7 +2211,10 @@ function DiscordTab() {
         ) : (
           <p className="muted">No watch party right now. One starts on its own when someone streams Plex in the Watch Party voice channel.</p>
         )}
-        <button type="button" className="btn btn--quiet m-btn" style={{ justifySelf: "start" }} onClick={() => void refresh("discord")}><RefreshCw size={16} aria-hidden /> Check again</button>
+        <button type="button" className="btn btn--quiet m-btn" style={{ justifySelf: "start" }} aria-disabled={checking || undefined} aria-busy={checking || undefined}
+          onClick={async () => { if (checking) return; setChecking(true); try { await refresh("discord"); } finally { setChecking(false); } }}>
+          <RefreshCw size={16} aria-hidden className={checking ? "m-spin" : undefined} /> {checking ? "Checking…" : "Check again"}
+        </button>
       </section>
 
       <section className="section" id="m-part-dms">
@@ -2426,7 +2453,7 @@ function Conversation({ person, onBack, inPane = false, reply = 0, onTyped }: {
           readOnly={sending} onChange={(e) => { setText(e.target.value); setEmpty(false); onTyped?.(!!e.target.value.trim()); }} placeholder={`Message ${person.name} as Plexbie`}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.repeat) void send(e); }} />
         <div className="m-chat__send">
-          {text ? <span /> : <span className="muted m-person__meta">{discord ? "A Discord DM from Plexbie" : "A phone alert, else an email"}, signed “— {me} (admin)”</span>}
+          {text ? <span /> : <span className="muted m-person__meta m-person__meta--say">{discord ? "A Discord DM from Plexbie" : "A phone alert, else an email"}, signed “— {me} (admin)”</span>}
           {/* Quiet until there's something to send: then it's the one pink key. */}
           <button type="submit" className={`btn${text.trim() ? " btn--primary" : " btn--quiet"} m-btn`} disabled={readOnly} aria-disabled={sending || undefined} aria-busy={sending || undefined}>
             {sending ? "Sending…" : "Send as Plexbie"}
@@ -2793,7 +2820,7 @@ function RequestBody({ id, res, head = true, onLeave, quiet = false }: {
               <label className="field__label" htmlFor={`${titleId}-msg`}>Message to {r.requester}</label>
               <textarea id={`${titleId}-msg`} className="m-textarea m-textarea--reply" rows={3} maxLength={600} value={message}
                 onChange={(e) => setMessage(e.target.value)} />
-              <span className="muted m-person__meta">Sent the usual way (a Discord DM, or an alert). They can answer it.</span>
+              <span className="muted m-person__meta m-person__meta--say">Sent the usual way (a Discord DM, or an alert). They can answer it.</span>
             </>
           ) : null}
           <div className="m-person__actions m-person__actions--two">
@@ -2910,10 +2937,17 @@ function TicketsTab() {
   );
 }
 
+/** A title's 38×54 poster on a card or row (a drawn cover when there's none). */
+function Thumb({ poster, title, kind }: { poster?: string | null; title: string; kind: string }) {
+  return <span className="m-thumb"><Art title={{ poster: poster ?? null, title, kind: kind as never }} size="w185" width={38} height={54} /></span>;
+}
+
 function TicketRow({ t, onOpen }: { t: AdminTicketRow; onOpen: () => void }) {
   const state = ticketState(t);
+  const titled = t.subject !== "general" && !!t.title;
   return (
-    <button type="button" className={`m-ticket is-${state.tone}`} onClick={onOpen}>
+    <button type="button" className={`m-ticket is-${state.tone}${titled ? " has-thumb" : ""}`} onClick={onOpen}>
+      {titled ? <Thumb poster={t.poster} title={t.title} kind={t.kind || "movie"} /> : null}
       <span className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} · {since(t.updatedAt)}</span>
       <span className="m-ticket__title">{ticketTitle(t)}{seasonsWords(t.seasons) ? <span className="muted"> · {seasonsWords(t.seasons)}</span> : null}</span>
       <span className="m-ticket__reason">{t.reason}</span>
@@ -3415,9 +3449,10 @@ function ToastHost({ register }: { register: (push: (t: ToastIn) => void) => voi
 
 type DeskView = "needs" | "waiting" | "done";
 const VIEW_LABEL: Record<DeskView, string> = { needs: "Needs you", waiting: "Waiting on them", done: "Done" };
-const GROUP_HEAD: Record<Group, { label: string; rule: string }> = {
-  urgent: { label: "Urgent", rule: "Can’t wait" },
-  today: { label: "Today", rule: "Longest wait first" },
+/** `quiet`: the order is plain from the heading, so it's only said to screen readers. */
+const GROUP_HEAD: Record<Group, { label: string; rule: string; quiet?: boolean }> = {
+  urgent: { label: "Urgent", rule: "Can’t wait", quiet: true },
+  today: { label: "Today", rule: "Longest wait first", quiet: true },
   soon: { label: "Coming up", rule: "Soonest deadline first" },
   waiting: { label: "Waiting on them", rule: "They owe you an answer" },
   done: { label: "Done · last 2 days", rule: "Newest first" },
@@ -3711,7 +3746,7 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
         if (guarded && busy) return;
         const pane = e.currentTarget.closest<HTMLElement>(".m-pane");
         void Promise.resolve(onClick()).then(() => keepFocusIn(pane));
-      }}>{label}</button>;
+      }}>{guarded && busy ? <RefreshCw size={16} aria-hidden className="m-spin m-btn__spin" /> : null}{label}</button>;
   const pill = (label: ReactNode, onClick: () => void) =>
     <button type="button" className="btn btn--quiet m-btn" onClick={onClick}>{label}</button>;
   switch (src.type) {
@@ -4133,7 +4168,7 @@ function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
               if (!rows.length) return null;
               return (
                 <section key={g} className={`m-group m-group--${g}`} aria-labelledby={`m-group-${g}`}>
-                  <div className="m-group__head"><h3 id={`m-group-${g}`}>{GROUP_HEAD[g].label}</h3><span className="m-group__count">{rows.length}</span><span className="m-group__rule">{GROUP_HEAD[g].rule}</span></div>
+                  <div className="m-group__head"><h3 id={`m-group-${g}`}>{GROUP_HEAD[g].label}</h3><span className="m-group__count">{rows.length}</span><span className={GROUP_HEAD[g].quiet ? "visually-hidden" : "m-group__rule"}>{GROUP_HEAD[g].rule}</span></div>
                   <ul className="m-rows2">
                     {rows.map((item) => (
                       <QueueRow key={item.key} item={item} selected={wide && current?.key === item.key} onSelect={() => select(item, true)}
