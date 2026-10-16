@@ -25,7 +25,7 @@ function Gate({ children }: { children: ReactNode }) {
   const { session } = useSession();
   if (!session) return <Landing />;
   if (!session.member) return <Join />;
-  return <Suspense fallback={<div className="shell page page--loading" aria-busy="true"><div className="skeleton" style={{ height: 48, width: "40%" }} /></div>}>{children}</Suspense>;
+  return <Suspense fallback={<div className="shell page page--loading" aria-busy="true"><div className="skeleton page-loading__title" /></div>}>{children}</Suspense>;
 }
 
 /** Old addresses (/app/...) from before the household moved to the root: links in

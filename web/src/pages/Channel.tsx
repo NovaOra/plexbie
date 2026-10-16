@@ -27,7 +27,7 @@ export function Channel() {
             <p className="muted text-small">All-time watch time, watch parties included. The top three, not counting the server’s owner, are never removed for inactivity.</p>
             {community.loading ? (
               <div className="ranks" aria-busy="true" aria-label="Loading the board">
-                {Array.from({ length: 5 }, (_, i) => <div key={i} className="skeleton" style={{ height: 48 }} />)}
+                {Array.from({ length: 5 }, (_, i) => <div key={i} className="skeleton rank-skeleton" />)}
               </div>
             ) : community.error ? (
               <OffAir compact onRetry={community.reload}>Couldn’t load the board just now.</OffAir>
@@ -51,6 +51,8 @@ export function Channel() {
         </div>
 
         <div className="stack stack--12">
+          {/* "You" holds its place while the board loads, so the section under it doesn't move. */}
+          {community.loading ? <section className="section" aria-busy="true" aria-label="Loading your figures"><div className="skeleton channel-you-skeleton" /></section> : null}
           {you ? (
             <Section id="you-h" title="You">
               <div className="figures">

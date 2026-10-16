@@ -234,7 +234,7 @@ export function OnAirNow({ community, limit }: { community: Loaded<Community>; l
   return (
     <Section id="air-h" title="On air now" action={limit ? <Link to="/channel">Channel</Link> : null}>
       {community.loading ? (
-        <div className="skeleton" style={{ height: 200 }} />
+        <div className="onair" aria-hidden>{Array.from({ length: Math.min(limit ?? 3, 3) }, (_, i) => <div key={i} className="skeleton onair-skeleton" />)}</div>
       ) : community.error ? (
         <OffAir compact onRetry={community.reload}>Couldn’t see who’s watching right now.</OffAir>
       ) : rows.length ? (
@@ -308,10 +308,12 @@ export function Home() {
       ) : (
         <section className="stage stage--compact stage--bare" aria-busy="true" aria-label="Just arrived on Plex">
           <div className="shell stage__inner">
+            {/* The loaded channel's shape (strap, one line of title, the rail of titles), so nothing moves when it arrives. */}
             <div className="stage__feature">
-              <div className="skeleton" style={{ height: 34, width: 220 }} />
-              <div className="skeleton" style={{ height: "3.2rem", width: "60%" }} />
+              <div className="stage__strapline"><div className="skeleton stage__strap-skeleton" /></div>
+              <span className="stage__title stage__title--skeleton skeleton" aria-hidden>{"\u00a0"}</span>
             </div>
+            <div className="stage__channels" aria-hidden><div className="skeleton stage__rail-skeleton" /></div>
           </div>
         </section>
       )}

@@ -102,6 +102,7 @@
   /* The widest the page's content runs; bands behind it still go edge to edge. */
   --shell: 1200px;
   --gutter: 16px;
+  --masthead-h: 61px;
   /* The page's side padding: the gutter, or more where a phone held sideways
      puts the notch or rounded corners. */
   --pad-l: max(var(--gutter), env(safe-area-inset-left));
@@ -298,7 +299,13 @@ p { margin: 0; text-wrap: pretty; }
 }
 
 /* A page still loading holds the screen, so the footer doesn't flash up and jump away. */
-.page--loading { min-height: 100vh; }
+.page--loading { min-height: calc(100svh - var(--masthead-h)); }
+.page-loading__title { height: 48px; width: 40%; }
+/* The page fills the screen under the masthead from its first paint, so the footer starts below
+   the fold: content arriving never pushes a visible footer down (layout shift). */
+#main { min-height: calc(100svh - var(--masthead-h)); }
+/* Under a stage the masthead floats over the page, so the page is the whole screen. */
+.has-stage #main { min-height: 100svh; }
 .split { display: grid; gap: 48px; }
 .page > *, .split > *, .split > * > * { min-width: 0; }
 html, body { overflow-x: clip; }

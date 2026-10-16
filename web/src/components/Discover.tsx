@@ -57,8 +57,18 @@ function GenreShelf({ kind, id, heading }: { kind: "movie" | "tv"; id: number; h
   return <Shelf kind={kind} shelf={{ key: `genre-${id}`, title: heading, titles: first.data.titles, more: first.data.more }} />;
 }
 
+/** A shelf while it loads, in the loaded one's shape (its heading row, posters and captions), so nothing moves when it fills in. */
 function Skeletons() {
-  return <div className="popular__list">{Array.from({ length: 6 }, (_, i) => <div key={i} className="skeleton popular__skeleton" />)}</div>;
+  return (
+    <div className="popular__row" aria-hidden>
+      <div className="popular__rowhead"><span className="skeleton popular__kind-skeleton" /></div>
+      <div className="popular__list">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="popular__item"><div className="skeleton popular__skeleton" /><div className="popular__caption-skeleton" /></div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /** Language: a small dropdown of checkboxes, saved to their account (the app shows the same). */
@@ -133,11 +143,12 @@ export function RequestView({ q, type, setType }: { q: string; type: RequestType
       <select className="select" value={type} aria-label="Type" onChange={(e) => setType(e.target.value as RequestType)}>
         {TYPES.map(([t, label]) => <option key={t} value={t}>{label}</option>)}
       </select>
-      {browsing && prefs.data?.languageOptions?.length ? (
-        <LanguagePick chosen={chosen} options={prefs.data.languageOptions} onChange={(next) => void pickLanguages(next)} />
+      {/* Both filters are there from the first paint (Genre waits for the shelves), so the row never reflows. */}
+      {browsing && (prefs.loading || prefs.data?.languageOptions?.length) ? (
+        <LanguagePick chosen={chosen} options={prefs.data?.languageOptions ?? []} onChange={(next) => void pickLanguages(next)} />
       ) : null}
-      {browsing && genres.length ? (
-        <select className="select" value={genre} aria-label="Genre" onChange={(e) => setGenre(e.target.value)}>
+      {browsing ? (
+        <select className="select" value={genre} aria-label="Genre" disabled={!genres.length} onChange={(e) => setGenre(e.target.value)}>
           <option value="">Any genre</option>
           {genres.map((g) => <option key={g} value={g}>{g}</option>)}
         </select>
