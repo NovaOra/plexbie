@@ -2923,6 +2923,8 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .m-avatar { font-size: var(--fs-caps); }
 .m-avatar--big { font-size: var(--fs-h3); }
 /* At the caps size every word of every step fits its 76px box ("Downloading" too): a little narrower and closer set. */
+/* The last step's label wraps narrower, so it keeps clear of the one before ("On the shelf" after "Shelving"). */
+@container (min-width: 440px) { .m-pane .journey .journey__step:last-child .journey__label { max-width: 56px; } }
 .m-pane .journey__label { font-size: var(--fs-caps); font-stretch: 68%; letter-spacing: 0.02em; }
 
 /* ---- Manage: fourth QA pass */

@@ -303,9 +303,10 @@ export function Journey({ stage, compact = false, steps, kind, intro = false }: 
   useEffect(() => { mounted.current = true; }, []);
   const build = intro && !reduced;
   const labels = steps ?? STEPS.map((s) => (s.id === "available" ? `On ${homeOf(kind)}` : s.id === "importing" ? `Adding to ${homeOf(kind)}` : s.label));
-  // Under a book's nodes, words that fit them ("Audiobookshelf" doesn't); the full names are what's said.
+  // Under a book's nodes, words that fit them ("Audiobookshelf" doesn't, and "Adding to shelf" ran into
+  // "On the shelf"); the full names are what's said.
   const book = !steps && homeOf(kind) === "Audiobookshelf";
-  const shown = book ? labels.map((l, n) => (STEPS[n]?.id === "available" ? "On the shelf" : STEPS[n]?.id === "importing" ? "Adding to shelf" : l)) : labels;
+  const shown = book ? labels.map((l, n) => (STEPS[n]?.id === "available" ? "On the shelf" : STEPS[n]?.id === "importing" ? "Shelving" : l)) : labels;
   const declined = stage === "declined";
   const step: Record<string, number> = { requested: 0, approved: 1, upcoming: 1, searching: 1, downloading: 2, unpacking: 3, importing: 4, available: 5 };
   const at = typeof stage === "number" ? stage : declined ? 0 : step[stage] ?? 0;
