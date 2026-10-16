@@ -3130,13 +3130,15 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 /* The "On air now" strip while it loads, at its loaded height (it wraps to two rows on a phone). */
 .now-skeleton { height: 38px; width: 280px; max-width: 100%; }
 @media (max-width: 532px) { .now, .now-skeleton { min-height: 76px; } }
-/* A short phone screen (an iPhone SE, say): the channel starts closer under the masthead. */
-@media (max-width: 359px) and (max-height: 600px) { .stage .stage__inner, .stage--bare .stage__inner { padding-top: 32px; } }
+/* A short phone screen (an iPhone SE, say): the channel starts closer under the masthead, but 16px
+   clear of it (the masthead sits over the channel). */
+@media (max-width: 359px) and (max-height: 600px) { .stage .stage__inner, .stage--bare .stage__inner { padding-top: calc(var(--masthead-h, 61px) + var(--space-4)); } }
 /* Home's channel held at its skeleton's height (what's new came back empty after a wait, or not at
    all): the channel fills the hold, its words in the middle, so there's no band under it. */
 .home__stage.is-held { display: grid; }
 .home__stage.is-held > .stage { min-height: 100%; }
-.home__stage.is-held > .stage--bare .stage__inner { align-content: center; padding-top: 0; }
+/* Its words are centred in the room under the masthead (which sits over the top of the channel). */
+.home__stage.is-held > .stage--bare .stage__inner { align-content: center; padding-top: calc(var(--masthead-h, 61px) + var(--space-4)); }
 /* The strap: when, then (after a dot) what it is. Under 400px they stack in the strap's two lines. */
 .stage__strapline .strap__bar { gap: 4px; align-items: first baseline; }
 /* The dot rides on the time, so a detail that wraps to the next line doesn't start with one. */
@@ -3163,5 +3165,6 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
    A held channel with titles keeps them at the left (centred, each title would move it sideways). */
 .home__stage.is-held .stage--bare .stage__inner:not(:has(.stage__title)) { justify-items: center; text-align: center; gap: var(--space-3); }
 .home__stage.is-held .mascot { width: 96px; height: 96px; }
+@media (max-width: 359px), (max-height: 639px) { .home__stage.is-held .mascot { width: 64px; height: 64px; border-radius: 16px; } }
 .home__stage.is-held .off-air { justify-items: center; }
 .stage--bare .strap { max-width: 560px; }
