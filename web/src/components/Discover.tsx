@@ -228,7 +228,15 @@ export function RequestView({ q, type, setType }: { q: string; type: RequestType
 /** On a title page: Seerr's recommendations for it, if it has any. */
 export function MoreLikeThis({ kind, id }: { kind: "movie" | "tv"; id: string }) {
   const s = useLoad(() => api.similar(kind, id), [kind, id]);
-  if (s.loading || s.error || !s.data?.length) return null;
+  // While it loads, its heading and a shelf's shape hold the place it will take; it goes only if there's nothing.
+  if (s.loading) {
+    return (
+      <Section id="similar-h" title="More like this" className="popular" busy>
+        <Skeletons />
+      </Section>
+    );
+  }
+  if (s.error || !s.data?.length) return null;
   return (
     <Section id="similar-h" title="More like this" className="popular">
       <Row heading={kind === "movie" ? "Films" : "Shows"} titles={s.data} ranked={false} />
