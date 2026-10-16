@@ -6,19 +6,39 @@ import { alertState, sendTest, turnOff, turnOn, type AlertState } from "../api/a
 import { useSession } from "./Layout";
 import { useTitle } from "./ui";
 
+type Device = "android" | "ios" | "other";
+
+/** Which phone this is, for which key leads on the Alerts page. */
+function deviceKind(): Device {
+  const ua = navigator.userAgent;
+  if (/android/i.test(ua)) return "android";
+  if (/iphone|ipad|ipod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) return "ios";
+  return "other";
+}
+
+/** The page's one pink key goes to what this device can use; the rest are outline keys. */
+const keyClass = (lead: boolean) => `btn${lead ? " btn--primary" : " btn--quiet alerts__key"} m-btn`;
+
 /**
  * Turn phone alerts on or off. Discord members already get DMs; this is how
  * everyone else hears that a request arrived or that their access needs a watch.
  */
-export function AlertsPanel({ compact = false }: { compact?: boolean }) {
+export function AlertsPanel({ compact = false, known, lead = true, device = deviceKind() }: {
+  compact?: boolean;
+  /** Already looked up (the Alerts page waits for it, so nothing moves when it arrives). */
+  known?: AlertState | null;
+  /** Its Turn on key is the page's pink one. */
+  lead?: boolean;
+  device?: Device;
+}) {
   const { session } = useSession();
-  const [state, setState] = useState<AlertState | null>(null);
+  const [state, setState] = useState<AlertState | null>(known ?? null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   const viaDiscord = session?.user.via === "discord";
   const who = session?.user.id ?? "";
 
-  useEffect(() => { alertState(who).then(setState, () => setState("unsupported")); }, [who]);
+  useEffect(() => { if (!known) alertState(who).then(setState, () => setState("unsupported")); }, [who, known]);
 
   const run = async (fn: () => Promise<AlertState | string>) => {
     setBusy(true);
@@ -41,7 +61,7 @@ export function AlertsPanel({ compact = false }: { compact?: boolean }) {
     <section className={`alerts${state === "on" ? " is-on" : ""}`} aria-labelledby="alerts-h">
       <span className="alerts__icon" aria-hidden>{state === "on" ? <BellRing size={22} /> : state === "blocked" ? <BellOff size={22} /> : <Bell size={22} />}</span>
       <div className="alerts__body">
-        <h2 id="alerts-h" className="h3">{state === "on" ? "Alerts are on" : "Get alerts on this phone"}</h2>
+        <h2 id="alerts-h" className="h3">{state === "on" ? "Alerts are on" : device === "other" ? "Get alerts on this device" : "Get alerts on this phone"}</h2>
         {state === "install-first" ? (
           <p className="muted">
             On iPhone or iPad, alerts work once Plexbie is on your Home Screen: tap <Share size={14} aria-label="Share" /> in Safari,
@@ -60,7 +80,7 @@ export function AlertsPanel({ compact = false }: { compact?: boolean }) {
         {state === "off" || state === "on" ? (
           <div className="alerts__actions">
             {state === "off" ? (
-              <button type="button" className="btn btn--primary m-btn" disabled={busy || !!session?.preview} onClick={() => run(() => turnOn(who))}>
+              <button type="button" className={keyClass(lead)} disabled={busy || !!session?.preview} onClick={() => run(() => turnOn(who))}>
                 <Bell size={18} aria-hidden /> {busy ? "Turning on…" : "Turn on alerts"}
               </button>
             ) : (
@@ -80,30 +100,46 @@ export function AlertsPanel({ compact = false }: { compact?: boolean }) {
 /** The full page, reachable from the account menu. */
 export function AlertsPage() {
   useTitle("Alerts");
-  // One look at the newest release, for both apps.
-  const [app, setApp] = useState<AppRelease | null>(null);
+  const { session } = useSession();
+  const who = session?.user.id ?? "";
+  const [device] = useState(deviceKind);
+  // One look at the newest release, for both apps, and at this device's alerts: the page shows
+  // once it knows both, so nothing moves in under the reader.
+  const [app, setApp] = useState<AppRelease | null | undefined>(undefined);
+  const [alerts, setAlerts] = useState<AlertState | null>(null);
   useEffect(() => {
     let live = true;
-    api.appLatest().then((a) => { if (live) setApp(a); }).catch(() => undefined);
+    api.appLatest().then((a) => { if (live) setApp(a); }, () => { if (live) setApp(null); });
+    alertState(who).then((s) => { if (live) setAlerts(s); }, () => { if (live) setAlerts("unsupported"); });
     return () => { live = false; };
-  }, []);
+  }, [who]);
+  const ready = app !== undefined && alerts !== null;
   return (
     <div className="shell page page--narrow">
       <h1 className="display page-title">Alerts</h1>
-      <AlertsPanel />
-      <AppDownload app={app} />
-      <IphoneApp app={app} />
-      <p className="muted text-small">
-        Alerts come from this site itself, with no outside service involved. They’re per device: turn them on in each
-        phone or browser you want them in.
-      </p>
+      {ready ? (
+        <>
+          <AlertsPanel known={alerts} device={device} lead={device === "other"} />
+          <AppDownload app={app ?? null} lead={device === "android"} />
+          <IphoneApp app={app ?? null} lead={device === "ios"} />
+          <p className="muted text-small">
+            Alerts come from this site itself, with no outside service involved. They’re per device: turn them on in each
+            phone or browser you want them in.
+          </p>
+        </>
+      ) : (
+        <div className="alerts-wait" aria-busy="true" aria-label="Loading">
+          <div className="skeleton alerts-wait__card" />
+          <div className="skeleton alerts-wait__card" />
+        </div>
+      )}
     </div>
   );
 }
 
 /** The Android app, for members: its latest version, what's new, and a download
  *  link that's good for ten minutes (the server signs it; the file isn't public). */
-export function AppDownload({ app }: { app: AppRelease | null }) {
+export function AppDownload({ app, lead = true }: { app: AppRelease | null; lead?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
   if (!app) return null;
@@ -134,7 +170,7 @@ export function AppDownload({ app }: { app: AppRelease | null }) {
         </p>
         {whatsNew.length ? <ul className="app-new">{whatsNew.map((l) => <li key={l}>{l}</li>)}</ul> : null}
         <div className="alerts__actions">
-          <button type="button" className="btn btn--primary m-btn" disabled={busy} onClick={() => void download()}>
+          <button type="button" className={keyClass(lead)} disabled={busy} onClick={() => void download()}>
             <Download size={18} aria-hidden /> {busy ? "Getting the link…" : `Download ${app.version}`}
           </button>
         </div>
@@ -149,7 +185,7 @@ export function AppDownload({ app }: { app: AppRelease | null }) {
  *  keeps it signed. Each member gets their own source address, which SideStore checks
  *  for updates; it stops working if they're no longer on the household's Plex, or
  *  once they replace it (a copy got out, say). */
-export function IphoneApp({ app }: { app: AppRelease | null }) {
+export function IphoneApp({ app, lead = true }: { app: AppRelease | null; lead?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
   const [note, setNote] = useState("");
@@ -230,7 +266,7 @@ export function IphoneApp({ app }: { app: AppRelease | null }) {
           </li>
         </ol>
         <div className="alerts__actions">
-          <button type="button" className="btn btn--primary m-btn" disabled={busy} onClick={() => void source("sidestore")}>
+          <button type="button" className={keyClass(lead)} disabled={busy} onClick={() => void source("sidestore")}>
             <Download size={18} aria-hidden /> Add to SideStore
           </button>
           <button type="button" className="btn m-btn" disabled={busy} onClick={() => void source("altstore")}>
