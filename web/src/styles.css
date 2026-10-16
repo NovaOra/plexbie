@@ -2324,7 +2324,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 /* Before looking inside (Manage's detail pane): what Sonarr or Radarr said, and the way in. */
 .m-blocked--summary { gap: 8px; padding: 12px 16px; border-color: var(--rule); background: none; }
 .m-blocked--summary h3 { font-size: var(--fs-h3); font-weight: 760; font-stretch: 88%; }
-.m-blocked__release { margin: 0; font: 0.9rem/1.75 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--slate-ink); overflow-wrap: anywhere; }
+.m-blocked__release { margin: 0; font: 0.9rem/1.75 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--slate-ink); overflow-wrap: break-word; }
 .m-blocked__msg { margin: 0; padding-left: 12px; border-left: 2px solid var(--rule); font-size: var(--fs-body); }
 .m-blocked__acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
 .m-blocked__acts .muted { font-size: var(--fs-small); }
@@ -2878,8 +2878,47 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 }
 .m-check input:checked, .m-blocked__skip input:checked {
   border-color: var(--screen);
+  /* The tick's stroke %23141b30 = --on-screen. */
   background: var(--screen) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m5 12 5 5L20 7' fill='none' stroke='%23141b30' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat;
 }
 .m-check input:focus-visible, .m-blocked__skip input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 /* "Show": a visible label beside the select. */
 .m-show { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--slate-ink); }
+
+/* ---- Manage: fifth QA pass */
+/* Segmented controls: the chosen option is a raised face with a screen-pink line along its foot, never a pink fill. */
+.m-seg__pill { background: var(--panel-raised); box-shadow: inset 0 -2px 0 var(--screen), var(--key-highlight); }
+.m-seg .m-seg__item[aria-pressed="true"] { color: var(--ink); }
+/* A pink key that can't be used right now (another key on the ticket is running): flat and slate, like a disabled key. */
+.btn--primary[aria-disabled="true"]:not([aria-busy="true"]), .m-btn--go[aria-disabled="true"]:not([aria-busy="true"]) {
+  --btn-bg: var(--panel-raised); --btn-fg: var(--slate-ink); --lip: var(--key-lip); box-shadow: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn--primary[aria-disabled="true"]:not([aria-busy="true"]):hover, .m-btn--go[aria-disabled="true"]:not([aria-busy="true"]):hover { --btn-bg: var(--panel-raised); }
+  .m-check input:not(:checked):hover, .m-blocked__skip input:not(:checked):hover { border-color: var(--slate-ink); }
+}
+/* Phone rows: the reason leaves the title for the line under it, which may take two lines. */
+.m-row__subline { display: none; }
+@media (max-width: 480px) { .m-row__title .m-row__sub { display: none; } .m-row__subline { display: inline; } }
+/* Settings rows at a reading measure. */
+.m-set-row > span:first-child { max-width: 40rem; }
+/* Narrow phones: the composer's tabs and the monitors use their short names (the full ones are their labels). */
+.m-tab__short, .m-mon__short { display: none; }
+@media (max-width: 359px) {
+  .m-tab__long, .m-mon__name { display: none; }
+  .m-tab__short, .m-mon__short { display: inline; }
+}
+/* A field that's wrong has a tally edge. */
+.field input[aria-invalid="true"], .field textarea[aria-invalid="true"], .m-textarea[aria-invalid="true"] { border-color: var(--tally); }
+/* A failed feed's notice at a reading measure. */
+.m-queue__notice .field__error { max-width: 65ch; }
+/* Segmented controls on a phone: tight gaps, centred words, the count inside the pill; one line from 361px. */
+@media (max-width: 480px) { .m-seg__item { gap: 4px; text-align: center; } .m-seg__item .m-seg__n { margin-left: 4px; } }
+@media (min-width: 361px) { .m-seg__item { white-space: nowrap; } }
+/* People on a phone: one column, a 40px avatar on the name's row. */
+@media (max-width: 480px) {
+  .m-person { grid-template-columns: 40px minmax(0, 1fr); align-items: start; }
+  .m-person > .m-avatar--big { width: 40px; height: 40px; font-size: var(--fs-body); }
+  .m-person__body { grid-column: 2; }
+  .m-person__actions, .m-person__actions--keep { grid-column: 1 / -1; }
+}
