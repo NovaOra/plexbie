@@ -221,7 +221,7 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
                 <span className="strap__tab"><Play aria-hidden />Just arrived</span>
                 {/* When first, whole; what it is after, at most two lines. */}
                 <span className="strap__bar"><span className="strap__when">{since(current.addedAt)}</span>
-                  {current.detail ? <span className="strap__detail">· {current.detail}</span> : null}</span>
+                  {current.detail ? <span className="strap__detail">{current.detail}</span> : null}</span>
               </div>
               {items.length > 1 && !reduced ? (
                 <button type="button" ref={pauseKey} className="stage__pause" aria-pressed={stopped}
