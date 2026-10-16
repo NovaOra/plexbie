@@ -319,8 +319,8 @@ def test_general_tickets_are_capped_and_only_their_member_lists_and_answers_them
     # "can't get in" first, whatever the words say.
     assert {r["reasonCode"] for r in tickets["rows"]} == {"access", "episodes"}
     assert detail["subject"] == "general" and detail["request"] is None and detail["plexUrl"] is None
-    assert searched[0] == {"ok": False, "message": "This ticket isn't about one film or show Plexbie can look up, so there's nothing to search for"}
-    assert searched[1] == {"ok": False, "message": "Sonarr isn't set up"}
+    assert searched[0] == {"ok": False, "message": "This ticket isn’t about one film or show Plexbie can look up, so there’s nothing to search for"}
+    assert searched[1] == {"ok": False, "message": "Sonarr isn’t set up"}
     # Request-only places never see them.
     assert request_help == {} and my_requests == []
 

@@ -364,10 +364,10 @@ async def note_search(hid: str, actor: str, what: str) -> None:
 async def _series_for(services, rec: dict) -> dict:
     media = (rec or {}).get("media") or {}
     if not services.sonarr.configured:
-        raise LookupError("Sonarr isn't set up")
+        raise LookupError("Sonarr isn’t set up")
     series = next((s for s in await services.sonarr.series() if s.get("tmdbId") == media.get("id")), None)
     if not series:
-        raise LookupError("It isn't in Sonarr yet")
+        raise LookupError("It isn’t in Sonarr yet")
     return series
 
 
@@ -382,10 +382,10 @@ async def _seasons_for(services, rec: dict, series: dict) -> list:
 async def _movie_for(services, rec: dict) -> dict:
     from core.verified_search import find_movie
     if not services.radarr.configured:
-        raise LookupError("Radarr isn't set up")
+        raise LookupError("Radarr isn’t set up")
     movie = await find_movie(services.radarr, ((rec or {}).get("media") or {}).get("id"))
     if not movie:
-        raise LookupError("It isn't in Radarr yet")
+        raise LookupError("It isn’t in Radarr yet")
     return movie
 
 
@@ -398,7 +398,7 @@ def search_target(h: dict) -> Any:
     if subject == "title" and str(h.get("tmdb") or "").isdigit() and h.get("kind") in ("movie", "tv"):
         return {"media": {"id": int(h["tmdb"]), "media_type": h["kind"],
                           "title" if h["kind"] == "movie" else "name": h.get("title") or ""}, "seasons": None}
-    raise LookupError("This ticket isn't about one film or show Plexbie can look up, so there's nothing to search for")
+    raise LookupError("This ticket isn’t about one film or show Plexbie can look up, so there’s nothing to search for")
 
 
 async def _record(target: Any) -> dict:
@@ -451,7 +451,7 @@ async def search_episodes(services, target: Any, on_nothing=None) -> str:
     rec = await _record(target)
     media = (rec or {}).get("media") or {}
     if media.get("media_type") != "tv":
-        raise LookupError("That's for shows only")
+        raise LookupError("That’s for shows only")
     series = await _series_for(services, rec)
     seasons = await _seasons_for(services, rec, series)
     if not seasons:
@@ -469,7 +469,7 @@ async def search_by_name(services, target: Any, on_done) -> str:
     rec = await _record(target)
     media = (rec or {}).get("media") or {}
     if not services.hydra.configured:
-        raise LookupError("NZBHydra isn't set up, so Plexbie can't search by name")
+        raise LookupError("NZBHydra isn’t set up, so Plexbie can’t search by name")
     if media.get("media_type") == "movie":
         movie = await _movie_for(services, rec)
         title = movie.get("title") or "It"
@@ -508,7 +508,7 @@ async def name_search_for_help(services, hid: str, actor: str, tell=None) -> str
     and grabbed: the help request is resolved."""
     h = await kv_get(NAMESPACE, hid)
     if not isinstance(h, dict) or h.get("status") != "open":
-        raise LookupError("That help request isn't open any more")
+        raise LookupError("That help request isn’t open any more")
 
     async def done(text: str, found: bool) -> None:
         await note_search(hid, "Plexbie", text)

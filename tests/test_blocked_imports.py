@@ -87,7 +87,7 @@ def test_a_blocked_download_opens_a_ticket_once_and_closes_it_when_imported():
     opened, told = [], []
 
     async def open_help(bot, key, *, seasons, reason, note, status_now, offer=None, admin_note=None):
-        assert reason == "blocked" and "won't import it by itself" in note and "Look at the files" not in note
+        assert reason == "blocked" and "won’t import it by itself" in note and "Look at the files" not in note
         told.append(admin_note)
         h = await helpdesk.create(request_key=str(key), slot=1, title="East of Eden", kind="tv", seasons=None,
                                   user={"user": {"name": "Sam"}}, reason=helpdesk.PLEXBIE_REASONS[reason],

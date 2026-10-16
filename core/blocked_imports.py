@@ -348,10 +348,10 @@ async def check(bot, services) -> None:
         if key in known:
             continue
         app_name = "Sonarr" if item["app"] == "sonarr" else "Radarr"
-        why = item["messages"][0] if item["messages"] else "it wasn't sure of the files"
+        why = item["messages"][0] if item["messages"] else "it wasn’t sure of the files"
         look = ("Look at the files on this ticket before you import it: a blocked import can be the wrong "
-                "episode, the wrong film, or something that shouldn't be there.")
-        note = f"{item['title']} finished downloading, but {app_name} won't import it by itself: {why} {look}"
+                "episode, the wrong film, or something that shouldn’t be there.")
+        note = f"{item['title']} finished downloading, but {app_name} won’t import it by itself: {why} {look}"
         blocked_ref = {"app": item["app"], "downloadId": item["downloadId"]}
         req = await _request_for(item)
         h = None
@@ -360,7 +360,7 @@ async def check(bot, services) -> None:
             # Radarr said (release names, server paths) and what to check go on an entry
             # only admins see. The admin channel still hears all of it.
             h = await season_search.open_help(bot, req, seasons=None, reason="blocked",
-                                              note=f"{item['title']} finished downloading, but {app_name} won't import it by itself. An admin will check it.",
+                                              note=f"{item['title']} finished downloading, but {app_name} won’t import it by itself. An admin will check it.",
                                               status_now="Downloaded, import blocked", admin_note=note)
             if h:
                 await helpdesk.add(h["id"], "action", "Plexbie",
@@ -370,18 +370,18 @@ async def check(bot, services) -> None:
                 open_one = next(iter((await helpdesk.open_for({str(req)})).values()), None)
                 if open_one:
                     h = await helpdesk.add(open_one["id"], "action", "Plexbie", note, blocked=blocked_ref)
-                    notify.alert_admins_soon(bot, services.config, title=f"{item['title']} won't import",
-                                             body=f"{app_name} needs you to look at it. It's on the ticket.",
+                    notify.alert_admins_soon(bot, services.config, title=f"{item['title']} won’t import",
+                                             body=f"{app_name} needs you to look at it. It’s on the ticket.",
                                              url=f"/manage?tab=tickets&ticket={open_one['id']}", tag=f"blocked-{key}")
         if not h:
             channel_id = services.config.admin_channel_id
             channel = bot.get_channel(int(channel_id)) if channel_id else None
             if channel:
                 try:
-                    await channel.send(f"🧩 **{item['title']}**: {note} It's on Manage → Health.")
+                    await channel.send(f"🧩 **{item['title']}**: {note} It’s on Manage → Health.")
                 except Exception as e:
                     logger.info(f"Couldn't tell the admin channel about {item['title']}: {e}")
-            notify.alert_admins_soon(bot, services.config, title=f"{item['title']} won't import",
+            notify.alert_admins_soon(bot, services.config, title=f"{item['title']} won’t import",
                                      body=f"{app_name} needs you to look at it first.", url="/manage?tab=health", tag=f"blocked-{key}")
         changed[key] = {"seen": now, "title": item["title"], "help": (h or {}).get("id")}
         logger.info(f"Blocked import: {item['title']} ({key}); admins told")
@@ -389,7 +389,7 @@ async def check(bot, services) -> None:
     for k in gone:
         hid = (known[k] or {}).get("help") if isinstance(known[k], dict) else None
         if hid:
-            await helpdesk.resolve(hid, "Plexbie", "It's been imported, so Plex will have it shortly.")
+            await helpdesk.resolve(hid, "Plexbie", "It’s been imported, so Plex will have it shortly.")
     if changed:
         await kv_set_many(NAMESPACE, changed)
     if gone:
