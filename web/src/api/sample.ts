@@ -240,6 +240,20 @@ export const sampleRemove = (plexName: string) => {
   return wait({ ok: true, message: `Removed ${plexName} from Plex.` });
 };
 
+/** People and Plex invites changed in this dev session, so a refresh shows the change, as the bot's would. */
+const peopleEdits = new Map<string, Record<string, unknown>>();
+const plexInviteEdits = new Map<string, string | null>();
+export const linkMembers = [{ id: "201", name: "Priya", username: "priya.n" }, { id: "202", name: "Dev", username: "devr" }, { id: "203", name: "Rosa M", username: "rosam" }];
+export const samplePerson = (plexName: string, change: Record<string, unknown>, message: string) => {
+  peopleEdits.set(plexName, { ...peopleEdits.get(plexName), ...change });
+  return wait({ ok: true, message });
+};
+export const samplePlexInvite = (email: string, next: string | null, message: string, ms = 500) => {
+  const was = [...plexInviteEdits.entries()].find(([, now]) => now === email)?.[0] ?? email;
+  plexInviteEdits.set(was, next);
+  return wait({ ok: true, message }, ms);
+};
+
 /** Invite links made in this dev session. */
 const invites: import("./types").AdminInvite[] = [
   { id: "a".repeat(64), label: "Aunt Rosa", email: null, createdBy: "Sam Rivera", createdAt: ago(60 * 26), expiresAt: new Date(Date.now() + 5 * 864e5).toISOString(), status: "active", usedBy: null, usedAt: null },
@@ -349,7 +363,10 @@ export const admin = (section: string): Promise<unknown> => {
   const req = data.requests as { pending: { id: string }[] };
   req.pending = req.pending.filter((r) => !decided.has(`requests:${r.id}`));
   data.joins = (data.joins as { messageId: string; status: string }[]).map((j) => (decided.has(`joins:${j.messageId}`) ? { ...j, status: "approved" } : j));
-  data.people = (data.people as { plexName: string }[]).filter((p) => !decided.has(`people:${p.plexName}`));
+  data.people = (data.people as { plexName: string }[]).filter((p) => !decided.has(`people:${p.plexName}`))
+    .map((p) => ({ ...p, ...peopleEdits.get(p.plexName) }));
+  data.plexinvites = (data.plexinvites as { email: string }[]).filter((i) => !i.email || plexInviteEdits.get(i.email) !== null)
+    .map((i) => (i.email && plexInviteEdits.get(i.email) ? { ...i, email: plexInviteEdits.get(i.email)!, sentAt: new Date().toISOString() } : i));
   const c = data.cleanup as { warning: Row[]; upcoming: Row[]; exempt: Omit<Row, "daysLeft">[] };
   const all = [...c.warning, ...c.upcoming, ...c.exempt];
   const isKept = (r: Row) => kept.get(r.ratingKey) ?? c.exempt.some((e) => e.ratingKey === r.ratingKey);

@@ -104,17 +104,18 @@ export const api = {
   cleanupScan: (): Promise<Ack> =>
     SAMPLE ? sample.wait({ ok: true, message: "Scan done: 2 titles in the warning window, 0 were removed." }, 1500) : post("/admin/cleanup/scan"),
   linkCandidates: (): Promise<{ discord: { id: string; name: string; username: string }[] }> =>
-    SAMPLE ? sample.wait({ discord: [{ id: "201", name: "Priya", username: "priya.n" }, { id: "202", name: "Dev", username: "devr" }, { id: "203", name: "Rosa M", username: "rosam" }] }) : call("/admin/links"),
+    SAMPLE ? sample.wait({ discord: sample.linkMembers }) : call("/admin/links"),
   linkPerson: (plexName: string, discordId: string): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: `Linked ${plexName}.` }) : post("/admin/people/link", { plexName, discordId }),
+    SAMPLE ? sample.samplePerson(plexName, { linked: true, discordId, discordName: sample.linkMembers.find((m) => m.id === discordId)?.name ?? null }, `Linked ${plexName}.`)
+      : post("/admin/people/link", { plexName, discordId }),
   renamePerson: (plexName: string, name: string): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: `Shown as ${name} from now on.` }) : post("/admin/people/rename", { plexName, name }),
+    SAMPLE ? sample.samplePerson(plexName, { displayName: name === plexName ? null : name }, `Shown as ${name} from now on.`) : post("/admin/people/rename", { plexName, name }),
   keepPerson: (plexName: string, keep: boolean): Promise<Ack> =>
     SAMPLE ? sample.wait({ ok: true, message: keep ? `${plexName} will never be removed.` : `${plexName} is back on the check.` }) : post("/admin/people/keep", { plexName, keep }),
   matchPerson: (plexName: string, account: string): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: `${plexName} is ${account} on Plex now.` }) : post("/admin/people/match", { plexName, account }),
+    SAMPLE ? sample.samplePerson(plexName, { plexName: account, hasAccess: true, candidates: undefined }, `${plexName} is ${account} on Plex now.`) : post("/admin/people/match", { plexName, account }),
   unlinkPerson: (plexName: string): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: `Unlinked ${plexName}.` }) : post("/admin/people/unlink", { plexName }),
+    SAMPLE ? sample.samplePerson(plexName, { linked: false, discordId: null, discordName: null }, `Unlinked ${plexName}.`) : post("/admin/people/unlink", { plexName }),
   say: (channelId: string, message: string, allowMassPings: boolean): Promise<Ack> =>
     SAMPLE ? sample.wait({ ok: true, message: "Posted in #general." }, 500) : post("/admin/say", { channelId, message, allowMassPings }),
   discover: (kind: "movie" | "tv"): Promise<Discover> => (SAMPLE ? sample.discover(kind) : call(`/discover/${kind}`)),
@@ -168,9 +169,9 @@ export const api = {
     SAMPLE ? sample.wait({ ok: true, message: autoreply ? "Plexbie answers new DMs." : "Plexbie won't answer DMs by itself." }, 400)
       : post("/admin/inbox", { autoreply }),
   plexInviteCancel: (email: string): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: `Plex invite to ${email} cancelled.` }, 500) : post("/admin/plex-invites/cancel", { email }),
+    SAMPLE ? sample.samplePlexInvite(email, null, `Plex invite to ${email} cancelled.`) : post("/admin/plex-invites/cancel", { email }),
   plexInviteChange: (email: string, next: string): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: `Invite sent to ${next}.` }, 700) : post("/admin/plex-invites/change", { email, new: next }),
+    SAMPLE ? sample.samplePlexInvite(email, next, `Invite sent to ${next}.`, 700) : post("/admin/plex-invites/change", { email, new: next }),
   /** With `everything`, every request since No. 0001 rather than the last 30 days. */
   adminAll: (q: string, everything = false): Promise<AdminAllRequests> =>
     SAMPLE ? sample.adminAll(q, everything) : call(`/admin/all?q=${enc(q)}${everything ? "&all=1" : ""}`),
