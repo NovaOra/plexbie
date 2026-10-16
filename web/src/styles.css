@@ -3139,15 +3139,16 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 .home__stage.is-held > .stage--bare .stage__inner { align-content: center; padding-top: 0; }
 /* The strap: when, then (after a dot) what it is. Under 400px they stack in the strap's two lines. */
 .stage__strapline .strap__bar { gap: 4px; align-items: first baseline; }
-.strap__when + .strap__detail::before { content: "·\00a0"; }
+/* The dot rides on the time, so a detail that wraps to the next line doesn't start with one. */
+.strap__when:has(+ .strap__detail)::after { content: "\00a0·"; }
 @media (max-width: 399px) {
   .stage__strapline .strap__bar { flex-direction: column; align-items: flex-start; gap: 0; }
   .stage__strapline .strap__detail { -webkit-line-clamp: 1; line-clamp: 1; }
-  .strap__when + .strap__detail::before { content: none; }
+  .strap__when:has(+ .strap__detail)::after { content: none; }
 }
 /* "More like this" captions while they load: the loaded captions' height. */
 .popular__item--plain .popular__caption-skeleton { height: 43px; }
-@media (max-width: 359px) { .popular__item--plain .popular__caption-skeleton { height: 61px; } }
+@media (max-width: 351px) { .popular__item--plain .popular__caption-skeleton { height: 61px; } }
 @media (hover: hover) and (pointer: fine) { .stage__pause:hover { background: var(--panel-raised); } }
 /* A request's or ticket's insides while they load, in the detail or a sheet. */
 .m-body-skeleton { height: 320px; border-radius: var(--r); }
