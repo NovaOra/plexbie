@@ -2822,7 +2822,8 @@ html.has-sheet .m-strip::before, html.has-sheet .m-mon__screen::after { animatio
 .m-rows2 { container-type: inline-size; }
 .m-row__season { display: none; }
 /* A full view holds the screen from the start; its cards wait at their final height. */
-#m-panel { min-height: calc(100dvh - 60px); }
+/* A Manage view holds the screen only while it loads, so a short one ends where its content does. */
+#m-panel:has(:not(button, article)[aria-busy="true"], .skeleton, .m-skel-card) { min-height: calc(100dvh - 60px); }
 .m-skel-card { height: 140px; border-radius: var(--r-lg); }
 /* The loading queue keeps the slot a "couldn't load" notice would take. */
 .m-skel-notice { height: 88px; }
