@@ -361,7 +361,8 @@ function RetryButton({ onRetry, quiet = false }: { onRetry: () => unknown; quiet
     void Promise.resolve(onRetry()).catch(() => undefined).finally(() => setRetrying(false));
   };
   return (
-    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn`} onClick={retry} disabled={retrying}>
+    <button type="button" className={`btn${quiet ? " btn--quiet" : ""} m-btn`} onClick={() => { if (!retrying) retry(); }}
+      aria-disabled={retrying || undefined} aria-busy={retrying || undefined}>
       <RefreshCw size={16} aria-hidden className={retrying ? "m-spin" : undefined} /> Try again
     </button>
   );
@@ -666,7 +667,7 @@ function JoinsTab() {
   return (
     <div className="m-stack">
       <section className="section">
-        <h2>Waiting to join <span className="m-count"><Tick value={pending.length} /></span></h2>
+        <h3>Waiting to join <span className="m-count"><Tick value={pending.length} /></span></h3>
         {pending.some((j) => j.messageId) && !readOnly ? <SwipeHint /> : null}
         <ul className="m-cards">
           <AnimatePresence initial={false}>
@@ -679,7 +680,7 @@ function JoinsTab() {
                       <Initial name={j.name} big />
                       <div className="m-card__body">
                         <span className="m-card__eyebrow">{j.via === "plex" ? "Signed in with Plex" : "From Discord"} · asked {since(j.askedAt)}</span>
-                        <h3 className="m-card__title">{j.name}</h3>
+                        <h4 className="m-card__title">{j.name}</h4>
                         <span className="m-card__who">{j.email || "Email on their Plex account"}</span>
                       </div>
                       <div className="m-card__actions">
@@ -703,7 +704,7 @@ function JoinsTab() {
       </section>
       {earlier.length ? (
         <section className="section">
-          <h2>Earlier</h2>
+          <h3>Earlier</h3>
           <ul className="m-log">
             {earlier.map((j) => (
               <li className="m-log__row" key={j.key}>
@@ -1179,7 +1180,8 @@ function CleanupSettingsCard({ settings, libraries, channels }: {
                 <span><b>Run a scan now</b><span className="muted">{live ? "Live: anything whose warning has run out is deleted right away, with no daily limit." : "Same check the daily run does, without its daily limit."}</span></span>
                 {live
                   ? <HoldButton label="Scan now" ms={1400} disabled={readOnly || scanning} onConfirm={() => void scan()} />
-                  : <button type="button" className="btn m-btn" disabled={readOnly || scanning || !settings.enabled} onClick={() => void scan()}>
+                  : <button type="button" className="btn m-btn" disabled={readOnly || !settings.enabled} aria-disabled={scanning || undefined} aria-busy={scanning || undefined}
+                    onClick={() => { if (!scanning) void scan(); }}>
                     <RefreshCw size={16} aria-hidden className={scanning ? "m-spin" : undefined} /> {scanning ? "Scanning…" : "Scan now"}
                   </button>}
               </div>
@@ -1204,7 +1206,7 @@ function KeepSearch({ kept, onKeep }: { kept: Set<string>; onKeep: (m: CleanupMa
   const { found, searching, failed, retry } = useDebouncedSearch(words, (w) => api.cleanupSearch(w), 300);
   return (
     <section className="section" id="m-part-keep">
-      <h2>Keep a title forever</h2>
+      <h3>Keep a title forever</h3>
       <p className="muted">Search Plex for any film or show, even one nowhere near the clock, and cleanup will never touch it.</p>
       {readOnly
         ? <p className="muted m-actions__note">Switched off in the read-only preview.</p>
@@ -1223,7 +1225,7 @@ function KeepSearch({ kept, onKeep }: { kept: Set<string>; onKeep: (m: CleanupMa
                 <article className="m-leaving">
                   <span className={`m-ring ${on ? "is-kept" : "is-found"}`} aria-hidden>{on ? <ShieldCheck size={20} /> : <Hourglass size={20} />}</span>
                   <div className="m-leaving__body">
-                    <h3 className="m-card__title">{m.title}</h3>
+                    <h4 className="m-card__title">{m.title}</h4>
                     <span className="muted m-person__meta">{m.type === "show" ? "TV" : "Film"}{m.year ? ` · ${m.year}` : ""} · {on ? "never removed" : "cleanup can remove it"}</span>
                   </div>
                   <span className="m-keep">
@@ -1279,7 +1281,7 @@ function CleanupTab() {
       <article className="m-leaving">
         <DaysRing days={c.daysLeft} of={settings.inactivityDays} />
         <div className="m-leaving__body">
-          <h3 className="m-card__title">{c.title}</h3>
+          <h4 className="m-card__title">{c.title}</h4>
           <span className="m-person__meta">
             <span className={`m-left${c.daysLeft <= 7 ? " is-hot" : ""}`}>{c.daysLeft === 1 ? "1 day left" : `${c.daysLeft} days left`}</span>
             <span className="muted"> · {c.type === "show" ? "TV" : "Film"} · {clockText(c.reason, c.lastActivity)}</span>
@@ -1304,7 +1306,7 @@ function CleanupTab() {
       <CleanupSettingsCard settings={settings} libraries={res.libraries ?? []} channels={res.channels ?? []} />
 
       <section className="section">
-        <h2>On the clock</h2>
+        <h3>On the clock</h3>
         <Segmented id="cleanup-views" label="Which titles to show" value={view} onChange={setView}
           options={views.map((v) => ({ id: v.id, label: <>{v.label} <span className="m-seg__n"><Tick value={v.n} /></span></> }))} />
 
@@ -1324,7 +1326,7 @@ function CleanupTab() {
                     <article className="m-leaving">
                       <span className="m-ring is-kept" aria-hidden><ShieldCheck size={20} /></span>
                       <div className="m-leaving__body">
-                        <h3 className="m-card__title">{e.title}</h3>
+                        <h4 className="m-card__title">{e.title}</h4>
                         <span className="muted m-person__meta">{e.type === "show" ? "TV" : e.type === "movie" ? "Film" : e.type ?? "Title"}{e.year ? ` · ${e.year}` : ""} · never removed</span>
                       </div>
                       <span className="m-keep">
@@ -1626,7 +1628,7 @@ function BlockedList({ checks }: { checks: number }) {
           return (
             <li key={key} className="m-card m-card--stack">
               <p className="m-card__eyebrow">{r.app === "sonarr" ? "Sonarr" : "Radarr"} · import blocked{r.episodes.length ? ` · ${r.episodes.join(", ")}` : ""}</p>
-              <h3 className="m-card__title">{r.title}{r.year ? <span className="muted"> ({r.year})</span> : null}</h3>
+              <h4 className="m-card__title">{r.title}{r.year ? <span className="muted"> ({r.year})</span> : null}</h4>
               {open === key ? <BlockedImport target={r} onDone={() => window.setTimeout(() => void load(), 1500)} /> : (
                 <button type="button" className="btn m-btn" onClick={() => setOpen(key)}>Look inside</button>
               )}
@@ -1661,7 +1663,7 @@ function SignOutOthers() {
     <section className="section" id="m-part-security">
       <div className="m-head"><h3>Sign out everywhere else</h3></div>
       <div className="m-set-row">
-        <span><b>Sign out every other session</b><span className="muted">For a sign-in that wasn’t you: every website and app sign-in ends except this one, alerts turned on elsewhere stop, and the rest of the household signs in again.</span></span>
+        <span><span className="muted">For a sign-in that wasn’t you: every website and app sign-in ends except this one, alerts turned on elsewhere stop, and the rest of the household signs in again.</span></span>
         <HoldButton label="Sign out others" icon={<LogOut size={16} aria-hidden />} ms={1400} disabled={readOnly || busy.has("sign-out")} onConfirm={() => void go()} />
       </div>
     </section>
@@ -1686,7 +1688,7 @@ function HealthTab() {
     <section className="section m-services">
       <div className="m-head">
         <h3>Services</h3>
-        <button type="button" className="btn m-btn" onClick={again} disabled={spinning}>
+        <button type="button" className="btn m-btn" onClick={() => { if (!spinning) void again(); }} aria-disabled={spinning || undefined} aria-busy={spinning || undefined}>
           <RefreshCw size={16} aria-hidden className={spinning ? "m-spin" : undefined} /> Check again
         </button>
       </div>
@@ -1751,7 +1753,7 @@ function FreshLink({ made, onAnother }: { made: NewInvite; onAnother: () => void
       transition={{ duration: 0.24, ease: EASE_OUT }}
     >
       <span className="m-fresh__eyebrow"><Ticket size={14} aria-hidden /> Invite ready</span>
-      <h3 className="m-card__title">For {made.invite.label}</h3>
+      <h4 className="m-card__title">For {made.invite.label}</h4>
       <label className="visually-hidden" htmlFor="m-invite-url">Invite link</label>
       <input id="m-invite-url" className="m-fresh__url" readOnly value={made.url} onFocus={(e) => e.currentTarget.select()} />
       <div className="m-fresh__actions">
@@ -1824,7 +1826,7 @@ function PlexInvites() {
 
   return (
     <section className="section" id="m-part-plex">
-      <h2>Waiting on Plex <span className="m-count"><Tick value={rows.length} /></span></h2>
+      <h3>Waiting on Plex <span className="m-count"><Tick value={rows.length} /></span></h3>
       <p className="muted">Plex invites nobody has accepted yet. Sent to the wrong address? Change it and the invite goes to the right one.</p>
       <ul className="m-rows">
         <AnimatePresence initial={false}>
@@ -1834,7 +1836,7 @@ function PlexInvites() {
               <article className="m-person">
                 <Initial name={i.who || i.email || i.name} big />
                 <div className="m-person__body">
-                  <h3 className="m-card__title">{i.who || i.email || i.name || "A Plex invite"}</h3>
+                  <h4 className="m-card__title">{i.who || i.email || i.name || "A Plex invite"}</h4>
                   <span className="muted m-person__meta">{i.who && i.email ? `${i.email} · ` : ""}sent {since(i.sentAt)}</span>
                   {i.email ? null : <span className="m-person__note">Sent to a Plex username, so change or cancel it on plex.tv.</span>}
                 </div>
@@ -1850,6 +1852,7 @@ function PlexInvites() {
                     <form className="m-plex-invite__edit" noValidate onSubmit={(e) => {
                       e.preventDefault();
                       const field = e.currentTarget.querySelector("input");
+                      if (busy.has(i.email)) return;
                       if (!next.trim()) { setNextError("Write their Plex email first."); field?.focus(); return; }
                       if (field?.validity.typeMismatch) { setNextError("That doesn’t look like an email address."); field.focus(); return; }
                       void change(i);
@@ -1858,12 +1861,13 @@ function PlexInvites() {
                       <label htmlFor={`pi-${i.email}`}>The right email</label>
                       <input id={`pi-${i.email}`} type="email" inputMode="email" autoComplete="off" autoFocus
                         value={next} onChange={(e) => { setNext(e.target.value); setNextError(""); }} placeholder="their Plex email"
+                        onBlur={(e) => { if (e.currentTarget.validity.typeMismatch) setNextError("That doesn’t look like an email address."); }}
                         aria-invalid={!!nextError || undefined} aria-describedby={nextError ? `pi-${i.email}-error` : undefined} />
                       {nextError ? <p className="field__error" id={`pi-${i.email}-error`} role="alert">{nextError}</p> : null}
                       </div>
                       <div className="m-person__actions m-person__actions--two">
                         <button type="button" className="btn m-btn" onClick={() => { setEditing(null); setNext(""); }}>Back</button>
-                        <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || busy.has(i.email)}>
+                        <button type="submit" className="btn btn--primary m-btn" disabled={readOnly} aria-disabled={busy.has(i.email) || undefined} aria-busy={busy.has(i.email) || undefined}>
                           <Mail size={16} aria-hidden /> {busy.has(i.email) ? "Sending…" : "Send invite"}
                         </button>
                       </div>
@@ -1892,6 +1896,7 @@ function InvitesTab() {
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     if (!label.trim()) { setNameError("Give it a name, so you know who it’s for."); document.getElementById("m-invite-name")?.focus(); return; }
     if (emailError) { document.getElementById("m-invite-email")?.focus(); return; }
     setBusy(true);
@@ -1942,7 +1947,8 @@ function InvitesTab() {
   const active = (rows ?? []).filter((i) => i.status === "active");
   const past = (rows ?? []).filter((i) => i.status !== "active");
   const renewButton = (i: AdminInvite, label = "New link") => (
-    <button type="button" className="btn m-btn" disabled={readOnly || renewing === i.id} onClick={() => void renew(i)}>
+    <button type="button" className="btn m-btn" disabled={readOnly} aria-disabled={renewing === i.id || undefined} aria-busy={renewing === i.id || undefined}
+      onClick={() => { if (renewing !== i.id) void renew(i); }}>
       <RefreshCw size={16} aria-hidden className={renewing === i.id ? "m-spin" : undefined} /> {renewing === i.id ? "Making it…" : label}
     </button>
   );
@@ -1950,7 +1956,7 @@ function InvitesTab() {
   return (
     <div className="m-stack">
       <section className="section" ref={top}>
-        <h2>Invite someone</h2>
+        <h3>Invite someone</h3>
         <p className="muted">
           For people who don’t use Discord. They open the link, sign in with Plex, and they’re in. No approval needed:
           making the link is your yes.
@@ -1984,7 +1990,7 @@ function InvitesTab() {
                   options={LASTS.map((d) => ({ id: d, label: d === 1 ? "1 day" : `${d} days` }))} />
               </div>
               {problem ? <p className="field__error" role="alert">{problem}</p> : null}
-              <button type="submit" className="btn btn--primary m-btn m-invite-form__go" disabled={busy || readOnly}>
+              <button type="submit" className="btn btn--primary m-btn m-invite-form__go" disabled={readOnly} aria-disabled={busy || undefined} aria-busy={busy || undefined}>
                 <Ticket size={18} aria-hidden /> {busy ? "Making it…" : "Make invite link"}
               </button>
               {readOnly ? <p className="muted m-actions__note">Switched off in the read-only preview.</p> : null}
@@ -1996,7 +2002,7 @@ function InvitesTab() {
       <PlexInvites />
 
       <section className="section" id="m-part-links">
-        <h2>Open invites <span className="m-count"><Tick value={active.length} /></span></h2>
+        <h3>Open invites <span className="m-count"><Tick value={active.length} /></span></h3>
         {!rows ? <div className="skeleton" style={{ height: 120 }} /> : null}
         <ul className="m-rows">
           <AnimatePresence initial={false}>
@@ -2005,10 +2011,10 @@ function InvitesTab() {
                 <article className="m-person">
                   <Initial name={i.label} big />
                   <div className="m-person__body">
-                    <h3 className="m-card__title">
+                    <h4 className="m-card__title">
                       {i.label}
                       {i.email ? <span className="m-pill"><Lock size={11} aria-hidden /> Locked</span> : null}
-                    </h3>
+                    </h4>
                     <span className="muted m-person__meta">
                       Expires {daysUntil(i.expiresAt)} · made by {i.createdBy ?? "an admin"} {since(i.createdAt)}
                       {i.email ? ` · for ${i.email}` : ""}
@@ -2028,7 +2034,7 @@ function InvitesTab() {
 
       {past.length ? (
         <section className="section">
-          <h2>Earlier</h2>
+          <h3>Earlier</h3>
           <p className="muted">Lost a link, or it ran out? Make a new one for the same person. Cancelled and expired invites can be deleted; used ones stay as a record of who joined.</p>
           <ul className="m-rows">
             <AnimatePresence initial={false}>
@@ -2037,10 +2043,10 @@ function InvitesTab() {
                   <article className="m-person m-person--past">
                     <Initial name={i.label} big />
                     <div className="m-person__body">
-                      <h3 className="m-card__title">
+                      <h4 className="m-card__title">
                         {i.label}
                         <span className={`m-pill m-pill--${i.status === "used" ? "approved" : "declined"}`}>{i.status === "revoked" ? "Cancelled" : i.status === "used" ? "Used" : "Expired"}</span>
-                      </h3>
+                      </h4>
                       <span className="muted m-person__meta">
                         {i.status === "used" && i.usedBy ? `Joined as ${i.usedBy} ${i.usedAt ? since(i.usedAt) : ""}` : `Made by ${i.createdBy ?? "an admin"} ${since(i.createdAt)}`}
                         {i.email ? ` · for ${i.email}` : ""}
@@ -2077,12 +2083,14 @@ function DiscordTab() {
   const [text, setText] = useState("");
   const [pings, setPings] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sayEmpty, setSayEmpty] = useState(false);
   if (!d) return <div className="skeleton" style={{ height: 300 }} />;
   const chosen = channel || d.channels[0]?.id || "";
 
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!text.trim() || !chosen) return;
+    if (sending || !chosen) return;
+    if (!text.trim()) { setSayEmpty(true); document.getElementById("m-say-text")?.focus(); return; }
     setSending(true);
     const out = await act(null, () => api.say(chosen, text.trim(), pings), { failText: "Not posted" });
     setSending(false);
@@ -2144,14 +2152,16 @@ function DiscordTab() {
           <div className="field">
             <label htmlFor="m-say-text">Message</label>
             <textarea id="m-say-text" className="m-textarea" rows={4} maxLength={2000} value={text} placeholder="Movie night Friday at 8!"
-              onChange={(e) => setText(e.target.value)} disabled={readOnly} aria-describedby="m-say-count" />
+              onChange={(e) => { setText(e.target.value); setSayEmpty(false); }} disabled={readOnly}
+              aria-invalid={sayEmpty || undefined} aria-describedby={sayEmpty ? "m-say-empty m-say-count" : "m-say-count"} />
+            {sayEmpty ? <p className="field__error" id="m-say-empty" role="alert">Write the message first.</p> : null}
             <span className="field__hint" id="m-say-count">{text.length}/2000</span>
           </div>
           <div className="m-set-row">
             <span><b>Allow @everyone and role pings</b><span className="muted">Off: those show as plain text and notify nobody.</span></span>
             <Switch on={pings} label="Allow @everyone and role pings" disabled={readOnly} onChange={setPings} />
           </div>
-          <button type="submit" className="btn btn--primary m-btn m-invite-form__go" disabled={readOnly || sending || !text.trim()}>
+          <button type="submit" className="btn btn--primary m-btn m-invite-form__go" disabled={readOnly} aria-disabled={sending || undefined} aria-busy={sending || undefined}>
             <MessageSquare size={18} aria-hidden /> {sending ? "Posting…" : "Post it"}
           </button>
         </form>
@@ -2173,7 +2183,7 @@ function WhoBroughtWhom() {
   return (
       <section className="section" id="m-part-who">
         <div className="m-head">
-          <h2>Who brought whom</h2>
+          <h3>Who brought whom</h3>
           <SearchField value={query} onChange={setQuery} />
         </div>
         <p className="muted">Discord invites people used to join the server, and Plexbie invite links people used to get on Plex.</p>
@@ -2335,7 +2345,7 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.repeat) void send(e); }} />
         <div className="m-chat__send">
           {text ? <span /> : <span className="muted m-person__meta">{discord ? "A Discord DM from Plexbie" : "A phone alert, else an email"}, signed “— {me} (admin)”</span>}
-          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly || sending}>
+          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly} aria-disabled={sending || undefined} aria-busy={sending || undefined}>
             {sending ? "Sending…" : "Send as Plexbie"}
           </button>
         </div>
@@ -2575,16 +2585,19 @@ function RequestFixes({ kind, busy, disabled, byName = false, onSearch }: {
 }) {
   return (
     <div className="m-reqsheet__fixes">
-      <button type="button" className="btn m-btn" disabled={disabled || busy.size > 0} onClick={() => onSearch("again")}>
+      <button type="button" className="btn m-btn" disabled={disabled} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("again") || undefined}
+        onClick={() => { if (!busy.size) onSearch("again"); }}>
         <RefreshCw size={16} aria-hidden className={busy.has("again") ? "m-spin" : undefined} /> Search again
       </button>
       {kind === "tv" ? (
-        <button type="button" className="btn btn--quiet m-btn" disabled={disabled || busy.size > 0} onClick={() => onSearch("episodes")}>
-          <ListOrdered size={16} aria-hidden /> Episode by episode
+        <button type="button" className="btn btn--quiet m-btn" disabled={disabled} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("episodes") || undefined}
+          onClick={() => { if (!busy.size) onSearch("episodes"); }}>
+          {busy.has("episodes") ? <RefreshCw size={16} aria-hidden className="m-spin" /> : <ListOrdered size={16} aria-hidden />} Episode by episode
         </button>
       ) : null}
-      <button type="button" className={`btn m-btn${byName ? "" : " btn--quiet"}`} disabled={disabled || busy.size > 0} onClick={() => onSearch("name")}>
-        <Search size={16} aria-hidden /> Search by name
+      <button type="button" className={`btn m-btn${byName ? "" : " btn--quiet"}`} disabled={disabled} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("name") || undefined}
+        onClick={() => { if (!busy.size) onSearch("name"); }}>
+        {busy.has("name") ? <RefreshCw size={16} aria-hidden className="m-spin" /> : <Search size={16} aria-hidden />} Search by name
       </button>
     </div>
   );
@@ -2683,7 +2696,8 @@ function RequestBody({ id, res, head = true, onLeave, quiet = false }: {
           ) : null}
           <div className="m-person__actions m-person__actions--two">
             <button type="button" className="btn m-btn" onClick={() => { setWriting(false); setNote(""); }}>Back</button>
-            <button type="button" className="btn btn--primary m-btn" disabled={readOnly || busy.has("ticket")} onClick={() => void ticket()}>
+            <button type="button" className="btn btn--primary m-btn" disabled={readOnly} aria-disabled={busy.has("ticket") || undefined} aria-busy={busy.has("ticket") || undefined}
+              onClick={() => { if (!busy.has("ticket")) void ticket(); }}>
               <LifeBuoy size={16} aria-hidden /> {busy.has("ticket") ? "Opening…" : "Open the ticket"}
             </button>
           </div>
@@ -2949,8 +2963,12 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
       {t.status === "open" ? (
         <div className={`m-composer is-${kind}`}>
           <div className="m-seg" role="group" aria-label="Who sees it">
-            <button type="button" aria-pressed={kind === "note"} className="m-seg__item" onClick={() => setKind("note")}>Note for admins</button>
-            <button type="button" aria-pressed={kind === "reply"} className="m-seg__item" onClick={() => setKind("reply")}>Reply to {t.who.split(" ")[0]}</button>
+            <button type="button" aria-pressed={kind === "note"} className="m-seg__item" onClick={() => setKind("note")} aria-label="Note for admins">
+              <span className="m-tab__long">Note for admins</span><span className="m-tab__short" aria-hidden>Note</span>
+            </button>
+            <button type="button" aria-pressed={kind === "reply"} className="m-seg__item" onClick={() => setKind("reply")} aria-label={`Reply to ${t.who}`}>
+              <span className="m-tab__long">Reply to {t.who.split(" ")[0]}</span><span className="m-tab__short" aria-hidden>Reply</span>
+            </button>
           </div>
           <label className="visually-hidden" htmlFor={`${titleId}-say`}>{kind === "note" ? "Note for admins" : `Reply to ${t.who}`}</label>
           <textarea ref={box} id={`${titleId}-say`} className={`m-textarea${kind === "reply" ? " m-textarea--reply" : " m-textarea--note"}`} rows={3} maxLength={1200}
@@ -3015,7 +3033,8 @@ function BlockedSummary({ row, onLook, keyed = true, primary = true }: { row: Bl
   return (
     <section className="m-blocked m-blocked--summary" aria-label={`${app} won’t import this by itself`}>
       <h3>{app} can’t import {n ? `${n === 1 ? "1 episode" : `${n} episodes`}` : "it"}{n ? <span className="muted"> ({n > 1 ? `${row.episodes[0]} to ${row.episodes[n - 1].replace(/^S\d+/, "")}` : row.episodes[0]})</span> : null}</h3>
-      <p className="m-blocked__release">{row.release}</p>
+      {/* Breaks only at its dots, never between letters. */}
+      <p className="m-blocked__release">{row.release.split(".").map((part, n, all) => <Fragment key={n}>{part}{n < all.length - 1 ? <>.<wbr /></> : null}</Fragment>)}</p>
       {row.messages.map((m) => <p key={m} className="m-blocked__msg">{m}</p>)}
       {keyed ? (
         <div className="m-blocked__acts">
@@ -3457,8 +3476,9 @@ function QueueRow({ item, selected, onSelect, actions }: {
         <ItemArt item={item} />
         <span className="m-row__text">
           <span className="m-row__kind"><span className="caps">{item.eyebrow}</span>{item.age ? <span className="m-row__age">{item.age}</span> : null}</span>
-          <span className="m-row__title">{item.title}{item.sub ? <span className={`muted${item.subIsSeason ? " m-row__season" : ""}`}> · {item.sub}</span> : null}</span>
-          <span className="m-row__meta">{item.meta}</span>
+          <span className="m-row__title">{item.title}{item.sub ? <span className={`muted m-row__sub${item.subIsSeason ? " m-row__season" : ""}`}> · {item.sub}</span> : null}</span>
+          {/* On a phone the reason moves under the title, on the line that may take two. */}
+          <span className="m-row__meta">{item.sub && !item.subIsSeason ? <span className="m-row__subline">{item.sub} · </span> : null}{item.meta}</span>
         </span>
       </button>
       <div className="m-row__acts">{actions}</div>
@@ -3702,6 +3722,9 @@ function DetailSheet(props: Parameters<typeof Detail>[0]) {
  * of the queue), what needs you (Urgent, Today, Coming up), Waiting and Done, and the
  * selected item in full beside it (on a phone, in a sheet).
  */
+/** A monitor's name where the tile is too narrow for it (320px): the full name stays in its label. */
+const MONITOR_SHORT: Record<Area, string> = { requests: "Asks", help: "Help", people: "People", library: "Library", services: "Health" };
+
 /** What each feed is called when it couldn't be loaded. */
 const FEED_NAME: Record<Feed, string> = {
   requests: "requests", all: "all requests", tickets: "tickets", joins: "join requests", invites: "invite links",
@@ -3709,8 +3732,8 @@ const FEED_NAME: Record<Feed, string> = {
 };
 const listed = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "");
 
-function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
-  desk: Desk; checked: string | null; menu: ReactNode; openMenu: () => void;
+function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
+  desk: Desk; menu: ReactNode; openMenu: () => void;
   /** A refresh failed over what's on screen: when it was last good. */
   stale: { at?: number } | null;
   onRetry: (feeds: Feed[] | "stale") => Promise<unknown>;
@@ -3865,7 +3888,8 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
             <button key={m.area} type="button" className={`m-mon${m.hot && m.known ? " is-urgent" : ""}`} aria-pressed={filtered && filter === m.area} onClick={() => toggle(m.area)}
               aria-keyshortcuts={String(n + 1)}
               aria-label={`${m.label}: ${m.failed ? "couldn’t load" : m.known ? `${m.count}, ${m.makeup}` : "loading"}${m.hot ? ", urgent" : ""}${m.first ? `. First: ${m.first.title}, ${m.first.top}` : ""}`}>
-              <span className="m-mon__label"><span className="m-lamp" aria-hidden /><span className="caps">{m.label}</span></span>
+              <span className="m-mon__label"><span className="m-lamp" aria-hidden />
+                <span className="caps m-mon__name">{m.label}</span><span className="caps m-mon__short" aria-hidden>{MONITOR_SHORT[m.area]}</span></span>
               <span className="m-mon__screen">
                 <span className="m-mon__num">{m.failed ? "?" : m.known ? m.count : "–"}</span>
                 <span className="m-mon__top">
@@ -3880,8 +3904,6 @@ function ManageDesk({ desk, checked, menu, stale, onRetry, openMenu }: {
       </section>
       <p className="m-facts-line">
         {facts.party ? <span>Watch party:<b>{facts.party}</b></span> : null}
-        {facts.cleanup ? <span>{facts.cleanup}</span> : null}
-        {checked ? <span className="m-facts-line__checked">Checked {checked}</span> : null}
       </p>
 
       <div className="m-panes">
@@ -3984,6 +4006,14 @@ export function Manage() {
   const reduced = useReducedMotion();
   const now = useNow();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Manage is for admins only: never in a search engine's index.
+  useEffect(() => {
+    const meta = document.createElement("meta");
+    meta.name = "robots";
+    meta.content = "noindex";
+    document.head.appendChild(meta);
+    return () => meta.remove();
+  }, []);
   // The strip's ambient light holds still while the tab is out of sight.
   useEffect(() => {
     const on = () => document.documentElement.classList.toggle("is-hidden", document.hidden);
@@ -4146,7 +4176,7 @@ export function Manage() {
     return (
       <ManageCtx.Provider value={ctx}>
         <div className="shell page m-page m-page--desk">
-          <ManageDesk desk={desk} checked={loadedAt.health ? clock(loadedAt.health) : null} menu={menu} openMenu={() => setMenuOpen(true)}
+          <ManageDesk desk={desk} menu={menu} openMenu={() => setMenuOpen(true)}
             stale={staleFeeds.length ? { at: Math.min(...staleFeeds.map((f) => (f === "blocked" ? blockedLoadedAt ?? 0 : loadedAt[f as Section] ?? 0))) || undefined } : null}
             onRetry={retry} />
         </div>

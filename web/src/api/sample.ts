@@ -465,8 +465,8 @@ const openTicketOf = (who: string) => helps.find((h) => h.who === who && h.statu
 /** Help requests made in this dev session. */
 const helps: Help[] = [
   { id: "h1", request: "6001", slot: 212, title: "Undersea Kingdom", kind: "tv", seasons: [1], who: "Jordan Lee", reason: "Stuck downloading",
-    note: "It's been at 0% since this morning.", status_then: "Downloading, 0%", status: "open", created_at: ago(35) },
-  { id: "h2", request: "6002", slot: 207, title: "Spring", kind: "movie", seasons: null, who: "Alex Kim", reason: "Can't be found", offer: "name",
+    note: "It’s been at 0% since this morning.", status_then: "Downloading, 0%", status: "open", created_at: ago(35) },
+  { id: "h2", request: "6002", slot: 207, title: "Spring", kind: "movie", seasons: null, who: "Alex Kim", reason: "Can’t be found", offer: "name",
     note: "Searching by its IDs found nothing Plexbie could grab for Spring: 212 releases came back. Search by name instead?",
     status_then: "Nothing found", status: "open", created_at: ago(12) },
   { id: "h0", request: "6000", slot: 203, title: "Elephants Dream", kind: "movie", seasons: null, who: "Alex Kim", reason: "Wrong version or quality",
@@ -474,8 +474,8 @@ const helps: Help[] = [
 ];
 export const askHelp = (requestId: string, reason: string) => {
   const r = mine.find((m) => m.id === requestId);
-  const words: Record<string, string> = { stuck: "Stuck downloading", notfound: "Can't be found", notonplex: "Downloaded, but not on Plex", wrongfilm: "Plex says it's a different film",
-    quality: "Wrong version or quality", episodes: "Wrong or missing episodes", playback: "Won't play on Plex", other: "Something else" };
+  const words: Record<string, string> = { stuck: "Stuck downloading", notfound: "Can’t be found", notonplex: "Downloaded, but not on Plex", wrongfilm: "Plex says it’s a different film",
+    quality: "Wrong version or quality", episodes: "Wrong or missing episodes", playback: "Won’t play on Plex", other: "Something else" };
   const help = { id: `h${Date.now()}`, reason: words[reason] ?? "Something else" };
   if (r) {
     // A ticket like any other, as the bot keeps it: on the member's list, to read and add to.
@@ -501,11 +501,11 @@ const everyone: Row[] = [
   { id: "6001", slot: 212, title: simpsons, stage: "downloading", seasons: [1], requester: "Jordan Lee", status: "approved",
     progress: { percent: 0, detail: "Season pack, 12 episodes" }, help: { id: "h1", reason: "Stuck downloading" },
     requestedAt: ago(60 * 30), updatedAt: ago(60 * 20), approvedBy: "Sam Rivera", approvedAt: ago(60 * 29), stageSince: ago(60 * 9),
-    stuck: ["Help asked: Stuck downloading", "Download hasn't moved in 6 hours"] },
+    stuck: ["Help asked: Stuck downloading", "Download hasn’t moved in 6 hours"] },
   { id: "6002", slot: 207, title: byTitle("Spring"), stage: "searching", requester: "Alex Kim", status: "approved",
-    progress: { detail: "Looking for a copy" }, help: { id: "h2", reason: "Can't be found" },
+    progress: { detail: "Looking for a copy" }, help: { id: "h2", reason: "Can’t be found" },
     requestedAt: ago(60 * 50), updatedAt: ago(60 * 48), approvedBy: "Sam Rivera", approvedAt: ago(60 * 48), stageSince: ago(60 * 48),
-    stuck: ["Help asked: Can't be found", "Nothing found for over a day"] },
+    stuck: ["Help asked: Can’t be found", "Nothing found for over a day"] },
   { id: "5001", slot: 214, title: byTitle("Pepper & Carrot"), stage: "downloading", seasons: [2], requester: "Sam Rivera", status: "approved",
     progress: { percent: 62, detail: "Season pack, 9 episodes, about 4 min left" }, help: { id: "h3", reason: "Wrong or missing episodes" },
     requestedAt: ago(60 * 26), updatedAt: ago(14), approvedBy: "Sam Rivera", approvedAt: ago(60 * 25), stageSince: ago(50),
@@ -615,9 +615,9 @@ type Help = Omit<import("./types").AdminHelp, "request" | "slot" | "title"> & {
 };
 /** Each reason's code by its words, as the bot works it out for a ticket from before codes were kept. */
 const REASON_CODES: Record<string, string> = {
-  "Stuck downloading": "stuck", "Can't be found": "notfound", "Downloaded, but not on Plex": "notonplex",
-  "Wrong version or quality": "quality", "Wrong or missing episodes": "episodes", "Won't play on Plex": "playback",
-  "Downloaded, but won't import": "blocked", "Picture looks wrong": "picture", "Can't get in, or nothing plays": "access",
+  "Stuck downloading": "stuck", "Can’t be found": "notfound", "Downloaded, but not on Plex": "notonplex",
+  "Wrong version or quality": "quality", "Wrong or missing episodes": "episodes", "Won’t play on Plex": "playback",
+  "Downloaded, but won’t import": "blocked", "Picture looks wrong": "picture", "Can’t get in, or nothing plays": "access",
   "Something else": "other",
 };
 const threads: Record<string, Entry[]> = {};
@@ -632,17 +632,17 @@ helps.push({ id: "h3", request: "5001", slot: 214, title: "Pepper & Carrot", kin
 threads.h3 = [
   { id: "e1", at: at(90), by: "Sam Rivera", kind: "member", text: "Wrong or missing episodes. Episode 4 is missing" },
   { id: "e2", at: at(70), by: "Alex Kim", kind: "note", text: "Sonarr skipped E04, it was flagged as a sample. Retrying." },
-  { id: "e3", at: at(65), by: "Alex Kim", kind: "reply", text: "Found it. Is it the 4K version you're after, or is 1080p fine?" },
+  { id: "e3", at: at(65), by: "Alex Kim", kind: "reply", text: "Found it. Is it the 4K version you’re after, or is 1080p fine?" },
   { id: "e4", at: at(64), by: "Alex Kim", kind: "status", text: "Waiting on them" },
 ];
 
 /** A download Sonarr won't import by itself, as Plexbie opens it (core/blocked_imports). */
-const BLOCKED_NOTE = "Radar Men from the Moon finished downloading, but Sonarr won't import it by itself: Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. Look at the files on this ticket before you import it.";
+const BLOCKED_NOTE = "Radar Men from the Moon finished downloading, but Sonarr won’t import it by itself: Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. Look at the files on this ticket before you import it.";
 helps.push({ id: "h4", request: "5099", slot: 208, title: "Radar Men from the Moon", kind: "tv", seasons: [1], who: "Jordan Lee",
-  reason: "Downloaded, but won't import", note: BLOCKED_NOTE, status_then: "Downloaded, import blocked", status: "open", created_at: at(8), opened_by: "Plexbie" } as Help);
+  reason: "Downloaded, but won’t import", note: BLOCKED_NOTE, status_then: "Downloaded, import blocked", status: "open", created_at: at(8), opened_by: "Plexbie" } as Help);
 threads.h4 = [{ id: "e9", at: at(8), by: "Plexbie", kind: "note", text: BLOCKED_NOTE }];
 const sampleBlocked = { app: "sonarr" as const, downloadId: "SABnzbd_nzo_demo" };
-export const adminBlocked = () => reviewKnobs().fails.includes("blocked") ? Promise.reject(new Error("Sonarr didn't answer."))
+export const adminBlocked = () => reviewKnobs().fails.includes("blocked") ? Promise.reject(new Error("Sonarr didn’t answer."))
   : reviewKnobs().empty ? wait({ rows: [], errors: {} }) : wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952, poster: posterOf("Radar Men from the Moon"),
   release: "Radar.Men.From.The.Moon.S01.1080p.WEB", episodes: ["S01E01", "S01E02", "S01E03"], ticket: "h4",
   messages: ["Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."] }], errors: {} });
@@ -658,7 +658,7 @@ export const blockedPreview = () => wait({
   files: [1, 2, 3].map((n) => ({ name: `Radar.Men.From.The.Moon.S01E0${n}.1080p.WEB.mkv`, size: (1.1 + n / 10) * 2 ** 30,
     as: n === 3 ? [] : [`S01E0${n}`], quality: "WEBDL-1080p", qualityId: 3, languages: [{ id: 1, name: "English" }], releaseGroup: "WEB",
     rejections: n === 3 ? ["Unable to determine if file is a sample"] : [],
-    notes: n === 3 ? ["Unable to determine if file is a sample", "Sonarr can't tell which episode this is: pick it"] : [],
+    notes: n === 3 ? ["Unable to determine if file is a sample", "Sonarr can’t tell which episode this is: pick it"] : [],
     episodes: n === 3 ? [] : [sampleEpisodes[n - 1]], seriesId: 41, movie: null, ready: n !== 3 })),
   others: [{ name: "Radar.Men.From.The.Moon.S01.nfo", size: 2048, danger: false }],
   ok: true,
@@ -691,7 +691,7 @@ function entry(id: string, kind: Entry["kind"], by: string, text: string): Entry
  *  missed); on any other ticket it arrives. */
 function told(h: Help | undefined, said: string, done: string, sent?: Entry) {
   if (h?.id !== "h2") return { ok: true, told: true, message: said };
-  const why = "Plexbie couldn't DM them on Discord, and no phone alert or email reached them either.";
+  const why = "Plexbie couldn’t DM them on Discord, and no phone alert or email reached them either.";
   if (sent?.kind === "reply") sent.missed = true;
   entry(h.id, "action", "Plexbie", `This didn't reach ${h.who}: ${why}`);
   return { ok: true, told: false, message: `${done}, but it didn't reach ${h.who}: ${why} Tell them another way.` };
@@ -785,7 +785,7 @@ helps.push(
     created_at: at(60 * 24 * 8), resolved_by: "Alex Kim", resolved_at: at(60 * 24 * 7),
     reply: "Yes: sign in to Plex on their TV with your own account, and the household’s library is all there." },
   { id: "g2", request: null, slot: null, subject: "general", title: null, kind: "", seasons: null, who: "Jordan Lee",
-    reason: "Can't get in, or nothing plays", note: "The new TV says I don’t have access",
+    reason: "Can’t get in, or nothing plays", note: "The new TV says I don’t have access",
     status_then: `Last played Undersea Kingdom ${shortDay(at(60 * 24 * 3))} on Phone (Plex for Android), direct play, 1080p SDR`,
     status: "open", created_at: at(25) },
 );
