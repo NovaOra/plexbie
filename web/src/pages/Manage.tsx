@@ -2867,7 +2867,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const lookLeads = keys.look !== "none";
   const look = (k: KeyLook) => (k === "primary" ? " btn--primary" : k === "quiet" ? " btn--quiet" : "");
   const take = (
-    <button type="button" className={`btn${look(keys.take)} m-btn m-ticket__take`} disabled={readOnly} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("take") || undefined}
+    <button type="button" className={`btn${look(waiting && keys.take === "primary" ? "quiet" : keys.take)} m-btn m-ticket__take`} disabled={readOnly} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("take") || undefined}
       onClick={() => { if (busy.size === 0) void run("take", () => api.ticketTake(id), null); }}>
       {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
     </button>
