@@ -4039,7 +4039,10 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
       )}
       {sheet ? null : (
         <div className="m-keys m-pane__keys" aria-hidden>
-          <span><kbd>J</kbd> next</span><span><kbd>K</kbd> previous</span>{done ? <span><kbd>E</kbd> done</span> : null}<span><kbd>Esc</kbd> back</span>
+          {/* E's place is kept whatever the item (and before it's known), after the keys every item
+              has, so nothing in the strip moves as items change or arrive. */}
+          <span><kbd>J</kbd> next</span><span><kbd>K</kbd> previous</span><span><kbd>Esc</kbd> back</span>
+          <span className={done ? undefined : "m-keys__off"}><kbd>E</kbd> done</span>
           <span className="m-pane__more">More below <ChevronDown size={16} /></span>
         </div>
       )}

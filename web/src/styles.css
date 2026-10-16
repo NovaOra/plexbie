@@ -2767,6 +2767,7 @@ html.has-sheet .m-strip::before, html.has-sheet .m-mon__screen::after { animatio
 }
 .m-pane.at-end .m-pane__keys::before, .m-pane:not(.has-more) .m-pane__keys::before { opacity: 0; }
 .m-pane__more { margin-left: auto; color: var(--slate-ink); }
+.m-keys .m-keys__off { visibility: hidden; }
 .m-pane:not(.has-more) .m-pane__more, .m-pane.at-end .m-pane__more { visibility: hidden; }
 .m-pane .m-reqsheet__body { gap: var(--space-4); }
 .m-pane .m-reqsheet__fixes .m-btn { flex: 0 0 auto; }
