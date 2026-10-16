@@ -310,6 +310,10 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
         onPointerDown={(e) => {
           if (e.button !== 0) return;
           e.stopPropagation();
+          // No mouse events after a touch (a phone sends mousedown after the finger lifts, on whatever is
+          // under it by then, which takes focus to the page): focus the key here instead.
+          e.preventDefault();
+          e.currentTarget.focus({ preventScroll: true });
           e.currentTarget.setPointerCapture(e.pointerId);
           down.current = { x: e.clientX, y: e.clientY, moved: false };
           start();
@@ -318,7 +322,9 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
           const d = down.current;
           if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) d.moved = true;
         }}
-        onPointerUp={() => {
+        // A tap stays with the key: the row or card around it mustn't take it (and focus) as a click of its own.
+        onPointerUp={(e) => {
+          e.stopPropagation();
           const d = down.current;
           down.current = null;
           const quick = !!d && !d.moved && pressed.current && performance.now() - pressedAt.current < 300;
@@ -329,6 +335,11 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
         }}
         onPointerCancel={() => { down.current = null; cancel(); }}
         onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
+          // The click a finger's lift sends lands on whatever is under it by then (the next row, once
+          // this one has gone): swallow it, wherever it lands.
+          const swallow = (ev: MouseEvent) => { ev.stopPropagation(); ev.preventDefault(); window.removeEventListener("click", swallow, true); };
+          window.addEventListener("click", swallow, true);
+          window.setTimeout(() => window.removeEventListener("click", swallow, true), 400);
         onKeyUp={(e) => {
           if (!isKey(e)) return;
           e.preventDefault();
@@ -340,7 +351,8 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
           tapped();
         }}
         // A click no pointer press came with (a screen reader's, say) works like a tap.
-        onClick={() => {
+        onClick={(e) => {
+          e.stopPropagation();
           if (skipClick.current) { skipClick.current = false; return; }
           if (pressed.current || busy || blocked) return;
           tapped();
@@ -3650,7 +3662,14 @@ function pastCard(from: HTMLElement | null) {
   const before = card?.previousElementSibling ?? null;
   const section = from?.closest<HTMLElement>("section") ?? null;
   const keyIn = (el: Element | null) => el?.isConnected ? el.querySelector<HTMLElement>("button:not([disabled]), a[href]") : null;
-  return () => keyIn(after) ?? keyIn(before) ?? (section?.isConnected ? section.querySelector<HTMLElement>("h2, h3") : null);
+  const pane = from?.closest<HTMLElement>(".m-pane") ?? null;
+  // In the detail there's no list: the next item's title there, else the queue's first row, else the page's heading.
+  return () => keyIn(after) ?? keyIn(before) ?? (section?.isConnected ? section.querySelector<HTMLElement>("h2, h3") : null)
+    ?? (pane?.isConnected ? pane.querySelector<HTMLElement>(".m-hero__title") : null)
+    // A sheet that opened again on the next item is a new sheet: its title, not the page under it.
+    ?? (pane ? document.querySelector<HTMLElement>(".m-pane .m-hero__title") : null)
+    ?? (pane ? document.querySelector<HTMLElement>(".m-queue .m-row__main") : null)
+    ?? (pane ? document.querySelector<HTMLElement>("main h1") : null);
 }
 
 /** Focus somewhere real, without scrolling: a heading or a line of text becomes focusable just for this. */

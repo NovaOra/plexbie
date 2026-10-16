@@ -1769,7 +1769,8 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 }
 .m-hold.is-holding .m-hold__fill { clip-path: inset(0 0 0 0); transition: clip-path var(--hold) linear; }
 .m-hold.is-holding { transform: scale(0.97); }
-.m-hold.is-armed { color: var(--ink); box-shadow: inset 0 -3px 0 var(--tally); }
+/* Armed: a tally lip along the foot; the words keep the key's own colour (dark on pink, ink on the others). */
+.m-hold.is-armed { box-shadow: inset 0 -3px 0 var(--tally); }
 .m-hold:disabled .m-hold__fill { display: none; }
 
 @keyframes m-pulse { 0% { box-shadow: 0 0 0 0 var(--tally-edge); } 100% { box-shadow: 0 0 0 10px transparent; } }
