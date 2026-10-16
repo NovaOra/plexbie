@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   AnimatePresence, motion, useReducedMotion,
@@ -169,6 +169,14 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
   const [i, setI] = useAutoAdvance(items.length, SLIDE_MS, held || stopped);
 
   const current = items[i];
+  // The strap (and the Pause key in it) is new with each title. A Pause key that had focus hands it
+  // to the new one, in the same render, so the keyboard never lands on the page.
+  const pauseKey = useRef<HTMLButtonElement>(null);
+  const pauseHad = useRef(false);
+  useLayoutEffect(() => {
+    const at = document.activeElement;
+    if (pauseHad.current && (!at || at === document.body) && pauseKey.current) pauseKey.current.focus({ preventScroll: true });
+  }, [i]);
   return (
     <section className={`stage${bare ? " stage--compact stage--bare" : ""}`} aria-roledescription="carousel" aria-label="Just arrived on Plex"
       // Keyboard focus only: a tap or click also focuses the button it lands on,
@@ -197,7 +205,8 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
         {!current ? (
           <div className="stage__feature">
             <div className="strap strap--closed">
-              <span className="strap__tab">Now</span>
+              {/* "Channel", not a second "Now" above the ticker's. */}
+              <span className="strap__tab">Channel</span>
               <span className="strap__bar"><span>Nothing new on the channel yet. New arrivals show up here.</span></span>
             </div>
           </div>
@@ -210,13 +219,15 @@ export function Stage({ arrivals }: { arrivals: Arrival[] }) {
             <div className="stage__strapline" key={`s-${current.title.id}`}>
               <div className="strap strap--available strap--wipe" key={current.title.id}>
                 <span className="strap__tab"><Play aria-hidden />Just arrived</span>
-                <span className="strap__bar"><span>
-                  {current.detail ? `${current.detail}, ` : ""}{since(current.addedAt)}
-                </span></span>
+                {/* When first, whole; what it is after, at most two lines. */}
+                <span className="strap__bar"><span className="strap__when">{since(current.addedAt)}</span>
+                  {current.detail ? <span className="strap__detail">· {current.detail}</span> : null}</span>
               </div>
               {items.length > 1 && !reduced ? (
-                <button type="button" className="stage__pause" aria-pressed={stopped}
+                <button type="button" ref={pauseKey} className="stage__pause" aria-pressed={stopped}
                   aria-label={stopped ? "Play the channel" : "Pause the channel"}
+                  onFocus={() => { pauseHad.current = true; }}
+                  onBlur={(e) => { if (e.relatedTarget) pauseHad.current = false; }}
                   // Pressing it settles the matter, keyboard focus or not.
                   onClick={() => { setStopped((s) => !s); setHeld(false); }}>
                   {stopped ? <Play size={16} aria-hidden /> : <Pause size={16} aria-hidden />}

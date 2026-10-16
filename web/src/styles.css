@@ -492,8 +492,10 @@ html, body { overflow-x: clip; }
   min-width: 0;
 }
 .strap__bar > span { overflow-wrap: anywhere; }
-/* On the channel the strap takes two lines at most (the room the channel keeps for it). */
-.stage__strapline .strap__bar > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+/* On the channel the strap takes two lines at most (the room the channel keeps for it): the time
+   whole, then what it is, clamped. */
+.strap__when { flex: none; white-space: nowrap; }
+.stage__strapline .strap__detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 
 .strap--requested .strap__tab { background: var(--slate); }
 .strap--approved .strap__tab { background: var(--screen-deep); }
