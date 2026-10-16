@@ -2922,7 +2922,8 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .m-drawer__top h2 { font-size: var(--fs-h2); }
 .m-avatar { font-size: var(--fs-caps); }
 .m-avatar--big { font-size: var(--fs-h3); }
-.m-pane .journey__label { font-size: var(--fs-caps); }
+/* At the caps size every word of every step fits its 76px box ("Downloading" too): a little narrower and closer set. */
+.m-pane .journey__label { font-size: var(--fs-caps); font-stretch: 68%; letter-spacing: 0.02em; }
 
 /* ---- Manage: fourth QA pass */
 /* Keys inside cards keep their 44px (the list's min-height reset is for the fold, not for buttons). */
