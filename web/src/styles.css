@@ -1507,7 +1507,7 @@ main:has(.air) + .shell.footer::before { display: none; }
 .features { display: grid; gap: 24px; min-width: 0; }
 .features__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 16px; }
 .feature {
-  container-type: inline-size; min-width: 0; padding: clamp(20px, 5cqi, 32px); border-radius: 22px;
+  container-type: inline-size; min-width: 0; padding: clamp(24px, 5cqi, 32px); border-radius: 22px;
   background: var(--panel); border: 1px solid var(--rule);
 }
 .guide__head { display: grid; gap: 8px; }
@@ -3065,6 +3065,8 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) { --btn-bg: transparent; --btn-fg: var(--faint); border-color: var(--rule); box-shadow: none; }
 .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) svg { color: var(--faint); }
 @media (hover: hover) and (pointer: fine) { .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]):hover { --btn-bg: transparent; border-color: var(--rule); } }
+/* plexbie.com: the plugins' pause key, 44px like the ticker's. */
+.btn.btn--quiet.plugs__pause { width: 44px; min-height: 44px; padding: var(--space-2); }
 /* Reading measures: legal text, small notes on a page, the invite's privacy line; plexbie.com's credits and plugin intro. */
 .page p.muted.text-small, .invite__privacy { max-width: 25rem; }
 .guide__credit, .plugs__head p { max-width: 33rem; }

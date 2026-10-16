@@ -43,7 +43,8 @@ export function DragCrawl<T>({
         s.vel += (target - s.vel) * Math.min(1, dt * 2.2);   // momentum decays toward the drift
         s.x += s.vel * dt;
       }
-      if (width) {
+      // Not while the keyboard is in the row: the focused item must stay where it was brought.
+      if (width && !s.focus) {
         while (s.x <= -width) s.x += width;
         while (s.x > 0) s.x -= width;
       }
@@ -72,11 +73,14 @@ export function DragCrawl<T>({
         // Keyboard focus only: a tapped or clicked item takes focus too, and it should drift on.
         st.current.focus = (e.target as HTMLElement).matches(":focus-visible");
         // Bring the focused item into view: the row may have drifted it off screen.
+        // It lands at least 24px inside the row (clear of the faded edges), and the row stops there.
         const cell = (e.target as HTMLElement).closest<HTMLElement>(".dcrawl__cell");
         const box = root.current?.getBoundingClientRect();
-        if (cell && box) {
+        if (cell && box && st.current.focus) {
           const r = cell.getBoundingClientRect();
-          if (r.left < box.left + 16 || r.right > box.right - 16) st.current.x -= r.left - box.left - 24;
+          st.current.vel = 0;
+          if (r.left < box.left + 24 || r.right > box.right - 24) st.current.x -= r.left - box.left - 24;
+          if (track.current) track.current.style.transform = `translate3d(${st.current.x}px,0,0)`;
         }
         wake();
       }}

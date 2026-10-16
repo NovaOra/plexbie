@@ -212,7 +212,7 @@ function ChannelGuide({ play }: { play?: { film: Film; ask: number } }) {
   const list = useMemo(() => channels(play), [play]);
   const tuneTo = useMemo(() => (play ? { index: list.findIndex((c) => c.name === FILMS[play.film].channel), ask: play.ask } : undefined), [play, list]);
   return (
-    <section id="channels" data-seen="TV" className="guide" aria-labelledby="guide-h" style={{ scrollMarginTop: 80 }}>
+    <section id="channels" data-seen="TV" className="guide p-anchor" aria-labelledby="guide-h">
       <div className="guide__head">
         <h2 id="guide-h" className="display section-title">Tonight’s line-up</h2>
         <p className="muted">Two channels: the teaser on 01, and the three-minute tour on 02. Or try it yourself in the demo.</p>
@@ -228,7 +228,7 @@ function ChannelGuide({ play }: { play?: { film: Film; ask: number } }) {
 
 function Features() {
   return (
-    <section id="features" data-seen="Features" className="features" aria-labelledby="features-h" style={{ scrollMarginTop: 80 }}>
+    <section id="features" data-seen="Features" className="features p-anchor" aria-labelledby="features-h">
       <h2 id="features-h" className="display section-title">What it does</h2>
       <div className="features__grid">
         {FEATURES.map((f) => <article key={f.name} className="feature" aria-label={f.name}>{f.render()}</article>)}
@@ -272,8 +272,9 @@ function Plugins() {
       </div>
       {reduced ? null : (
         <div className="shell plugs__controls">
-          <button type="button" className="btn btn--quiet" aria-pressed={still} onClick={() => setStill((v) => !v)}>
-            {still ? <Play size={16} aria-hidden /> : <Pause size={16} aria-hidden />}{still ? "Let them drift" : "Hold still"}
+          {/* A 44px key like the ticker's: pressed, the rows stop drifting. */}
+          <button type="button" className="btn btn--quiet plugs__pause" aria-label="Pause the plugins" aria-pressed={still} onClick={() => setStill((v) => !v)}>
+            {still ? <Play size={18} aria-hidden /> : <Pause size={18} aria-hidden />}
           </button>
         </div>
       )}
@@ -350,7 +351,7 @@ function Terminal() {
 
 function SelfHost() {
   return (
-    <section id="self-host" data-seen="Self-host" className="selfhost" aria-labelledby="self-h" style={{ scrollMarginTop: 80 }}>
+    <section id="self-host" data-seen="Self-host" className="selfhost p-anchor" aria-labelledby="self-h">
       <div className="selfhost__copy">
         <h2 id="self-h" className="display section-title">On air in six commands</h2>
         <p>

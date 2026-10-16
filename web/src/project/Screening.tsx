@@ -23,6 +23,10 @@ export function TvFilm({ film, start = false }: { film: Film; start?: boolean })
   const f = FILMS[film];
   const [started, setStarted] = useState(start);
   const video = useRef<HTMLVideoElement>(null);
+  const playKey = useRef<HTMLButtonElement>(null);
+  // Pressed Play: focus goes to the film as the key gives way (and stays once it plays), or back to Play if the browser refused.
+  const pressed = useRef(false);
+  const [refused, setRefused] = useState(0);
   // How far into the tour people get: played, then each quarter, once per showing.
   const reached = useRef(new Set<number>());
   const progress = () => {
@@ -35,12 +39,16 @@ export function TvFilm({ film, start = false }: { film: Film; start?: boolean })
   };
   useEffect(() => {
     // A browser may refuse to start sound it didn't see pressed: the play button stays.
-    if (started) void video.current?.play().catch(() => setStarted(false));
+    if (!started) return;
+    void video.current?.play().then(
+      () => { if (pressed.current) { pressed.current = false; video.current?.focus({ preventScroll: true }); } },
+      () => { setStarted(false); if (pressed.current) { pressed.current = false; setRefused((n) => n + 1); } });
   }, [started]);
+  useEffect(() => { if (refused) playKey.current?.focus({ preventScroll: true }); }, [refused]);
 
   return (
     <div className="tv-film">
-      <video ref={video} controls={started} playsInline preload="none" poster={`${MEDIA}/${f.file}-poster-v${f.v}.jpg`}
+      <video ref={video} tabIndex={started ? undefined : -1} controls={started} playsInline preload="none" poster={`${MEDIA}/${f.file}-poster-v${f.v}.jpg`}
         aria-label={`${f.name}, ${f.length}`} onTimeUpdate={progress}
         onPlay={() => { setStarted(true); if (!reached.current.has(0)) { reached.current.add(0); track("video", { l: f.channel, v: 0 }); } }}
         onEnded={() => { if (!reached.current.has(100)) { reached.current.add(100); track("video", { l: f.channel, v: 100 }); } }}>
@@ -48,7 +56,7 @@ export function TvFilm({ film, start = false }: { film: Film; start?: boolean })
         <a href={`${MEDIA}/${f.file}-v${f.v}.mp4`}>Download {f.name} (MP4)</a>
       </video>
       {!started ? (
-        <button type="button" className="tv-film__play" onClick={() => setStarted(true)} aria-label={`Play ${f.name}, ${f.length}`}>
+        <button type="button" ref={playKey} className="tv-film__play" onClick={() => { pressed.current = true; video.current?.focus({ preventScroll: true }); setStarted(true); }} aria-label={`Play ${f.name}, ${f.length}`}>
           <Play size={28} aria-hidden />
           <span>{f.length}</span>
         </button>
