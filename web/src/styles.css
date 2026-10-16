@@ -304,9 +304,13 @@ p { margin: 0; text-wrap: pretty; }
 /* While something on the page is loading, the page fills the screen under the masthead, so the
    footer starts below the fold and arriving content never pushes a visible footer down (layout
    shift). A page that's all there (Not found, Join) ends with its footer under its content. */
-#main:has([aria-busy="true"], .page--loading) { min-height: calc(100svh - var(--masthead-h)); }
+#main:has(:not(button, article)[aria-busy="true"], .page--loading) { min-height: calc(100svh - var(--masthead-h)); }
 /* Under a stage the masthead floats over the page, so the page is the whole screen. */
-.has-stage #main:has([aria-busy="true"], .page--loading) { min-height: 100svh; }
+.has-stage #main:has(:not(button, article)[aria-busy="true"], .page--loading) { min-height: 100svh; }
+/* The footer waits for the page: it arrives with the content (an arrival, not a shift), so a
+   page that turns out short (one search result) never pulls its footer up into view. A key that's
+   busy, or a card whose action runs, is an action, not a load: it leaves the footer be. */
+#main:has(:not(button, article)[aria-busy="true"], .page--loading) + .footer { display: none; }
 .split { display: grid; gap: 48px; }
 .page > *, .split > *, .split > * > * { min-width: 0; }
 html, body { overflow-x: clip; }
