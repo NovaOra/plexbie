@@ -2077,7 +2077,14 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .alerts { display: flex; gap: 16px; align-items: flex-start; padding: 16px; border-radius: 16px; background: var(--panel); border: 1px solid rgb(255 209 228 / 0.35); }
 .alerts.is-on { border-color: var(--rule); }
 .alerts__icon { display: grid; place-items: center; width: 42px; height: 42px; flex: none; border-radius: 12px; background: var(--panel-raised); color: var(--screen); }
-.alerts__body { display: grid; gap: 8px; min-width: 0; }
+.alerts__body { display: grid; gap: 12px; min-width: 0; }
+/* On a phone the words get the card's whole width: the icon sits beside the heading, everything else below. */
+@media (max-width: 479px) {
+  .alerts { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; }
+  .alerts__body { display: contents; }
+  .alerts__body > * { grid-column: 1 / -1; }
+  .alerts__body > h2 { grid-column: 2; }
+}
 .alerts__body h2 { margin: 0; }
 .alerts__body p { margin: 0; line-height: 1.5; }
 .alerts__body svg { vertical-align: -2px; }

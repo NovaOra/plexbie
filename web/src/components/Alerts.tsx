@@ -255,6 +255,11 @@ export function IphoneApp({ app, lead = true }: { app: AppRelease | null; lead?:
       <button type="button" className={keyClass(false)} disabled={busy} onClick={() => void source("copy")}>
         <Copy size={18} aria-hidden /> Copy the address
       </button>
+    </div>
+  );
+  // Replacing the address is for later, after the steps: it stops the old one on every iPhone at once.
+  const replaceKey = (
+    <div className="alerts__actions">
       <button type="button" className={keyClass(false)} disabled={busy} onClick={() => void replace()}
         onBlur={() => { if (armed) { setArmed(false); setNote(""); } }}>
         {armed ? "Press again to replace" : "Replace the address"}
@@ -266,16 +271,17 @@ export function IphoneApp({ app, lead = true }: { app: AppRelease | null; lead?:
       <span className="alerts__icon" aria-hidden><Download size={22} /></span>
       <div className="alerts__body">
         <h2 id="iphone-h" className="h3">Plexbie for iPhone</h2>
-        <p className="muted">
-          Version {app.version}, {Math.round(app.ios.size / 1_000_000)} MB. iPhones only install apps from the App Store, so
-          Plexbie comes through SideStore, a free app that installs it under your own Apple ID and keeps it working.
-        </p>
+        {/* On an iPhone the keys come first, right under the heading, so the pink one is on the first screen. */}
         {lead ? (
           <>
             <p className="app-lead">Already have SideStore? Tap <b>Add to SideStore</b>. New to it? Set it up with the steps below first.</p>
             {actions}
           </>
         ) : null}
+        <p className="muted">
+          Version {app.version}, {Math.round(app.ios.size / 1_000_000)} MB. iPhones only install apps from the App Store, so
+          Plexbie comes through SideStore, a free app that installs it under your own Apple ID and keeps it working.
+        </p>
         <ol className="app-steps">
           <li>
             Install SideStore on your iPhone: follow the guide at{" "}
@@ -296,6 +302,7 @@ export function IphoneApp({ app, lead = true }: { app: AppRelease | null; lead?:
           </li>
         </ol>
         {lead ? null : actions}
+        {replaceKey}
         <p className="muted app-fine">
           With a free Apple ID an iPhone holds three of these apps, SideStore included. The app can’t get alerts on
           iPhone (Apple keeps that for its paid developer program), so for alerts, add this site to your Home Screen
