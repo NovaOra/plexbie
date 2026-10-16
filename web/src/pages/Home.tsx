@@ -94,7 +94,10 @@ export function Finder({ initialQuery = "", heading = true, live = false, type =
             type="search"
             aria-label="Search films, shows and books"
           />
-          <button className="btn btn--primary" type="submit" disabled={!q.trim()}>Search</button>
+          {/* On a phone just the magnifier (the field keeps its words); its hit area is 44px either way. */}
+          <button className="btn btn--primary finder__go" type="submit" disabled={!q.trim()} aria-label="Search">
+            <Search size={18} aria-hidden className="finder__go-icon" /><span className="finder__go-word">Search</span>
+          </button>
         </label>
       </form>
     </section>

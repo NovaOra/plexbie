@@ -433,8 +433,8 @@ html, body { overflow-x: clip; }
 .btn[aria-busy="true"] { cursor: progress; }
 .btn:disabled, .btn--primary:disabled { --btn-bg: var(--panel-raised); --btn-fg: var(--slate-ink); cursor: default; transform: none; box-shadow: none; }
 .btn--primary { --btn-bg: var(--screen); --btn-fg: var(--on-screen); --lip: var(--key-lip-pink); --lip-down: var(--key-lip-pink-down); }
-@media (hover: hover) and (pointer: fine) { .btn--primary:hover { --btn-bg: var(--screen-hover); } }
-.btn--primary:active, .btn--primary[aria-busy="true"] { --btn-bg: var(--screen-deep); }
+@media (hover: hover) and (pointer: fine) { .btn--primary:not(:disabled):hover { --btn-bg: var(--screen-hover); } }
+.btn--primary:not(:disabled):active, .btn--primary[aria-busy="true"] { --btn-bg: var(--screen-deep); }
 .btn--block { width: 100%; }
 /* Quiet: a hollow pill, like a toggle that isn't on. Never the main action. Doubled
    class, so the Manage size (.m-btn) and call sites' own sizes don't change its shape. */
@@ -447,7 +447,7 @@ html, body { overflow-x: clip; }
   box-shadow: var(--lip);
 }
 .btn.btn--quiet svg { color: var(--slate-ink); }
-@media (hover: hover) and (pointer: fine) { .btn.btn--quiet:hover { --btn-bg: var(--quiet-fill); border-color: var(--slate-ink); } }
+@media (hover: hover) and (pointer: fine) { .btn.btn--quiet:not(:disabled):hover { --btn-bg: var(--quiet-fill); border-color: var(--slate-ink); } }
 .btn.btn--quiet:active, .btn.btn--quiet[aria-busy="true"] { box-shadow: var(--lip-down); }
 .btn.btn--quiet:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-full); }
 .btn.btn--quiet:disabled { --btn-bg: transparent; --btn-fg: var(--faint); border-color: var(--rule); box-shadow: none; transform: none; }
@@ -545,7 +545,21 @@ html, body { overflow-x: clip; }
 }
 .finder__field input::placeholder { color: var(--slate-ink); opacity: 1; }
 .finder__field svg { width: 18px; height: 18px; }
-.finder__field .btn { min-height: 34px; padding: 0 var(--space-4); border-radius: var(--r-full); }
+.finder__field .btn { position: relative; min-height: 34px; padding: 0 var(--space-4); border-radius: var(--r-full); }
+/* The key inside the 44px pill is drawn 34px tall; its hit area is 44px. */
+.finder__field .btn::after { content: ""; position: absolute; inset: -5px -4px; }
+.finder__go .finder__go-icon { display: none; color: inherit; }
+@media (max-width: 479px) {
+  .finder__go { width: 36px; min-height: 36px; padding: 0; }
+  .finder__go .finder__go-icon { display: block; }
+  .finder__go .finder__go-word { display: none; }
+  .finder__go.btn::after { inset: -4px; }
+}
+/* Focus and hover on the pill itself, as on every field. */
+.finder__field:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .finder__field:hover:not(:focus-within), .m-search:hover:not(:focus-within) { border-color: var(--slate-ink); }
+}
 
 .kinds { display: flex; gap: 8px; flex-wrap: wrap; }
 /* Phones: two by two, so "Ebook" isn't left alone on a line. */
@@ -751,6 +765,8 @@ html, body { overflow-x: clip; }
   font: inherit; font-size: var(--fs-h3);
 }
 .field input:focus { outline: none; border-color: var(--screen); }
+/* A focused field shows a ring even when its edge is tally (wrong), as the Manage fields do. */
+.field input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .field input::placeholder { color: var(--slate-ink); }
 .field__hint { font-size: var(--fs-small); color: var(--slate-ink); }
 .field__error { font-size: var(--fs-body, 1rem); line-height: 1.5; color: var(--tally); transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out); }
@@ -1707,8 +1723,10 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 /* ------------------------------------------------------------------ manage */
 
 .btn--plex { --btn-bg: var(--note); --btn-fg: var(--on-note); }
-@media (hover: hover) and (pointer: fine) { .btn--plex:hover { --btn-bg: var(--note-hover); } }
-.btn--plex:active, .btn--plex[aria-busy="true"] { --btn-bg: var(--note-deep); }
+@media (hover: hover) and (pointer: fine) { .btn--plex:not(:disabled):hover { --btn-bg: var(--note-hover); } }
+/* A disabled key never answers the pointer, whatever its colour. */
+@media (hover: hover) and (pointer: fine) { .btn:disabled:hover, .btn.btn--quiet:disabled:hover { --btn-bg: var(--panel-raised); } .btn.btn--quiet:disabled:hover { --btn-bg: transparent; } }
+.btn--plex:not(:disabled):active, .btn--plex[aria-busy="true"] { --btn-bg: var(--note-deep); }
 
 /* ================================================================ manage */
 .m-page { padding-bottom: 128px; }
