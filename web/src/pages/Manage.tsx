@@ -331,15 +331,15 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
           cancel(quick);
           skipClick.current = true;
           window.setTimeout(() => { skipClick.current = false; }, 400);
-          if (quick && !disabled && !busy && !blocked) tapped();
-        }}
-        onPointerCancel={() => { down.current = null; cancel(); }}
-        onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
           // The click a finger's lift sends lands on whatever is under it by then (the next row, once
           // this one has gone): swallow it, wherever it lands.
           const swallow = (ev: MouseEvent) => { ev.stopPropagation(); ev.preventDefault(); window.removeEventListener("click", swallow, true); };
           window.addEventListener("click", swallow, true);
           window.setTimeout(() => window.removeEventListener("click", swallow, true), 400);
+          if (quick && !disabled && !busy && !blocked) tapped();
+        }}
+        onPointerCancel={() => { down.current = null; cancel(); }}
+        onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
         onKeyUp={(e) => {
           if (!isKey(e)) return;
           e.preventDefault();
