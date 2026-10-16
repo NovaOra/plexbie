@@ -3267,7 +3267,8 @@ function GroupSum({ g }: { g: MenuGroup }) {
   if (g.count === undefined) return <span className="m-mgroup__sum">{g.makeup}</span>;
   const n = `${g.count}`;
   const single = !g.makeup.includes(" · ") && g.makeup.startsWith(`${n}\u00a0`);
-  return <span className="m-mgroup__sum">{g.count ? <b>{n}</b> : null}{single ? g.makeup.slice(n.length + 1) : g.makeup}</span>;
+  if (!g.count) return <span className="m-mgroup__sum">{g.makeup}</span>;
+  return <span className="m-mgroup__sum"><b>{n}</b>{single ? g.makeup.slice(n.length + 1) : g.makeup}</span>;
 }
 
 /**

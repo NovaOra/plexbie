@@ -408,6 +408,8 @@ const MAKEUP: Record<Area, [Kind[], (n: number) => string][]> = {
   library: [],
   services: [],
 };
+/** An empty monitor's footer: its count, not a second "Nothing waiting" under the one on its screen. */
+const EMPTY_MAKEUP: Record<Area, string> = { requests: `0${NB}waiting`, help: `0${NB}tickets`, people: `0${NB}joins`, library: "", services: "" };
 /** What the queue is made from (the watch party under the monitors waits for nobody). */
 export type Feed = Exclude<keyof DeskData, "discord">;
 export const DESK_FEEDS: Feed[] = ["requests", "all", "tickets", "joins", "invites", "plexinvites", "people", "cleanup", "messages", "health", "blocked"];
@@ -445,7 +447,7 @@ export function deriveDesk(d: DeskData, now: number,
     const checks = d.health?.length ?? 0;
     const makeup = id === "library" ? (n ? `${n}${NB}leaving in ${days(warnDays)}` : cleanup?.enabled && !cleanup.practice ? "Nothing leaving" : `Cleanup ${cleanup?.enabled ? "in practice" : "off"}`)
       : id === "services" ? (checks ? `${n ? n : checks}${NB}of ${checks}${NB}${n ? "down" : "up"}` : "No checks yet")
-        : parts.length ? parts.join(" · ") : "Nothing waiting";
+        : parts.length ? parts.join(" · ") : EMPTY_MAKEUP[id];
     return { area: id, label, count: n, hot: mine.some((i) => i.group === "urgent"), known: FEEDS[id].every((s) => d[s] !== undefined),
       failed: FEEDS[id].some((s) => missing.includes(s)), first: mine[0], makeup };
   });
