@@ -36,6 +36,8 @@ type ToastIn = {
   /** Runs when the toast goes without its Undo pressed (timed out, swiped away, the tab hidden,
    *  the page left): a decision held back for Undo is sent then. */
   onGone?: () => void;
+  /** The queue row an Undo puts back (its data-key): focus goes to its first key if it has nowhere else to go. */
+  row?: string;
 };
 type Toast = ToastIn & { id: number };
 
@@ -226,6 +228,12 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
   const armTimer = useRef<number | undefined>(undefined);
   const pressed = useRef(false);
   const pressedAt = useRef(0);
+  // A pointer press: where and when it went down, and whether it wandered (a scroll, not a tap).
+  const down = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  // The click a pointer press is followed by: already handled on the way up, so it's ignored.
+  const skipClick = useRef(false);
+  // A quick press (a tap, or Space or Enter let go at once) is a click: it arms, and a second confirms.
+  const tapped = () => { if (armed) { arm(false); confirm(); } else arm(true); };
   const self = useRef<HTMLButtonElement>(null);
   // The props as they are now: a hold's timer fires when the hold is done, and they may have changed by then.
   const latest = useRef({ onConfirm, disabled, busy: busy || blocked });
@@ -303,10 +311,23 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
           if (e.button !== 0) return;
           e.stopPropagation();
           e.currentTarget.setPointerCapture(e.pointerId);
+          down.current = { x: e.clientX, y: e.clientY, moved: false };
           start();
         }}
-        onPointerUp={() => cancel()}
-        onPointerCancel={() => cancel()}
+        onPointerMove={(e) => {
+          const d = down.current;
+          if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) d.moved = true;
+        }}
+        onPointerUp={() => {
+          const d = down.current;
+          down.current = null;
+          const quick = !!d && !d.moved && pressed.current && performance.now() - pressedAt.current < 300;
+          cancel(quick);
+          skipClick.current = true;
+          window.setTimeout(() => { skipClick.current = false; }, 400);
+          if (quick && !disabled && !busy && !blocked) tapped();
+        }}
+        onPointerCancel={() => { down.current = null; cancel(); }}
         onKeyDown={(e) => { if (isKey(e)) { e.preventDefault(); if (!e.repeat) start(); } }}
         onKeyUp={(e) => {
           if (!isKey(e)) return;
@@ -316,11 +337,13 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
           const quick = pressed.current && performance.now() - pressedAt.current < 300;
           cancel(quick);
           if (!quick || disabled || busy || blocked) return;
-          if (armed) { arm(false); confirm(); } else arm(true);
+          tapped();
         }}
-        onClick={(e) => {
-          if (e.detail !== 0 || pressed.current || busy || blocked) return;
-          if (armed) { arm(false); confirm(); } else arm(true);
+        // A click no pointer press came with (a screen reader's, say) works like a tap.
+        onClick={() => {
+          if (skipClick.current) { skipClick.current = false; return; }
+          if (pressed.current || busy || blocked) return;
+          tapped();
         }}
         onBlur={() => { cancel(); arm(false); }}
         onContextMenu={(e) => e.preventDefault()}
@@ -2508,7 +2531,7 @@ function MessagesTab() {
               </button>
             </li>
           ))}
-          {!shown.length ? <li className="muted" style={{ padding: 12 }}>{q ? "Nobody matches." : "No messages yet."}</li> : null}
+          {!shown.length ? <li className="muted m-empty-row">{q ? "Nobody matches." : "No messages yet."}</li> : null}
         </ul>
         {/* Keyed by person, so a draft or a send in progress never carries over to the next one. */}
         {current ? <Conversation key={current.id} person={current} onBack={() => setOpen(null)} /> : (
@@ -3302,6 +3325,13 @@ function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number, undon
   // focus is on the toast (reaching Undo takes a moment), so nothing vanishes unread.
   // With `hold` (an Undo while the keyboard is in use) it waits until it's let go.
   const clock = useRef<{ pause: () => void; resume: () => void } | null>(null);
+  // Where the keyboard came from into this toast: it goes back there when the toast goes
+  // (Undo, Escape), else to the row Undo put back, else the page's heading. Never the page itself.
+  const cameFrom = useRef<HTMLElement | null>(null);
+  const leave = (from: HTMLElement | null) => guardFocus(from, () =>
+    (cameFrom.current?.isConnected ? cameFrom.current : null)
+    ?? (t.row ? document.querySelector<HTMLElement>(`.m-row[data-key="${CSS.escape(t.row)}"] .m-row__acts button`) : null)
+    ?? document.querySelector<HTMLElement>("main h1"));
   useEffect(() => {
     let left = t.undo ? 6500 : 4200;
     let started = Date.now();
@@ -3337,7 +3367,18 @@ function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number, undon
       className={`m-toast${t.tone === "error" ? " is-error" : ""}`}
       role={t.tone === "error" ? "alert" : undefined}
       onPointerEnter={() => clock.current?.pause()} onPointerLeave={() => clock.current?.resume()}
-      onFocus={() => clock.current?.pause()} onBlur={() => clock.current?.resume()}
+      onFocus={(e) => {
+        clock.current?.pause();
+        const from = e.relatedTarget as HTMLElement | null;
+        if (from && !e.currentTarget.contains(from)) cameFrom.current = from;
+      }}
+      onBlur={() => clock.current?.resume()}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        leave(document.activeElement as HTMLElement | null);
+        dismiss(t.id);
+      }}
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 8, transition: { duration: 0.16, ease: EASE_OUT } }}
@@ -3352,7 +3393,8 @@ function ToastItem({ t, dismiss, hold }: { t: Toast; dismiss: (id: number, undon
         {t.undo ? <span className="visually-hidden"> {UNDO_KEYS} undoes it.</span> : null}
       </span>
       {t.undo ? (
-        <button type="button" className="btn btn--quiet m-btn m-toast__undo" aria-keyshortcuts="Alt+Z" onClick={() => { t.undo!(); dismiss(t.id, true); }}>Undo</button>
+        <button type="button" className="btn btn--quiet m-btn m-toast__undo" aria-keyshortcuts="Alt+Z"
+          onClick={(e) => { leave(e.currentTarget); t.undo!(); dismiss(t.id, true); }}>Undo</button>
       ) : null}
     </motion.div>
   );
@@ -3557,7 +3599,7 @@ function RowActions({ item, a, open, look, reply, selected = false }: {
         if (guarded && busy) return;
         const row = e.currentTarget.closest<HTMLElement>(".m-row");
         void Promise.resolve(onClick()).then(() => keepFocusIn(row));
-      }}>{label}</button>
+      }}>{guarded && busy ? <RefreshCw size={16} aria-hidden className="m-spin m-btn__spin" /> : null}{label}</button>
   );
   const openKey = key("Open", open, true, false);
   // A hold's own decision waits out its Undo off the queue, so a busy row is busy with its other key.
@@ -4282,7 +4324,7 @@ export function Manage() {
     buzz(12);
     // Whatever happens, the row comes back off hold: gone from the data once it's done,
     // back in the queue if it didn't go through (the error says so).
-    toast({ text, undo: () => show(key), onGone: () => { void run().finally(() => show(key)); } });
+    toast({ text, undo: () => show(key), row: key, onGone: () => { void run().finally(() => show(key)); } });
   }, [toast, show]);
 
   // Each section's newest ask (`n`) and when it went. An answer to an older ask, or to one
