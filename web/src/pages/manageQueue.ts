@@ -253,7 +253,7 @@ function rows(d: DeskData, now: number, me: string | null): Item[] {
     const app = b.app === "sonarr" ? "Sonarr" : "Radarr";
     out.push({
       key: `import:${b.app}:${b.downloadId}`, kind: "import", area: "help", group: "urgent",
-      eyebrow: `${app} · import blocked`, title: b.title, sub: episodesOf(b.episodes) ?? (b.year ? String(b.year) : undefined),
+      eyebrow: `${app} · import blocked`, title: b.title, sub: episodesOf(b.episodes) ?? (b.year ? String(b.year) : undefined), subIsSeason: b.episodes.length > 0,
       meta: clamp(b.messages[0] ?? `${app} won’t import it by itself`, 42), top: "Import blocked",
       art: { poster: posterFor(d, b.title, b.poster), title: b.title, kind: b.app === "sonarr" ? "tv" : "movie" }, wait: 0, src: { type: "import", b },
     });
