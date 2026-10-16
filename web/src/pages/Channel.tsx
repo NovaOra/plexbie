@@ -14,17 +14,17 @@ export function Channel() {
 
   return (
     <div className="shell page">
-      <div style={{ display: "grid", gap: 16 }}>
+      <div className="stack stack--4">
         <h1 className="display page-title">Channel</h1>
         <NowStrap />
       </div>
 
       <div className="split">
-        <div style={{ display: "grid", gap: 40 }}>
+        <div className="stack stack--12">
           <OnAirNow community={community} />
 
           <Section id="lb-h" title="Most watched">
-            <p className="muted" style={{ fontSize: "0.92rem", marginTop: -6 }}>All-time watch time, watch parties included. The top three, not counting the server’s owner, are never removed for inactivity.</p>
+            <p className="muted text-small">All-time watch time, watch parties included. The top three, not counting the server’s owner, are never removed for inactivity.</p>
             {community.loading ? (
               <div className="ranks" aria-busy="true" aria-label="Loading the board">
                 {Array.from({ length: 5 }, (_, i) => <div key={i} className="skeleton" style={{ height: 48 }} />)}
@@ -50,14 +50,14 @@ export function Channel() {
           </Section>
         </div>
 
-        <div style={{ display: "grid", gap: 40 }}>
+        <div className="stack stack--12">
           {you ? (
             <Section id="you-h" title="You">
               <div className="figures">
                 <div className="figure"><span className="figure__v">{Math.round(you.hours).toLocaleString()} h</span><span className="figure__l">watched in total</span></div>
                 <div className="figure"><span className="figure__v">{you.rank ? `#${you.rank}` : "Unranked"}</span><span className="figure__l">on the board</span></div>
                 <div className="figure">
-                  <span className="figure__v" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <span className="figure__v inline-row inline-row--2">
                     {you.streak > 0 ? <Flame size={20} color="var(--tally)" aria-hidden /> : null}{you.streak}
                   </span>
                   <span className="figure__l">day streak, best {you.longestStreak}</span>

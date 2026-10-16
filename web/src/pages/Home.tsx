@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence } from "motion/react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { LifeBuoy, Search } from "../components/icons";
+import { useMedia } from "../components/useMedia";
 import { api } from "../api/client";
 import { NewTicketSheet, TicketSheet } from "../components/HelpSheet";
 import { afterOverlay } from "../components/overlay";
@@ -60,6 +61,8 @@ export function Finder({ initialQuery = "", heading = true, live = false, type =
   initialQuery?: string; heading?: boolean; live?: boolean; type?: string;
 }) {
   const [q, setQ] = useState(initialQuery);
+  // The narrowest phones get the short hint, so it's never cut.
+  const narrow = useMedia("(max-width: 359px)");
   const navigate = useNavigate();
   const go = (query: string, replace: boolean) => {
     const params = new URLSearchParams();
@@ -88,7 +91,7 @@ export function Finder({ initialQuery = "", heading = true, live = false, type =
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Films, shows and books"
+            placeholder={narrow ? "Search titles" : "Films, shows and books"}
             enterKeyHint="search"
             autoComplete="off"
             type="search"
@@ -272,9 +275,9 @@ function YourStanding({ community }: { community: Loaded<Community> }) {
         <div className="figure"><span className="figure__v">{you.streak} days</span><span className="figure__l">watch streak</span></div>
       </div>
       {you.topThree ? (
-        <p className="muted" style={{ fontSize: "0.9rem" }}>You’re in the top three, so inactivity cleanup skips you.</p>
+        <p className="muted text-small">You’re in the top three, so inactivity cleanup skips you.</p>
       ) : (
-        <p className="muted" style={{ fontSize: "0.9rem" }}>
+        <p className="muted text-small">
           Last watched {you.daysIdle === 0 ? "today" : `${you.daysIdle} days ago`}. Accounts idle for {you.removalAfterDays} days are removed from Plex.
         </p>
       )}
@@ -319,12 +322,12 @@ export function Home() {
           <Finder heading={false} />
         </section>
         <div className="split">
-          <div style={{ display: "grid", gap: 40 }}>
+          <div className="stack stack--12">
             <YourSchedule />
             {session?.member ? <NeedHelp /> : null}
             <LibraryTeaser />
           </div>
-          <div style={{ display: "grid", gap: 40 }}>
+          <div className="stack stack--12">
             <OnAirNow community={community} limit={3} />
             <YourStanding community={community} />
           </div>

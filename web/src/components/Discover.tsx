@@ -66,6 +66,16 @@ function LanguagePick({ chosen, options, onChange }: {
   chosen: string[]; options: { code: string; name: string }[]; onChange: (next: string[]) => void;
 }) {
   const menu = useRef<HTMLDetailsElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  // Opened near the screen's right edge, the panel slides left to stay on screen.
+  const place = () => {
+    const el = panel.current;
+    if (!el || !menu.current?.open) return;
+    el.style.left = "0px";
+    const r = el.getBoundingClientRect();
+    const over = r.right - (window.innerWidth - 16);
+    if (over > 0) el.style.left = `${-Math.min(over, r.left - 16)}px`;
+  };
   const label = !chosen.length ? "Every language"
     : chosen.length <= 2 ? chosen.map((c) => options.find((o) => o.code === c)?.name ?? c).join(", ") : `${chosen.length} languages`;
   // Closes on a click anywhere else, as a dropdown does.
@@ -75,9 +85,9 @@ function LanguagePick({ chosen, options, onChange }: {
     return () => document.removeEventListener("click", away);
   }, []);
   return (
-    <details className="pick-menu" ref={menu}>
+    <details className="pick-menu" ref={menu} onToggle={place}>
       <summary className="select" aria-label={`Language: ${label}`}>{label}</summary>
-      <div className="pick-menu__panel" role="group" aria-label="Languages to show">
+      <div className="pick-menu__panel" ref={panel} role="group" aria-label="Languages to show">
         <label className="pick-menu__opt">
           <input type="checkbox" checked={!chosen.length} onChange={() => onChange([])} /> Every language
         </label>

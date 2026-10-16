@@ -107,12 +107,12 @@ function Requested({ request }: { request: MediaRequest }) {
     <motion.div ref={box} className="confirm" role="status"
       initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ type: "spring", duration: 0.4, bounce: 0.15 }} style={{ transformOrigin: "50% 0%" }}>
-      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+      <div className="inline-row inline-row--4">
         <motion.span initial={{ scale: 0.8 }} animate={{ scale: 1 }} style={{ transformOrigin: "50% 100%", display: "inline-flex" }}
           transition={{ type: "spring", duration: 0.45, bounce: 0.3, delay: 0.06 }}>
           <Mascot />
         </motion.span>
-        <div style={{ display: "grid", gap: 8 }}>
+        <div className="stack stack--2">
           <h2 className="h3" ref={heading} tabIndex={-1}>Request No. {formatSlot(request.slot)} is in</h2>
           <p className="muted">
             An admin gets it in Discord now. You’ll get a DM when it’s approved or declined
@@ -156,14 +156,14 @@ function TitleView() {
         <div className="title-hero">
           <div className="title-head">
             <div className="poster__art skeleton" />
-            <div style={{ display: "grid", gap: 12 }}>
+            <div className="stack stack--3">
               <div className="skeleton" style={{ height: "2.4rem", width: "70%" }} />
               <div className="skeleton" style={{ height: 16, width: "55%" }} />
             </div>
           </div>
         </div>
         <div className="split">
-          <div style={{ display: "grid", gap: 10 }}>
+          <div className="stack stack--3">
             {[96, 100, 88, 60].map((w, i) => <div key={i} className="skeleton" style={{ height: 16, width: `${w}%` }} />)}
           </div>
         </div>
@@ -235,9 +235,9 @@ function TitleView() {
       </div>
 
       <div className="split">
-        <div style={{ display: "grid", gap: 28 }}>
+        <div className="stack stack--8">
           <Countdown leaving={t.leaving} long />
-          {t.overview ? <p style={{ fontSize: "1.05rem", maxWidth: "65ch" }}>{t.overview.replace(/\s*[\u2014\u2013]\s*/g, ", ")}</p> : null}
+          {t.overview ? <p className="text-h3 measure">{t.overview.replace(/\s*[\u2014\u2013]\s*/g, ", ")}</p> : null}
         </div>
         {/* What you can do with it: beside the overview on wide screens (it stays in view), below it on phones. */}
         <div className="title-actions">

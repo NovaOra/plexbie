@@ -84,7 +84,7 @@ function Account({ session }: { session: Session }) {
       <div className="account-menu" id="account-menu" hidden={!open}>
         <div className="account-menu__who">
           <div style={{ fontWeight: 700 }}>{user.name}</div>
-          <div className="muted" style={{ fontSize: "0.86rem" }}>
+          <div className="muted text-small">
             {session.member ? "Plex member" : "Not on Plex yet"}
           </div>
         </div>
@@ -241,7 +241,7 @@ export function Layout({ children }: { children?: ReactNode }) {
             {session.loading ? null : s ? (
               <Account session={s} />
             ) : inApp ? null : (
-              <Link className="btn btn--primary" style={{ minHeight: 44, padding: "0 14px" }} to="/">
+              <Link className="btn btn--primary" style={{ minHeight: 44, padding: "0 16px" }} to="/">
                 Log in
               </Link>
             )}

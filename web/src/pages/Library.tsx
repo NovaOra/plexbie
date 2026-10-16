@@ -70,7 +70,7 @@ export function Library() {
         </div>
       </header>
 
-      <div style={{ display: "grid", gap: 16 }}>
+      <div className="stack stack--4">
         {/* The same three small dropdowns as the Request page (and the app's Library). */}
         <div className="request-bar" role="group" aria-label="Filters">
           <select className="select" value={kind} aria-label="Shelf"

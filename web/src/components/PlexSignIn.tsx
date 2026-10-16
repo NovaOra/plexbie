@@ -28,7 +28,7 @@ export function PlexSignIn({ className, next = "/", invite = false, children, on
         {children}
       </a>
       {status ? (
-        <p className="muted plex-status" role="status" style={{ fontSize: "0.9rem", flexBasis: "100%", margin: 0 }}>
+        <p className="muted plex-status text-small" role="status" style={{ flexBasis: "100%", margin: 0 }}>
           {status}
         </p>
       ) : null}

@@ -60,7 +60,7 @@ export function Join() {
             </p>
           </section>
         ) : (
-          <section style={{ display: "grid", gap: 20 }}>
+          <section className="stack stack--6">
             <h1>{first ? `${first}, let’s get you on Plex.` : "Let’s get you on Plex."}</h1>
             <InviteOutcome />
             {blocked ? (
@@ -71,7 +71,7 @@ export function Join() {
                   You’re in the Discord, but not on the Plex server yet. Give the email you use for Plex (or want to use)
                   and an admin will send you an invite. It’s the same as /join-plex.
                 </p>
-                <form onSubmit={submit} style={{ display: "grid", gap: 14, maxWidth: 460 }} noValidate>
+                <form onSubmit={submit} className="stack stack--3 form-narrow" noValidate>
                   <div className="field">
                     <label htmlFor="email">Email for Plex</label>
                     <input

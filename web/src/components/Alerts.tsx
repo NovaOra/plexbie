@@ -88,12 +88,12 @@ export function AlertsPage() {
     return () => { live = false; };
   }, []);
   return (
-    <div className="shell page" style={{ display: "grid", gap: 20, maxWidth: 640 }}>
+    <div className="shell page page--narrow">
       <h1 className="display page-title">Alerts</h1>
       <AlertsPanel />
       <AppDownload app={app} />
       <IphoneApp app={app} />
-      <p className="muted" style={{ fontSize: "0.9rem" }}>
+      <p className="muted text-small">
         Alerts come from this site itself, with no outside service involved. They’re per device: turn them on in each
         phone or browser you want them in.
       </p>
