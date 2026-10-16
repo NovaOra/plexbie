@@ -47,6 +47,8 @@
   --fs-stage-long: clamp(2rem, 1.2rem + 4vw, 4.4rem); --fs-stage: clamp(2.6rem, 1.4rem + 6vw, 6rem);
   --fs-hero-line: clamp(1.4rem, 1.1rem + 1.4vw, 2.2rem); --fs-hero: clamp(3rem, 1.4rem + 6.6vw, 7rem);
   --fs-tunein: clamp(3.4rem, 2rem + 6vw, 7.4rem);
+  /* A title page's name, sized to its column (cqi, worked out where it's used); a desk monitor's count. */
+  --fs-title: clamp(1.5rem, 14cqi, 4.6rem); --fs-monitor: clamp(1.55rem, 1rem + 2.2vw, 2.3rem);
   color-scheme: dark;
   --slate-tab: #8e9cc6;
 
@@ -1005,7 +1007,7 @@ html, body { overflow-x: clip; }
 
 /* ------------------------------------------------------------- library */
 /* Fine print under a section. */
-.small { font-size: var(--fs-small); }
+.small, small { font-size: var(--fs-small); }
 .join__lede { max-width: 52ch; font-size: var(--fs-h3); }
 /* Every app page's title: one voice, one size. */
 .page-title { font-size: var(--fs-page-title); margin: 0; }
@@ -1069,7 +1071,7 @@ html, body { overflow-x: clip; }
 /* Sized to its own column, not the screen: a long single word ("Extraordinary")
    must fit beside the poster on a phone, and anything longer wraps. */
 .title-head > div { container-type: inline-size; min-width: 0; }
-.title-head h1 { font-stretch: 68%; font-weight: 840; text-transform: uppercase; line-height: 0.9; font-size: clamp(1.5rem, 14cqi, 4.6rem); overflow-wrap: anywhere; hyphens: auto; }
+.title-head h1 { font-stretch: 68%; font-weight: 840; text-transform: uppercase; line-height: 0.9; font-size: var(--fs-title); overflow-wrap: anywhere; hyphens: auto; }
 @media (max-width: 519px) {
   .title-head { grid-template-columns: 88px minmax(0, 1fr); gap: 16px; }
   .title-head .poster__art { width: 88px; }
@@ -2034,7 +2036,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .invite__small { margin: 0; font-size: var(--fs-small); }
 .invite__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
 .invite__steps li { display: flex; gap: 16px; align-items: flex-start; }
-.invite__steps p { margin: 4px 0 0; font-size: var(--fs-small); }
+.invite__steps p { margin: 4px 0 0; font-size: var(--fs-body); }
 .invite__n { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--panel-raised); color: var(--screen); font-weight: 840; font-size: var(--fs-small); }
 .invite__privacy { font-size: var(--fs-small); line-height: 1.55; margin: 0; }
 .invite__done { margin: 0; padding: 12px 16px; border-radius: 12px; background: rgb(255 209 228 / 0.12); color: var(--screen); font-weight: 650; }
@@ -2046,7 +2048,7 @@ html.has-sheet .m-toast:not(:last-child) { display: none; }
 .invite__section > p { margin: 0; line-height: 1.55; }
 .invite__offers { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .invite__offers li { display: flex; gap: 16px; align-items: flex-start; padding: 16px; border-radius: 14px; background: var(--panel); border: 1px solid var(--rule); }
-.invite__offers p { margin: 4px 0 0; font-size: var(--fs-small); line-height: 1.5; }
+.invite__offers p { margin: 4px 0 0; font-size: var(--fs-body); line-height: 1.5; }
 .invite__offers--rules li { background: transparent; }
 .invite__icon { display: grid; place-items: center; width: 38px; height: 38px; flex: none; border-radius: 10px; background: var(--panel-raised); color: var(--screen); }
 .invite__again { display: grid; gap: 16px; }
@@ -2183,13 +2185,13 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 .popular__note { margin: -8px 0 0; font-size: var(--fs-small); }
 .popular__row { display: grid; gap: 8px; }
 .popular__kind { margin: 0; font-size: var(--fs-caps); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--slate-ink); }
-.popular__list { list-style: none; margin: 0 calc(var(--pad-r) * -1) 0 calc(var(--pad-l) * -1); padding: 4px var(--pad-r) 12px var(--pad-l); display: grid; grid-auto-flow: column; grid-auto-columns: 42%; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; overscroll-behavior-x: contain; }
+.popular__list { list-style: none; margin: 0 calc(var(--pad-r) * -1) 0 calc(var(--pad-l) * -1); padding: 4px var(--pad-r) 12px var(--pad-l); display: grid; grid-auto-flow: column; grid-auto-columns: 42%; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: var(--pad-l) var(--pad-r); scrollbar-width: none; overscroll-behavior-x: contain; }
 @media (min-width: 560px) { .popular__list { grid-auto-columns: 28%; } }
-@media (min-width: 900px) { .popular__list { grid-auto-columns: calc((100% - 6 * 14px) / 6.4); margin: 0; padding: 4px 0 12px; } }
+@media (min-width: 900px) { .popular__list { grid-auto-columns: calc((100% - 6 * 16px) / 6.4); margin: 0; padding: 4px 0 12px; scroll-padding-inline: 0; } }
 .popular__rowhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .popular__arrows { display: none; gap: 8px; }
 @media (hover: hover) and (pointer: fine) { .popular__arrows { display: inline-flex; } }
-.popular__arrow { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--rule); border-radius: 999px; background: var(--panel); color: var(--ink); cursor: pointer; transition: transform 120ms var(--ease-out), border-color 160ms ease; }
+.popular__arrow { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--rule); border-radius: 999px; background: var(--panel); color: var(--ink); cursor: pointer; transition: transform 120ms var(--ease-out), border-color 160ms ease; }
 @media (hover: hover) and (pointer: fine) { .popular__arrow:hover { border-color: var(--slate); } }
 .popular__arrow:active { transform: scale(0.94); }
 .results.is-refreshing { opacity: 0.6; transition: opacity 160ms ease; }
@@ -2461,7 +2463,7 @@ html.has-sheet, html.has-sheet body { overflow: hidden; }
 @media (hover: hover) and (pointer: fine) { .ticket-row:hover { border-color: var(--slate); } }
 .ticket-row:active { transform: scale(0.99); }
 .ticket-row__about { font-weight: 700; overflow-wrap: anywhere; }
-.ticket-row__reason { font-size: var(--fs-small); }
+.ticket-row__reason { font-size: var(--fs-body); }
 .ticket-row__state { color: var(--slate-ink); font-size: var(--fs-small); }
 .ticket-row.is-waiting { border-color: var(--tally-edge); }
 .ticket-row.is-waiting .ticket-row__state { color: var(--tally); font-weight: 700; }

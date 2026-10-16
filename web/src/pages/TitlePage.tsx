@@ -250,7 +250,7 @@ function TitleView() {
               {mine ? <LiveProgress stage={mine.stage} progress={mine.progress} /> : null}
               <p className="muted">{stageHelp(t.yourRequest.stage, t.kind)}.</p>
               {mine ? <HelpButton request={mine} /> : null}
-              <Link to="/schedule">See all your requests</Link>
+              <Link to="/schedule" className="link-hit">See all your requests</Link>
             </div>
           ) : null}
 
