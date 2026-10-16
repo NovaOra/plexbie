@@ -26,7 +26,10 @@ export function menuGroups(desk: Desk, d: DeskData): MenuGroup[] {
   const of = (...kinds: Kind[]) => desk.needs.filter((i) => kinds.includes(i.kind));
   const urgentIn = (...kinds: Kind[]) => of(...kinds).filter((i) => i.group === "urgent").length;
   const mon = (a: Area) => desk.monitors.find((m) => m.area === a)!;
-  const group = (id: Area, rows: MenuRow[]): MenuGroup => ({ id, label: mon(id).label, count: mon(id).count, makeup: mon(id).makeup, rows });
+  // A group whose feeds couldn't load says so, never a count that looks final.
+  const group = (id: Area, rows: MenuRow[]): MenuGroup => mon(id).failed
+    ? { id, label: mon(id).label, makeup: "Count unknown", rows }
+    : { id, label: mon(id).label, count: mon(id).count, makeup: mon(id).makeup, rows };
 
   const pending = of("request").length;
   const stuck = d.all?.counts?.stuck ?? d.all?.rows.filter((r) => r.stuck.length).length ?? 0;

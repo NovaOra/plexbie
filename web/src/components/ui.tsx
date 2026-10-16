@@ -274,7 +274,11 @@ export function Strap({ stage, children, wipe = false }: { stage: RequestStage |
 
 /* ---------------------------------------------------------------- posters */
 
-export function Art({ title, size = "w342", eager = false }: { title: Pick<Title, "poster" | "title" | "kind">; size?: "w185" | "w342"; eager?: boolean }) {
+export function Art({ title, size = "w342", eager = false, width, height }: {
+  title: Pick<Title, "poster" | "title" | "kind">; size?: "w185" | "w342"; eager?: boolean;
+  /** Its size on the page, so the layout holds before the image arrives. */
+  width?: number; height?: number;
+}) {
   const [broken, setBroken] = useState(false);
   const src = artUrl(title.poster, size);
   if (!src || broken) {
@@ -293,7 +297,7 @@ export function Art({ title, size = "w342", eager = false }: { title: Pick<Title
       </div>
     );
   }
-  return <img src={src} alt="" loading={eager ? "eager" : "lazy"} decoding="async" onError={() => setBroken(true)} />;
+  return <img src={src} alt="" width={width} height={height} loading={eager ? "eager" : "lazy"} decoding="async" onError={() => setBroken(true)} />;
 }
 
 export const titlePath = (t: Pick<Title, "kind" | "id">) => `/title/${t.kind}/${encodeURIComponent(t.id)}`;
