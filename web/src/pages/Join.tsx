@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../api/client";
+import { api, loginUrl } from "../api/client";
 import { useSession } from "../components/Layout";
 import { Mascot } from "../components/Mascot";
 import { InviteOutcome } from "./InvitePage";
@@ -15,6 +15,7 @@ export function Join() {
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">(session?.joinPending ? "sent" : "idle");
   const [touched, setTouched] = useState(false);
   const [problem, setProblem] = useState("");
+  const [switching, setSwitching] = useState(false);
   const viaPlex = session?.user.via === "plex";
   // The form is only there for a Discord sign-in (a Plex one joins by invite link).
   const valid = EMAIL.test(email.trim());
@@ -54,7 +55,7 @@ export function Join() {
           <section className="moment moment--start" role="status">
             <Mascot />
             <h1>You’re in the queue.</h1>
-            <p style={{ maxWidth: "48ch" }}>
+            <p className="measure--48">
               An admin will look at it soon. Then Plex emails you an invitation{viaPlex ? "" : ", and Plexbie sends you a DM"}.
               Accept the invite and come back here to request things.
             </p>
@@ -64,7 +65,21 @@ export function Join() {
             <h1>{first ? `${first}, let’s get you on Plex.` : "Let’s get you on Plex."}</h1>
             <InviteOutcome />
             {blocked ? (
-              <p className="muted join__lede">{blocked}</p>
+              <>
+                <p className="muted join__lede">{blocked}</p>
+                {/* Signed in with the wrong Discord account: sign out and pick another. */}
+                {!viaPlex && session && !session.inGuild && !session.accessUnknown ? (
+                  <button type="button" className="btn btn--quiet join__switch" aria-disabled={switching || undefined} aria-busy={switching || undefined}
+                    onClick={async () => {
+                      if (switching) return;
+                      setSwitching(true);
+                      try { await api.logout(); } catch { /* signed out or not, Discord asks again */ }
+                      window.location.assign(loginUrl("/", "discord"));
+                    }}>
+                    {switching ? "Signing out…" : "Use another Discord account"}
+                  </button>
+                ) : null}
+              </>
             ) : (
               <>
                 <p className="muted join__lede">

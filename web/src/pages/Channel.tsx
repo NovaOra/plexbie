@@ -34,7 +34,7 @@ export function Channel() {
             ) : !board.length ? (
               <p className="muted">No watch time recorded yet. It starts counting as soon as someone presses play.</p>
             ) : (
-              <ol className="ranks" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              <ol className="ranks">
                 {board.map((p, i) => (
                   <li key={p.name} className={`rank${i < 3 ? " rank--top" : ""}${p.name === session?.user.name ? " rank--you" : ""}`}>
                     <span className="rank__n">{i + 1}</span>

@@ -115,7 +115,7 @@ function Account({ session }: { session: Session }) {
           <LogOut size={18} aria-hidden /> {leaving ? "Logging out…" : "Log out"}
         </button>
         {failed ? (
-          <p className="field__error" role="alert" style={{ margin: "4px 12px 8px", maxWidth: 220 }}>
+          <p className="field__error account-menu__error" role="alert">
             Couldn’t log you out just now. Try again.
             {failed === "alerts" ? " Alerts in this browser are off; turn them back on from Alerts." : null}
           </p>
@@ -241,7 +241,7 @@ export function Layout({ children }: { children?: ReactNode }) {
             {session.loading ? null : s ? (
               <Account session={s} />
             ) : inApp ? null : (
-              <Link className="btn btn--primary" style={{ minHeight: 44, padding: "0 16px" }} to="/">
+              <Link className="btn btn--primary masthead__signin" to="/">
                 Log in
               </Link>
             )}

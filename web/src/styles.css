@@ -697,7 +697,7 @@ html, body { overflow-x: clip; }
   background: linear-gradient(to bottom, rgb(16 23 43 / 0.25) 0%, var(--field) 92%);
 }
 @media (min-width: 960px) {
-  .title-hero { margin-top: -32px; padding-top: 224px; min-height: 420px; }
+  .title-hero { margin-top: -32px; padding-top: 192px; min-height: 420px; }
 }
 .title-head { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 16px; align-items: end; }
 .title-head .poster__art { width: 112px; }
@@ -1096,12 +1096,13 @@ html, body { overflow-x: clip; }
 
 /* ------------------------------------------------- legal, footer */
 .legal { max-width: 860px; }
-.legal__body { display: grid; gap: 16px; max-width: 33rem; font-size: var(--fs-body); }
+.legal__body { display: grid; gap: 16px; max-width: 29rem; font-size: var(--fs-body); }
 .legal__body h2 { font-size: var(--fs-h2); margin-top: 16px; }
 .legal__body ul { margin: 0; padding-left: 16px; display: grid; gap: 8px; }
 .legal__body li::marker { color: var(--screen); }
 
-.footer__links { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-bottom: 24px; }
+/* Rows 24px apart, so the links' 44px hit areas never overlap when they wrap. */
+.footer__links { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 24px; }
 .footer__links a { color: var(--ink); }
 .footer a { white-space: nowrap; }
 .footer a:active { color: var(--screen-deep); }
@@ -3064,3 +3065,19 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) { --btn-bg: transparent; --btn-fg: var(--faint); border-color: var(--rule); box-shadow: none; }
 .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) svg { color: var(--faint); }
 @media (hover: hover) and (pointer: fine) { .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]):hover { --btn-bg: transparent; border-color: var(--rule); } }
+/* Reading measures: legal text, small notes on a page, the invite's privacy line; plexbie.com's credits and plugin intro. */
+.page p.muted.text-small, .invite__privacy { max-width: 25rem; }
+.guide__credit, .plugs__head p { max-width: 33rem; }
+/* The ticker's pause key: 44px to press, whatever the ticker's height. */
+.ticker__pause::after { content: ""; position: absolute; inset: 50% 0 auto; height: 44px; transform: translateY(-50%); }
+/* Your own name on the board wraps on a narrow phone rather than being cut. */
+.rank--you .rank__name span { white-space: normal; overflow-wrap: anywhere; }
+/* Shared helpers that pages used to set inline. */
+.measure--48 { max-width: 48ch; } .measure--52 { max-width: 52ch; }
+ol.ranks { list-style: none; margin: 0; padding: 0; }
+.account-menu__error { margin: 4px 12px 8px; max-width: 220px; }
+.masthead__signin.btn { min-height: 44px; padding: 0 var(--space-4); }
+.m-empty-row { padding: var(--space-3); }
+.p-anchor { scroll-margin-top: 96px; }
+.plex-status { flex-basis: 100%; margin: 0; }
+.join__switch { justify-self: start; }

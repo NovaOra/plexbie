@@ -57,7 +57,7 @@ export function Schedule() {
   return (
     <div className="shell page">
       <PageHead title="My requests">
-        <p className="muted" style={{ maxWidth: "52ch" }}>
+        <p className="muted measure--52">
           Everything you’ve asked for, from here or with /request in Discord. Each one keeps its number from start to finish.
         </p>
       </PageHead>
