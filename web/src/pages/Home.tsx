@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, useEffect } from "react";
+import { useRef, useState, type FormEvent, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence } from "motion/react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -289,26 +289,32 @@ function YourStanding({ community }: { community: Loaded<Community> }) {
 
 export function Home() {
   useTitle("Home");
-  const arrivals = useLoad(() => api.arrivals());
+  // The rest of the page waits for the channel to know its height (an empty one is shorter than its
+  // skeleton), but not for long: 300ms after what's new was asked for it shows anyway (a usual answer
+  // is in by then). If the channel on screen at that moment is still its skeleton, the channel keeps
+  // the skeleton's height for this visit, filling it (the mascot and its words in the middle, under
+  // the masthead), so nothing under it moves whatever comes back. An answer already in is never held.
+  const asked = useRef<number | null>(null);
+  const arrivals = useLoad(() => { asked.current ??= performance.now(); return api.arrivals(); });
   const community = useLoad(() => api.community());
   const { status, session } = useSession();
-  // The rest of the page waits for the channel to know its height (an empty one is shorter than its
-  // skeleton), but not for long: 300ms after the page is up it shows anyway (a usual answer is in by
-  // then), and a channel still out keeps its skeleton's height for this visit, filling it (the mascot
-  // and its words in the middle), so nothing under it moves whatever comes back.
   const settled = !!arrivals.data || !!arrivals.error;
-  const settledNow = useRef(settled);
-  useEffect(() => { settledNow.current = settled; });
   const stageBox = useRef<HTMLDivElement>(null);
   const [waited, setWaited] = useState(false);
   const [holdHeight, setHoldHeight] = useState<number | null>(null);
   useEffect(() => {
-    const t = window.setTimeout(() => {
-      setWaited(true);
-      if (!settledNow.current) setHoldHeight(stageBox.current?.offsetHeight ?? null);
-    }, 300);
+    const t = window.setTimeout(() => setWaited(true), Math.max(0, 300 - (performance.now() - (asked.current ?? performance.now()))));
     return () => window.clearTimeout(t);
   }, []);
+  // Decided once, from what the screen shows as the wait ends (the render that ends it carries any
+  // answer already in): the skeleton still up means the answer is late.
+  const decided = useRef(false);
+  useLayoutEffect(() => {
+    if (!waited || decided.current) return;
+    decided.current = true;
+    const box = stageBox.current;
+    if (box?.querySelector('[aria-busy="true"]')) setHoldHeight(box.offsetHeight);
+  }, [waited]);
   const crawl = [
     ...(status ? [`${status.streams} watching right now`] : []),
     ...(community.data?.onAir ?? []).map((o) => `${o.member.split(" ")[0]} is watching ${o.title}`),
