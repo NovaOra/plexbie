@@ -3145,3 +3145,10 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 @media (hover: hover) and (pointer: fine) { .stage__pause:hover { background: var(--panel-raised); } }
 /* A request's or ticket's insides while they load, in the detail or a sheet. */
 .m-body-skeleton { height: 320px; border-radius: var(--r); }
+/* The five desk monitors: every screen as tall as the row's tallest (Help's title may take two lines),
+   its count and first title at the top and its footer line at the foot, so all five footers line up. */
+@media (min-width: 1000px) {
+  .m-mon { grid-template-rows: auto 1fr; align-content: stretch; }
+  .m-mon__screen { grid-template-rows: auto 1fr; }
+  .m-mon__make { align-self: end; }
+}
