@@ -1038,6 +1038,8 @@ html, body { overflow-x: clip; }
 .count { display: grid; gap: 4px; }
 .count b { font-stretch: 70%; font-weight: 840; font-size: var(--fs-count); line-height: 0.95; }
 .count > span { color: var(--slate-ink); font-size: var(--fs-small); }
+/* The Shelf dropdown is as wide before its counts are in as after ("Films · 1,234"). */
+.library-shelf { min-width: 143px; }
 
 .tabs { position: relative; display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--panel); }
 .tab {

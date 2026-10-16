@@ -64,16 +64,20 @@ export function Library() {
       <header className="library-head">
         <PageHead title="Library" lede="Everything already on Plex. Open anything to see its details." />
         <div className="counts">
-          {counts.map((c) => c.count != null ? (
-            <span className="count" key={c.id}><b>{c.count.toLocaleString()}</b><span>{c.label}</span></span>
-          ) : null)}
+          {/* A dash for each while they're counted, at the same height, so the head doesn't grow. */}
+          {counts.map((c) => (
+            <span className="count" key={c.id}>
+              <b>{c.count != null ? c.count.toLocaleString() : <><span aria-hidden>–</span><span className="visually-hidden">Counting</span></>}</b>
+              <span>{c.label}</span>
+            </span>
+          ))}
         </div>
       </header>
 
       <div className="stack stack--4">
         {/* The same three small dropdowns as the Request page (and the app's Library). */}
         <div className="request-bar" role="group" aria-label="Filters">
-          <select className="select" value={kind} aria-label="Shelf"
+          <select className="select library-shelf" value={kind} aria-label="Shelf"
             onChange={(e) => { setKind(e.target.value as LibraryKind); setGenre(null); }}>
             {counts.map((c) => <option key={c.id} value={c.id}>{c.count ? `${c.label} · ${c.count.toLocaleString()}` : c.label}</option>)}
           </select>
