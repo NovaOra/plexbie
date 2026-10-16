@@ -1781,9 +1781,9 @@ function FreshLink({ made, onAnother, focusTick }: { made: NewInvite; onAnother:
       <input id="m-invite-url" className="m-fresh__url" readOnly value={made.url} onFocus={(e) => e.currentTarget.select()} />
       <div className="m-fresh__actions">
         {canShare ? (
-          <button type="button" className="btn m-btn m-btn--go" onClick={share}><Share2 size={18} aria-hidden /> Send it</button>
+          <button type="button" className="btn btn--primary m-btn" onClick={share}><Share2 size={18} aria-hidden /> Send it</button>
         ) : null}
-        <button type="button" ref={copyKey} className={`btn m-btn${canShare ? "" : " m-btn--go"}`} onClick={copy}>
+        <button type="button" ref={copyKey} className={`btn m-btn${canShare ? "" : " btn--primary"}`} onClick={copy}>
           {copied ? <Check size={18} aria-hidden /> : <Copy size={18} aria-hidden />} {copied ? "Copied" : "Copy link"}
         </button>
       </div>
@@ -2255,7 +2255,7 @@ const FROM: Partial<Record<MessageChannel, { label: string; icon: Icon }>> = {
 };
 
 function ViaChip({ channel, delivered, error, incoming = false }: { channel: MessageChannel; delivered: boolean; error?: string | null; incoming?: boolean }) {
-  const v = incoming ? FROM[channel] ?? VIA[channel] : delivered ? VIA[channel] : { label: channel === "discord" ? "Discord DM didn't arrive" : "Not delivered", icon: CircleAlert };
+  const v = incoming ? FROM[channel] ?? VIA[channel] : delivered ? VIA[channel] : { label: channel === "discord" ? "Discord DM didn’t arrive" : "Not delivered", icon: CircleAlert };
   const Icon = v.icon;
   return (
     <span className={`m-via${delivered ? "" : " is-failed"}`} title={error ?? undefined}>
@@ -2272,8 +2272,10 @@ function dayLabel(iso: string) {
 
 /** One person's messages with Plexbie, Discord style: newest at the bottom, a day line
  *  between days, and what they sent Plexbie (tinted) between Plexbie's messages. */
-function Conversation({ person, onBack, inPane = false, reply = 0 }: {
+function Conversation({ person, onBack, inPane = false, reply = 0, onTyped }: {
   person: MessagePerson; onBack: () => void;
+  /** Told when the reply box gets words in it, or loses them (the pane's lead key goes quiet meanwhile). */
+  onTyped?: (has: boolean) => void;
   /** In Manage's detail pane: no Back of its own, and the page isn't scrolled to its end. */
   inPane?: boolean;
   /** A new value puts the cursor in the reply box (Reply on a queue row). */
@@ -2307,6 +2309,7 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
     buzz(12);
     toast({ text: "Sent as Plexbie", detail: out.message });
     setText("");
+    onTyped?.(false);
     reload();
   };
   const done = async (yes: boolean) => {
@@ -2385,11 +2388,12 @@ function Conversation({ person, onBack, inPane = false, reply = 0 }: {
       <form className="m-chat__composer" onSubmit={send}>
         <label className="field__label" htmlFor={`m-reply-${person.id}`}>Message to {person.name}</label>
         <textarea ref={box} id={`m-reply-${person.id}`} className="m-textarea m-textarea--reply" rows={2} maxLength={1500} value={text}
-          readOnly={sending} onChange={(e) => { setText(e.target.value); setEmpty(false); }} placeholder={`Message ${person.name} as Plexbie`}
+          readOnly={sending} onChange={(e) => { setText(e.target.value); setEmpty(false); onTyped?.(!!e.target.value.trim()); }} placeholder={`Message ${person.name} as Plexbie`}
           onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.repeat) void send(e); }} />
         <div className="m-chat__send">
           {text ? <span /> : <span className="muted m-person__meta">{discord ? "A Discord DM from Plexbie" : "A phone alert, else an email"}, signed “— {me} (admin)”</span>}
-          <button type="submit" className="btn btn--primary m-btn" disabled={readOnly} aria-disabled={sending || undefined} aria-busy={sending || undefined}>
+          {/* Quiet until there's something to send: then it's the one pink key. */}
+          <button type="submit" className={`btn${text.trim() ? " btn--primary" : " btn--quiet"} m-btn`} disabled={readOnly} aria-disabled={sending || undefined} aria-busy={sending || undefined}>
             {sending ? "Sending…" : "Send as Plexbie"}
           </button>
         </div>
@@ -2924,7 +2928,8 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
     // ...and the queue's row with it, so neither shows a stale Take it.
     const out = await act(key, async () => { const r = await call(); if (r.ok) await Promise.all([load(), refresh("tickets")]); return r; });
     if (!out) return false;
-    if (done === null) { toast({ text: out.message }); after(); return true; }
+    // A no-op (Take it on a ticket that's already yours) changes nothing worth a toast.
+    if (done === null) { if (out.changed !== false) toast({ text: out.message }); after(); return true; }
     toast(out.told === false ? { tone: "error", text: "Not delivered", detail: out.message } : { text: done, detail: out.message });
     after();
     return true;
@@ -3436,7 +3441,8 @@ function useDeskActions() {
       return r;
     });
     if (!out) return false;
-    toast(out.told === false ? { tone: "error", text: "Not delivered", detail: out.message } : done ? { text: done, detail: out.message } : { text: out.message });
+    // Already so (Take it on a ticket that's already yours): the row says it, no toast needed.
+    if (out.changed !== false) toast(out.told === false ? { tone: "error", text: "Not delivered", detail: out.message } : done ? { text: done, detail: out.message } : { text: out.message });
     after(...sections);
     return true;
   };
@@ -3501,11 +3507,15 @@ function RowActions({ item, a, open, look, reply, selected = false }: {
       if (item.group === "done") return <>{key("Open", open, false, false)}{key("Reopen", () => a.reopen(t), true)}</>;
       if (item.group === "waiting") return <>{key("Open", open, false, false)}{key("Stop waiting", () => a.reopen(t), true)}</>;
       const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
-      if (src.blocked) return <>{key("Look inside", look, selected, false)}<span className="m-rowbtn--wide">{key("Search again", () => a.searchTicket(t), true)}</span></>;
+      // Selected beside the detail, Look inside lives in the detail: the row keeps just Open.
+      if (src.blocked && selected) return openKey;
+      if (src.blocked) return <>{key("Look inside", look, false, false)}<span className="m-rowbtn--wide">{key("Search again", () => a.searchTicket(t), true)}</span></>;
       if (t.owner && t.owner === session?.user.name) return <>{video ? key("Search again", () => a.searchTicket(t)) : null}{openKey}</>;
       return <>{key(t.owner ? "Take it over" : "Take it", () => a.take(t))}{openKey}</>;
     }
-    case "import": return <>{key("Look inside", look, false, false)}{key("Open", () => full("health", { part: "blocked" }), true, false)}</>;
+    case "import":
+      if (selected) return key("Open", () => full("health", { part: "blocked" }), true, false);
+      return <>{key("Look inside", look, false, false)}{key("Open", () => full("health", { part: "blocked" }), true, false)}</>;
     case "stuck": return <>{["tv", "movie"].includes(src.r.title.kind) ? key("Search again", () => a.searchRequest(src.r)) : null}{openKey}</>;
     case "request":
       if (item.group === "done") return <>{key("Open", open, false, false)}{key("All requests", () => full("all"), true, false)}</>;
@@ -3623,8 +3633,8 @@ function QueueRow({ item, selected, onSelect, actions }: {
         <ItemArt item={item} />
         <span className="m-row__text">
           <span className="m-row__kind"><span className="caps">{item.eyebrow}</span>{item.age ? <span className="m-row__age">{item.age}</span> : null}</span>
-          <span className="m-row__title">{item.title}{item.sub ? <span className={`muted m-row__sub${item.subIsSeason ? " m-row__season" : ""}`}> · {item.sub}</span> : null}</span>
-          {/* On a phone the reason moves under the title, on the line that may take two. */}
+          <span className="m-row__title">{item.title}{item.sub && item.subIsSeason ? <span className="muted m-row__sub m-row__season"> · {item.sub}</span> : null}</span>
+          {/* The reason sits under the title, on the line that may take two (a season stays with the title). */}
           <span className="m-row__meta">{item.sub && !item.subIsSeason ? <span className="m-row__subline">{item.sub} · </span> : null}{item.meta}</span>
         </span>
       </button>
@@ -3666,8 +3676,10 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
   const hold = (label: string, run: () => void) => <HoldButton quiet label={label} disabled={a.readOnly} busy={busy} onConfirm={() => { if (!busy) run(); }} />;
   // The pane's main key is its one pink key, above the fold. Busy, it stays focusable (aria-disabled);
   // if it goes while the item stays, focus moves to the pane's new first key.
-  const key = (label: ReactNode, onClick: () => unknown, guarded = true) =>
-    <button type="button" className="btn btn--primary m-btn" disabled={guarded && a.readOnly}
+  // Words in the detail's reply box: Send as Plexbie is the pink key then, so the lead key goes quiet.
+  const [typed, setTyped] = useState(false);
+  const key = (label: ReactNode, onClick: () => unknown, guarded = true, quiet = false) =>
+    <button type="button" className={`btn${quiet ? " btn--quiet" : " btn--primary"} m-btn`} disabled={guarded && a.readOnly}
       aria-disabled={(guarded && busy) || undefined} aria-busy={(guarded && busy) || undefined}
       onClick={(e) => {
         if (guarded && busy) return;
@@ -3718,9 +3730,9 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
     case "chat":
       return (
         <>
-          {acts(item.group === "done" ? key("Mark unread", () => void a.chatDone(src.p, false)) : key(<><Check size={16} aria-hidden /> Done</>, () => void a.chatDone(src.p, true)),
+          {acts(item.group === "done" ? key("Mark unread", () => void a.chatDone(src.p, false), true, typed) : key(<><Check size={16} aria-hidden /> Done</>, () => void a.chatDone(src.p, true), true, typed),
             pill("All messages", () => full("messages")))}
-          <Conversation key={src.p.id} person={src.p} onBack={() => undefined} inPane reply={reply} />
+          <Conversation key={src.p.id} person={src.p} onBack={() => undefined} inPane reply={reply} onTyped={setTyped} />
         </>
       );
     case "join":
@@ -3738,13 +3750,13 @@ function DetailBody({ item, a, look, onLook, solve, reply }: {
       const total = p.removalIn === null ? null : p.daysIdle + p.removalIn;
       return (
         <>
-          {acts(key(<><ShieldCheck size={16} aria-hidden /> Never remove</>, () => void a.keepPerson(p)), pill("People", () => full("people")))}
+          {acts(key(<><ShieldCheck size={16} aria-hidden /> Never remove</>, () => void a.keepPerson(p), true, typed), pill("People", () => full("people")))}
           <div className="m-meter m-meter--hot">
             <span className="m-meter__track"><span className="m-meter__fill" style={{ transform: `scaleX(${total ? Math.min(1, p.daysIdle / total) : 1})` }} /></span>
             <span className="m-meter__label">{p.removalIn ? `${p.removalIn} days until removal · nothing watched in ${p.daysIdle} days` : "Due for removal"}</span>
           </div>
           {facts([["Last watched", p.lastWatched ? since(p.lastWatched) : "No watch recorded"], ["Discord", p.discordName], ["Warned", p.warned ? "Yes" : null]])}
-          {src.chat ? <Conversation key={src.chat.id} person={src.chat} onBack={() => undefined} inPane reply={reply} /> : null}
+          {src.chat ? <Conversation key={src.chat.id} person={src.chat} onBack={() => undefined} inPane reply={reply} onTyped={setTyped} /> : null}
         </>
       );
     }
@@ -4034,9 +4046,9 @@ function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
       <section className="m-strip" aria-label="At a glance. Press a monitor to show only that part of the queue">
         <div className={`m-monitors${filtered ? " is-filtered" : ""}`} role="group" aria-label="Filter the queue">
           {desk.monitors.map((m, n) => (
-            <button key={m.area} type="button" className={`m-mon${m.hot && m.known ? " is-urgent" : ""}`} aria-pressed={filtered && filter === m.area} onClick={() => toggle(m.area)}
+            <button key={m.area} type="button" className={`m-mon m-mon--${m.area}${m.hot && m.known ? " is-urgent" : ""}`} aria-pressed={filtered && filter === m.area} onClick={() => toggle(m.area)}
               aria-keyshortcuts={String(n + 1)}
-              aria-label={`${m.label}: ${m.failed ? "couldn’t load" : m.known ? `${m.count}, ${m.makeup}` : "loading"}${m.hot ? ", urgent" : ""}${m.first ? `. First: ${m.first.title}, ${m.first.top}` : ""}`}>
+              aria-label={`${m.label}${MONITOR_SHORT[m.area].toLowerCase() === m.label.toLowerCase() ? "" : ` (${MONITOR_SHORT[m.area]})`}: ${m.failed ? "couldn’t load" : m.known ? `${m.count}, ${m.makeup}` : "loading"}${m.hot ? ", urgent" : ""}${m.first ? `. First: ${m.first.title}, ${m.first.top}` : ""}`}>
               <span className="m-mon__label"><span className="m-lamp" aria-hidden />
                 <span className="caps m-mon__name">{m.label}</span><span className="caps m-mon__short" aria-hidden>{MONITOR_SHORT[m.area]}</span></span>
               <span className="m-mon__screen">
@@ -4051,9 +4063,12 @@ function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
           ))}
         </div>
       </section>
-      <p className="m-facts-line">
-        {facts.party ? <span>Watch party:<b>{facts.party}</b></span> : null}
-      </p>
+      {/* Only while the desk loads (holding its place) or while a watch party is on: never an empty band. */}
+      {loading || facts.party ? (
+        <p className="m-facts-line">
+          {facts.party ? <span>Watch party:<b>{facts.party}</b></span> : null}
+        </p>
+      ) : null}
 
       <div className="m-panes">
         <section ref={column} className="m-queue-col" aria-labelledby="m-queue-h">

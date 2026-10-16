@@ -331,7 +331,7 @@ export const admin = (section: string): Promise<unknown> => {
     health: [
       { name: "Plex", ok: true, ms: 12 }, { name: "Seerr", ok: true, ms: 48 }, { name: "Sonarr", ok: true, ms: 30 },
       { name: "Radarr", ok: true, ms: 26 }, { name: "Tautulli", ok: true, ms: 22 }, { name: "SABnzbd", ok: true, ms: 18 },
-      { name: "Discord Public Bot", ok: false, ms: 0, detail: "Public Bot is on, so anyone with Plexbie's ID can add it to their own server. "
+      { name: "Discord Public Bot", ok: false, ms: 0, detail: "Public Bot is on, so anyone with Plexbie’s ID can add it to their own server. "
         + "Turn it off: Discord Developer Portal → your app → Installation → Install Link: None → Save, then Bot → Public Bot off → Save." },
     ],
   };
@@ -376,7 +376,7 @@ export const admin = (section: string): Promise<unknown> => {
   c.exempt = [...all, ...plexTitles.filter((t) => !all.some((r) => r.ratingKey === t.ratingKey))].filter(isKept)
     .map(({ ratingKey, title, type }) => ({ ratingKey, title, type, year: plexTitles.find((t) => t.ratingKey === ratingKey)?.year ?? null }));
   const { slow, fails, empty } = reviewKnobs();
-  if (fails.includes(section)) return new Promise((_, no) => setTimeout(() => no(new Error("Plexbie didn't answer.")), 260 + slow));
+  if (fails.includes(section)) return new Promise((_, no) => setTimeout(() => no(new Error("Plexbie didn’t answer.")), 260 + slow));
   if (empty) return wait(emptied(section, data[section]), 260 + slow);
   return wait(data[section], 260 + slow);
 };
@@ -611,7 +611,7 @@ export const requestTicket = (key: string, note: string, tell: boolean, message 
   threadOf(helps[0]);
   if (tell) entry(help.id, "reply", "Sam Rivera", message.trim() || `An admin is looking into your request for ${r?.title.title ?? "it"}.`);
   if (r) { r.help = help; r.stuck = [`Help asked: ${help.reason}`, ...r.stuck]; }
-  return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told (Discord DM)` : ""}. It's on Manage → Tickets.`,
+  return wait({ ok: true, message: `Ticket opened${tell ? `, and ${r?.requester ?? "they"} has been told (Discord DM)` : ""}. It’s on Manage → Tickets.`,
     help, ...(tell ? { told: true } : {}) }, 450);
 };
 export const requestSearch = (key: string, how: "again" | "episodes" | "name") => {
@@ -710,8 +710,8 @@ function told(h: Help | undefined, said: string, done: string, sent?: Entry) {
   if (h?.id !== "h2") return { ok: true, told: true, message: said };
   const why = "Plexbie couldn’t DM them on Discord, and no phone alert or email reached them either.";
   if (sent?.kind === "reply") sent.missed = true;
-  entry(h.id, "action", "Plexbie", `This didn't reach ${h.who}: ${why}`);
-  return { ok: true, told: false, message: `${done}, but it didn't reach ${h.who}: ${why} Tell them another way.` };
+  entry(h.id, "action", "Plexbie", `This didn’t reach ${h.who}: ${why}`);
+  return { ok: true, told: false, message: `${done}, but it didn’t reach ${h.who}: ${why} Tell them another way.` };
 }
 function ticketRow(h: Help): import("./types").AdminTicketRow {
   const t = threadOf(h);
@@ -760,7 +760,7 @@ export const ticketTake = (id: string, intent?: "take" | "release") => {
   const mine = owners[id] === "Sam Rivera";
   // As the bot does: asking for what it already is changes nothing.
   if ((intent === "take" && mine) || (intent === "release" && !mine)) {
-    return wait({ ok: true, message: mine ? "It’s already yours." : "It isn’t yours, so there’s nothing to let go." });
+    return wait({ ok: true, changed: false, message: mine ? "It’s already yours." : "It isn’t yours, so there’s nothing to let go." });
   }
   owners[id] = mine ? null : "Sam Rivera";
   entry(id, "status", "Sam Rivera", mine ? "Let it go" : "Took it");
@@ -860,7 +860,7 @@ export const openTicket = (body: { kind?: "movie" | "tv"; id?: string; reason: s
 export const replyTicket = (id: string, text: string) => {
   const h = helps.find((x) => x.id === id && x.who === ME);
   if (!h) return Promise.reject(new Error("No such ticket."));
-  if (h.status !== "open") return Promise.reject(new Error("This ticket is closed. Open a new one if it's still wrong."));
+  if (h.status !== "open") return Promise.reject(new Error("This ticket is closed. Open a new one if it’s still wrong."));
   entry(h.id, "member", h.who, text);
   waits[h.id] = false;
   return wait({ ok: true, message: "Sent. The admins have it." }, 400);

@@ -48,7 +48,8 @@ export const mayHaveWorked = (e: unknown) => !(e instanceof ApiError) || e.statu
  *  reply to a ticket's member, "Solved" or a ticket opened to tell them: whether it
  *  reached them (false: it reached nobody, and `message` says so). Absent when nobody
  *  was to be told. */
-export type Ack = { ok: boolean; message: string; told?: boolean };
+/** `changed: false`: it was already so (a second press on a page that hadn't caught up). */
+export type Ack = { ok: boolean; message: string; told?: boolean; changed?: boolean };
 const post = <T = Ack,>(path: string, body: unknown = {}, init?: RequestInit) => call<T>(path, { method: "POST", body: JSON.stringify(body), ...init });
 const enc = encodeURIComponent;
 
@@ -166,7 +167,7 @@ export const api = {
   messageToTicket: (key: string): Promise<Ack> =>
     SAMPLE ? sample.messageToTicket(key) : post(`/admin/message/${enc(key)}/to-ticket`, {}),
   inboxSettings: (autoreply: boolean): Promise<Ack> =>
-    SAMPLE ? sample.wait({ ok: true, message: autoreply ? "Plexbie answers new DMs." : "Plexbie won't answer DMs by itself." }, 400)
+    SAMPLE ? sample.wait({ ok: true, message: autoreply ? "Plexbie answers new DMs." : "Plexbie won’t answer DMs by itself." }, 400)
       : post("/admin/inbox", { autoreply }),
   plexInviteCancel: (email: string): Promise<Ack> =>
     SAMPLE ? sample.samplePlexInvite(email, null, `Plex invite to ${email} cancelled.`) : post("/admin/plex-invites/cancel", { email }),
