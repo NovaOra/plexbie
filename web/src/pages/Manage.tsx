@@ -1366,7 +1366,8 @@ function CleanupTab() {
 }
 
 /** What the import button says while it's held: a little ceremony, so nobody imports blind. */
-const IMPORT_STAGES = ["Did you look at the files? 👀", "Episode numbers? Sizes? No .exe? 🧐", "Okay, okay. Going in 3…", "2…", "1…"];
+/** What Hold to import says through the hold, as plainly as every other hold key. */
+const IMPORT_STAGES = ["Keep holding…", "Importing in 3…", "2…", "1…"];
 
 /**
  * A download Sonarr or Radarr won't import by themselves (core/blocked_imports in the
@@ -1578,7 +1579,7 @@ function BlockedImport({ target, onDone, focusOnOpen = false }: { target: Blocke
             <>
               {blocker ? <p className="m-blocked__nope">{blocker}</p> : null}
               {notDone ? notDoneLine : null}
-              <HoldButton primary={!blocker} label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Chickened out. Fair. 🐔"
+              <HoldButton primary={!blocker} label="Import it" ms={3200} stages={IMPORT_STAGES} bail="Not imported."
                 disabled={readOnly || !!blocker} busy={busy.size > 0} onConfirm={() => void go()} />
             </>
           )}
