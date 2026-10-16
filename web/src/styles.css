@@ -3153,7 +3153,7 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 }
 /* "More like this" captions while they load: the loaded captions' height. */
 .popular__item--plain .popular__caption-skeleton { height: 43px; }
-@media (max-width: 351px) { .popular__item--plain .popular__caption-skeleton { height: 61px; } }
+@media (max-width: 355px) { .popular__item--plain .popular__caption-skeleton { height: 61px; } }
 @media (hover: hover) and (pointer: fine) { .stage__pause:hover { background: var(--panel-raised); } }
 /* A request's or ticket's insides while they load, in the detail or a sheet. */
 .m-body-skeleton { height: 320px; border-radius: var(--r); }
