@@ -4184,9 +4184,9 @@ function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
                 <span className="m-mon__num">{m.failed ? "?" : m.known ? m.count : "–"}</span>
                 <span className="m-mon__top">
                   <b>{m.failed ? "Couldn’t load" : !m.known ? "Checking…" : m.first?.title ?? (m.area === "services" ? "All up" : "Nothing waiting")}</b>
-                  <span>{m.failed ? "Try again below" : !m.known ? "\u00a0" : m.first?.top ?? "All clear"}</span>
+                  <span>{m.failed ? "Try again below" : !m.known ? <i className="m-mon__bar skeleton" aria-hidden /> : m.first?.top ?? "All clear"}</span>
                 </span>
-                <span className="m-mon__make">{m.failed ? "Count unknown" : m.known ? m.makeup : "Loading…"}</span>
+                <span className="m-mon__make">{m.failed ? "Count unknown" : m.known ? m.makeup : <i className="m-mon__bar skeleton" aria-hidden />}</span>
               </span>
             </button>
           ))}

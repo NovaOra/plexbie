@@ -3084,3 +3084,5 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 .p-anchor { scroll-margin-top: 96px; }
 .plex-status { flex-basis: 100%; margin: 0; }
 .join__switch { justify-self: start; }
+/* A monitor still checking: "Checking…" once, the lines under it as bars of their own line height. */
+.m-mon__bar { display: inline-block; vertical-align: middle; width: 70%; height: 0.8em; border-radius: 3px; }
