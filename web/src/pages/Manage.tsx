@@ -2826,7 +2826,8 @@ function RequestBody({ id, res, head = true, onLeave, quiet = false }: {
     after();
   };
 
-  if (!r) return res.failed ? <LoadFailed text="Couldn’t load this request." onRetry={load} /> : <p className="muted">Loading…</p>;
+  // While it loads, a block where it will go (and the page holds its height meanwhile).
+  if (!r) return res.failed ? <LoadFailed text="Couldn’t load this request." onRetry={load} /> : <div className="m-reqsheet__body" aria-busy="true"><div className="skeleton m-body-skeleton" /></div>;
   const openTicket = r.tickets.find((t) => t.status === "open");
   // Only an approved request can be searched for (not one waiting for a decision, or declined).
   const video = ["tv", "movie"].includes(r.title.kind) && !["requested", ...ENDED].includes(r.stage);
@@ -3066,7 +3067,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const search = (how: SearchHow) =>
     run(how, () => ({ again: api.helpSearch, episodes: api.helpEpisodes, name: api.helpByName }[how])(id), SEARCHING[how]);
 
-  if (!t) return res.failed ? <LoadFailed text="Couldn’t load this ticket." onRetry={load} /> : <p className="muted">Loading…</p>;
+  if (!t) return res.failed ? <LoadFailed text="Couldn’t load this ticket." onRetry={load} /> : <div className="m-reqsheet__body" aria-busy="true"><div className="skeleton m-body-skeleton" /></div>;
   const state = ticketState(t);
   // A title ticket is searched for by its own TMDB id; a general one has nothing to search for.
   const video = ["tv", "movie"].includes(t.kind) && (t.subject !== "title" || !!t.tmdb);
