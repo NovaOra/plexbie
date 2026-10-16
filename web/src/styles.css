@@ -3092,9 +3092,5 @@ ol.ranks { list-style: none; margin: 0; padding: 0; }
 .app-lead { margin: 0; }
 /* A monitor still checking: "Checking…" once, the lines under it as bars of their own line height. */
 .m-mon__bar { display: inline-block; vertical-align: middle; width: 70%; height: 0.8em; border-radius: 3px; }
-<<<<<<< Updated upstream
-.app-lead { margin: 0; }
-=======
 /* The narrowest phones: footer link rows a little further apart still. */
 @media (max-width: 359px) { .footer__links { row-gap: var(--space-8); } }
->>>>>>> Stashed changes
