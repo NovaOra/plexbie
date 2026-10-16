@@ -3975,7 +3975,9 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
     // Near the end of the queue the detail can't stick all the way up (the queue ends first), and
     // its title would sit under the masthead: bring the page down by the difference. Checked again
     // once the scroll has settled and once the item's insides have replaced their placeholder, as
-    // long as the title still has focus.
+    // long as the title still has focus, and only until the person scrolls or acts themselves: from
+    // their first wheel, touch, key or press the page is theirs, so a title back under the masthead
+    // after that is their doing and stays where they put it.
     if (sheet) return;
     const settle = () => {
       const top = box.current?.getBoundingClientRect().top;
@@ -3984,7 +3986,11 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
     settle();
     const frame = requestAnimationFrame(settle);
     const later = [450, 1000].map((ms) => window.setTimeout(settle, ms));
-    return () => { cancelAnimationFrame(frame); later.forEach((t) => window.clearTimeout(t)); };
+    const stop = () => { cancelAnimationFrame(frame); later.forEach((t) => window.clearTimeout(t)); off(); };
+    const inputs = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+    const off = () => inputs.forEach((e) => window.removeEventListener(e, stop, true));
+    inputs.forEach((e) => window.addEventListener(e, stop, { capture: true, passive: true }));
+    return stop;
   }, [focus, sheet]);
   const done = item && (item.kind === "ticket" || item.kind === "chat") && item.group !== "done";
   return (
