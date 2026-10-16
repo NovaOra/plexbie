@@ -253,6 +253,20 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
     latest.current.onConfirm();
   };
 
+  const swallowNextClick = () => {
+    const swallow = (ev: MouseEvent) => { ev.stopPropagation(); ev.preventDefault(); done(); };
+    const lifted = () => window.setTimeout(done, 400);
+    const done = () => {
+      window.removeEventListener("click", swallow, true);
+      window.removeEventListener("pointerup", lifted, true);
+      window.removeEventListener("pointercancel", lifted, true);
+    };
+    window.addEventListener("click", swallow, true);
+    window.addEventListener("pointerup", lifted, true);
+    window.addEventListener("pointercancel", lifted, true);
+    window.setTimeout(done, 10000);
+  };
+
   const start = () => {
     if (disabled || busy || blocked || pressed.current) return;
     pressed.current = true;
@@ -271,6 +285,10 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
       setHolding(false);
       if (latest.current.disabled || latest.current.busy) return;
       buzz(16);
+      // Confirmed with the finger (or button) still down: the item may go from under it, and the
+      // lift then lands on whatever took its place, which mustn't take the click. Swallow the next
+      // click until shortly after the lift, wherever the lift lands.
+      if (down.current) swallowNextClick();
       confirm();
     }, ms);
   };
