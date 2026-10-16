@@ -1115,7 +1115,10 @@ class Actions:
         rows, errors = [], {}
         for b in await blocked_imports.blocked(self.services, errors):
             rows.append({k: b[k] for k in ("app", "downloadId", "title", "year", "release", "messages", "episodes")}
-                        | {"ticket": await blocked_imports.ticket_for(b["app"], b["downloadId"])})
+                        | {"ticket": await blocked_imports.ticket_for(b["app"], b["downloadId"]),
+                           # The show's or film's poster by its TMDB id, through the image proxy.
+                           "poster": await self.data.poster("tv" if b["app"] == "sonarr" else "movie", b.get("tmdbId"))
+                           if self.data else None})
         return {"rows": rows, "errors": errors}
 
     async def blocked_preview(self, user: dict, app: str, download_id: str) -> dict:

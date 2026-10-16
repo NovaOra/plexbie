@@ -223,7 +223,7 @@ def compute(server, config: dict, requests: List[dict],
             tmdb = first_number(guids, "tmdb")
             year = el.get("year") or ""
             entry = {"ratingKey": rk, "tmdb": tmdb, "ids": plex_ids(guids), "title": el.get("title"), "type": stype,
-                     "year": int(year) if year.isdigit() else None}
+                     "year": int(year) if year.isdigit() else None, "thumb": el.get("thumb")}
             if kept_forever(exempt, rk, stype, entry["ids"]):
                 out[rk] = {**entry, "exempt": True}
                 continue

@@ -5,6 +5,7 @@ Read-only here. The actions (approve, decline, invite, remove, exempt, ...) go
 through the bot's own code paths and live with the in-bot portal, so a click on
 the website and a click in Discord do the same thing.
 """
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -85,16 +86,17 @@ def _all_counts(rows: List[dict]) -> dict:
             "declined": sum(r["stage"] in ENDED for r in rows)}
 
 
-def _ticket_row(hid: str, h: dict) -> dict:
+def _ticket_row(hid: str, h: dict, poster: Optional[str] = None) -> dict:
     """A ticket on the Tickets list. `subject`: on a request (with its key and number),
-    about a title on Plex (its TMDB id, when Plex has one), or general (no title)."""
+    about a title on Plex (its TMDB id, when Plex has one), or general (no title).
+    `poster`: its title's poster (Admin._ticket_poster), through the image proxy."""
     from portal import help as helpdesk
     thread = helpdesk.thread_of(h)
     last = thread[-1] if thread else {}
     return {
         "id": hid, "subject": helpdesk.subject_of(h), "requestKey": h.get("request"), "slot": h.get("slot") or 0,
         "title": h.get("title") or "", "tmdb": str(h["tmdb"]) if h.get("tmdb") else None, "year": h.get("year") or None,
-        "kind": h.get("kind") or "", "seasons": h.get("seasons"), "who": h.get("who") or "Someone",
+        "kind": h.get("kind") or "", "seasons": h.get("seasons"), "who": h.get("who") or "Someone", "poster": poster,
         "reason": h.get("reason") or "", "reasonCode": helpdesk.reason_code(h),
         "status": h.get("status") or "open", "waiting": bool(h.get("waiting")),
         "owner": h.get("owner"), "openedBy": h.get("opened_by"), "offer": h.get("offer"),
@@ -308,16 +310,34 @@ class Admin:
         """Manage → Tickets: every ticket, the ones needing an admin first, then those
         waiting on the member, then the last 50 solved."""
         from portal import help as helpdesk
-        rows = []
-        for hid, h in (await kv_get_all(helpdesk.NAMESPACE)).items():
-            if isinstance(h, dict):
-                rows.append(_ticket_row(hid, h))
+        found = {hid: h for hid, h in (await kv_get_all(helpdesk.NAMESPACE)).items() if isinstance(h, dict)}
+        rows = [_ticket_row(hid, h) for hid, h in found.items()]
         newest = lambda rs: sorted(rs, key=lambda r: r["updatedAt"] or "", reverse=True)   # noqa: E731
         action = newest(r for r in rows if r["status"] == "open" and not r["waiting"])
         waiting = newest(r for r in rows if r["status"] == "open" and r["waiting"])
         solved = newest(r for r in rows if r["status"] != "open")[:50]
+        # Posters for the tickets listed, a few lookups at a time (each is cached for a day).
+        slots = await self.data._slots()
+        gate = asyncio.Semaphore(4)
+
+        async def with_poster(r: dict) -> None:
+            async with gate:
+                r["poster"] = await self._ticket_poster(found[r["id"]], slots)
+        await asyncio.gather(*(with_poster(r) for r in action + waiting + solved))
         return {"rows": action + waiting + solved,
                 "counts": {"action": len(action), "waiting": len(waiting), "solved": len(solved)}}
+
+    async def _ticket_poster(self, h: dict, slots: Dict[str, dict]) -> Optional[str]:
+        """A ticket's poster: its request's, else its title's by TMDB id. None for a book or a
+        general ticket (the page draws a cover)."""
+        rec = slots.get(str(h.get("request"))) if h.get("request") else None
+        if rec:
+            media = rec.get("media") or {}
+            if rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media:
+                return None
+            kind = "movie" if media.get("media_type") == "movie" else "tv"
+            return tmdb_art(media.get("poster_path"), "w185") or await self.data.poster(kind, media.get("id"))
+        return await self.data.poster(h.get("kind"), h.get("tmdb"))
 
     async def ticket(self, hid: str) -> Optional[dict]:
         """One ticket in full: its timeline, and its request as All requests shows it."""
@@ -325,7 +345,7 @@ class Admin:
         h = (await kv_get_all(helpdesk.NAMESPACE)).get(hid)
         if not isinstance(h, dict):
             return None
-        out = {**_ticket_row(hid, h), "note": h.get("note"), "statusThen": h.get("status_then"),
+        out = {**_ticket_row(hid, h, await self._ticket_poster(h, await self.data._slots())), "note": h.get("note"), "statusThen": h.get("status_then"),
                "quiet": bool(h.get("quiet")), "thread": helpdesk.thread_of(h), "request": None,
                # A download Sonarr/Radarr won't import by themselves (core/blocked_imports).
                "blocked": h.get("blocked") if isinstance(h.get("blocked"), dict) else None,
@@ -516,7 +536,8 @@ class Admin:
         title = stored.get("title") if stored.get("title") != "Unknown" else None
         kind = stored.get("type") if stored.get("type") != "unknown" else None
         return {"ratingKey": rk, "title": title or live.get("title") or "Unknown",
-                "type": kind or live.get("type"), "year": stored.get("year") or live.get("year")}
+                "type": kind or live.get("type"), "year": stored.get("year") or live.get("year"),
+                "poster": plexdata.plex_art(live.get("thumb"), 185)}
 
     async def _libraries(self) -> Dict[str, str]:
         """Plex libraries ({title: section key}), for choosing which ones cleanup skips."""
@@ -544,7 +565,9 @@ class Admin:
     @staticmethod
     def _row(c: dict) -> dict:
         return {"ratingKey": c["ratingKey"], "title": c["title"], "type": c["type"], "daysLeft": c["daysLeft"],
-                "reason": c["reason"], "lastActivity": c.get("lastActivity")}
+                "reason": c["reason"], "lastActivity": c.get("lastActivity"),
+                # Plex's own poster, through the image proxy (/img/plex).
+                "poster": plexdata.plex_art(c.get("thumb"), 185)}
 
     # ------------------------------------------------------------ health
     async def health(self) -> List[dict]:

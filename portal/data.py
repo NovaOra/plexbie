@@ -74,6 +74,28 @@ class Data:
             raise RuntimeError("Plex is not connected")
         return await self.cache.get(key, ttl, lambda: run_blocking(fn, server, *args))
 
+    #: A title's poster rarely changes: looked up once a day, and never for long.
+    POSTER_TTL = 24 * 3600
+    POSTER_WAIT = 4.0
+
+    async def poster(self, kind: Optional[str], tmdb: Any, size: str = "w185") -> Optional[str]:
+        """The site's address (/img/tmdb, through the image proxy) for a film's or show's
+        poster, by its TMDB id, as Seerr knows it. None without an id, or when Seerr can't say:
+        the page draws a cover instead."""
+        kind = "movie" if kind == "movie" else "tv" if kind in ("tv", "show", "series") else None
+        if not kind or not str(tmdb or "").isdigit():
+            return None
+
+        async def load():
+            r = await asyncio.wait_for(self._seerr(f"{kind}/{int(tmdb)}", ttl=self.POSTER_TTL), self.POSTER_WAIT)
+            return (r or {}).get("posterPath") or ""
+        try:
+            # Remembered for a day (a failed lookup isn't, so it's asked again next time).
+            return tmdb_art(await self.cache.get(f"poster:{kind}:{int(tmdb)}", self.POSTER_TTL, load) or None, size)
+        except Exception as e:
+            logger.info(f"portal: no poster for {kind} {tmdb} ({e})")
+            return None
+
     # ---------------------------------------------------------- cleanup
     async def cleanup_config(self) -> dict:
         from plugins.media_cleanup.cog import CLEANUP_NAMESPACE, DEFAULT_CONFIG
