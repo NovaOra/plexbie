@@ -492,6 +492,8 @@ html, body { overflow-x: clip; }
   min-width: 0;
 }
 .strap__bar > span { overflow-wrap: anywhere; }
+/* On the channel the strap takes two lines at most (the room the channel keeps for it). */
+.stage__strapline .strap__bar > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 
 .strap--requested .strap__tab { background: var(--slate); }
 .strap--approved .strap__tab { background: var(--screen-deep); }
@@ -870,10 +872,11 @@ html, body { overflow-x: clip; }
   flex: 1; display: grid; align-content: end; gap: 32px;
   padding-top: 96px; padding-bottom: 32px;
 }
-/* The title's place holds three lines (its clamp), with the words at its foot: the channel's
-   height and the strap above stay put whichever title is on. */
-.stage__feature { display: grid; gap: 16px; justify-items: start; grid-template-rows: auto calc(3 * 0.88 * var(--fs-stage)); }
-.stage__feature > .stage__title { align-self: end; }
+/* The strap sits 16px above the title, at the foot of the channel. With a title on, the channel
+   keeps room for a two-line strap and three lines of title (the title's clamp), with any spare
+   room above the strap: its height stays put whichever title is on. An empty channel keeps none. */
+.stage__feature { display: grid; gap: 16px; justify-items: start; align-content: end; }
+.stage__feature:has(> .stage__title) { min-height: calc(50px + 16px + 3 * 0.88 * var(--fs-stage)); }
 .stage__strapline { display: flex; align-items: center; gap: 8px; max-width: 100%; }
 .stage__pause {
   flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: var(--r-strap);

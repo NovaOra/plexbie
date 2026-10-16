@@ -82,15 +82,26 @@ export const status = (): Promise<ServerStatus> => wait({
   ],
 });
 
-export const arrivals = (): Promise<Arrival[]> => wait([
+/** For reviewing Home's channel: ?channel=long (a long title first), strap (a long strap first) or empty (nothing new). */
+const channelKnob = () => new URLSearchParams(location.search).get("channel");
+export const arrivals = (): Promise<Arrival[]> => {
+  const all = arrivalList();
+  const knob = channelKnob();
+  if (knob === "empty") return wait([]);
+  const first = knob === "long" ? all.findIndex((a) => a.title.title === "The Wonderful Wizard of Oz")
+    : knob === "strap" ? all.findIndex((a) => a.detail?.startsWith("Season")) : 0;
+  return wait(first > 0 ? [all[first], ...all.filter((_, i) => i !== first)] : all);
+};
+const arrivalList = (): Arrival[] => [
   { title: { ...byTitle("Sintel"), availability: "available" }, addedAt: ago(40) },
+  { title: { ...byTitle("The Daily Dweebs"), availability: "available" }, addedAt: ago(90), detail: "Season 4, all eight episodes and the finale" },
   { title: { ...byTitle("King of the Rocket Men"), availability: "available" }, addedAt: ago(60 * 3), detail: "Chapters 1–6" },
   { title: { ...byTitle("Coffee Run"), availability: "available" }, addedAt: ago(60 * 9) },
   { title: { ...byTitle("Charge"), availability: "available" }, addedAt: ago(60 * 20) },
   { title: { ...byTitle("The Wonderful Wizard of Oz"), availability: "available" }, addedAt: ago(60 * 30), detail: "Audiobook" },
   { title: { ...byTitle("Radar Men from the Moon"), availability: "available" }, addedAt: ago(60 * 44), detail: "Chapters 7–12" },
   { title: { ...byTitle("Elephants Dream"), availability: "available" }, addedAt: ago(60 * 70) },
-]);
+];
 
 export const community = (): Promise<Community> => wait({
   onAir: [
