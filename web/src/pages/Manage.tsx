@@ -3261,6 +3261,10 @@ const MENU_ICON: Record<string, Icon> = {
   services: Server, security: Lock, party: MonitorPlay, say: Megaphone, dms: MessageSquare,
 };
 
+/** A monitor's caption ("Ana · 3h") keeps its dot between the two words either side, so no line
+ *  starts or ends with it. */
+const tieDot = (s: string) => s.replace(/ · /g, "\u00a0·\u00a0");
+
 /** A group's sum, like its monitor's: "3 waiting", "6 · 5 tickets · 1 chat". */
 function GroupSum({ g }: { g: MenuGroup }) {
   if (!g.makeup) return null;
@@ -4226,7 +4230,7 @@ function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
                 <span className="m-mon__num">{m.failed ? "?" : m.known ? m.count : "–"}</span>
                 <span className="m-mon__top">
                   <b>{m.failed ? "Couldn’t load" : !m.known ? "Checking…" : m.first?.title ?? (m.area === "services" ? "All up" : "Nothing waiting")}</b>
-                  <span>{m.failed ? "Try again below" : !m.known ? <i className="m-mon__bar skeleton" aria-hidden /> : m.first?.top ?? "All clear"}</span>
+                  <span>{m.failed ? "Try again below" : !m.known ? <i className="m-mon__bar skeleton" aria-hidden /> : m.first ? tieDot(m.first.top) : "All clear"}</span>
                 </span>
                 <span className="m-mon__make">{m.failed ? "Count unknown" : m.known ? m.makeup : <i className="m-mon__bar skeleton" aria-hidden />}</span>
               </span>
