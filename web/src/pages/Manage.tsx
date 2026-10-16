@@ -3968,7 +3968,14 @@ function Detail({ item, where, a, sheet, look, onLook, solve, reply, focus, stat
     return () => { seen.disconnect(); el.removeEventListener("scroll", check); };
   }, [sheet, item?.key]);
   useEffect(() => { box.current?.scrollTo({ top: 0 }); }, [item?.key]);
-  useEffect(() => { if (focus) title.current?.focus({ preventScroll: true }); }, [focus]);
+  useEffect(() => {
+    if (!focus) return;
+    title.current?.focus({ preventScroll: true });
+    // Near the end of the queue the detail can't stick all the way up (the queue ends first), and
+    // its title would sit under the masthead: bring the page down by the difference.
+    const top = box.current?.getBoundingClientRect().top;
+    if (!sheet && top !== undefined && top < 76) window.scrollBy({ top: top - 76, behavior: scrollBehavior() });
+  }, [focus, sheet]);
   const done = item && (item.kind === "ticket" || item.kind === "chat") && item.group !== "done";
   return (
     <aside ref={box} className={`m-pane${sheet ? " is-sheet" : ""}${more.has ? " has-more" : ""}${more.end ? " at-end" : ""}`}
