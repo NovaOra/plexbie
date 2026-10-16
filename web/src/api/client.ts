@@ -200,8 +200,10 @@ export const api = {
     SAMPLE ? sample.ticketComment(id, kind, text) : post(`/admin/ticket/${enc(id)}/comment`, { kind, text }),
   ticketStatus: (id: string, status: "open" | "waiting" | "resolved", message = ""): Promise<Ack> =>
     SAMPLE ? sample.ticketStatus(id, status, message) : post(`/admin/ticket/${enc(id)}/status`, { status, message }),
-  ticketTake: (id: string): Promise<Ack> =>
-    SAMPLE ? sample.ticketTake(id) : post(`/admin/ticket/${enc(id)}/take`),
+  /** "take" or "release": what was pressed. Asking for what the ticket already is changes nothing,
+   *  so a second press on a page that hadn't caught up can't undo the first. */
+  ticketTake: (id: string, intent: "take" | "release"): Promise<Ack> =>
+    SAMPLE ? sample.ticketTake(id, intent) : post(`/admin/ticket/${enc(id)}/take`, { intent }),
   /** The member answers on the ticket on their own request. */
   answerTicket: (requestId: string, text: string): Promise<Ack> =>
     SAMPLE ? sample.answerTicket(requestId, text) : post(`/requests/${enc(requestId)}/help/reply`, { text }),

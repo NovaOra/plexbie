@@ -739,11 +739,15 @@ export const ticketStatus = (id: string, status: "open" | "waiting" | "resolved"
   else if (waits[id]) { waits[id] = false; entry(id, "status", "Sam Rivera", "Back with the admins"); }
   return wait({ ok: true, message: status === "waiting" ? `Waiting on ${h.who}'s answer.` : "Open." });
 };
-export const ticketTake = (id: string) => {
+export const ticketTake = (id: string, intent?: "take" | "release") => {
   const mine = owners[id] === "Sam Rivera";
+  // As the bot does: asking for what it already is changes nothing.
+  if ((intent === "take" && mine) || (intent === "release" && !mine)) {
+    return wait({ ok: true, message: mine ? "It’s already yours." : "It isn’t yours, so there’s nothing to let go." });
+  }
   owners[id] = mine ? null : "Sam Rivera";
   entry(id, "status", "Sam Rivera", mine ? "Let it go" : "Took it");
-  return wait({ ok: true, message: mine ? "Let go. Anyone can take it." : "It's yours. You'll get an alert when they answer." });
+  return wait({ ok: true, message: mine ? "Let go. Anyone can take it." : "It’s yours. You’ll get an alert when they answer." });
 };
 export const answerTicket = (requestId: string, text: string) => {
   const h = helps.find((x) => x.request === requestId && x.status === "open");

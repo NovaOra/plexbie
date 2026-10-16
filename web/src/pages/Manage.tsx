@@ -2835,14 +2835,15 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const box = useRef<HTMLTextAreaElement>(null);
   const titleId = useId();
   const load = res.reload;
-  const after = () => { void load(); window.setTimeout(() => { void refresh("tickets"); void refresh("all"); }, 600); };
+  const after = () => { window.setTimeout(() => { void refresh("all"); }, 600); };
   // E asks for Solve… on the ticket shown.
   const [asked, setAsked] = useState(solve);
   if (solve !== asked) { setAsked(solve); if (solve && t?.status === "open") setSolving(true); }
 
   const run = async (key: string, call: () => Promise<Ack>, done: string | null) => {
     // Busy until this ticket has been read again, so its keys can't be pressed on old state.
-    const out = await act(key, async () => { const r = await call(); if (r.ok) await load(); return r; });
+    // ...and the queue's row with it, so neither shows a stale Take it.
+    const out = await act(key, async () => { const r = await call(); if (r.ok) await Promise.all([load(), refresh("tickets")]); return r; });
     if (!out) return false;
     if (done === null) { toast({ text: out.message }); after(); return true; }
     toast(out.told === false ? { tone: "error", text: "Not delivered", detail: out.message } : { text: done, detail: out.message });
@@ -2868,7 +2869,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const look = (k: KeyLook) => (k === "primary" ? " btn--primary" : k === "quiet" ? " btn--quiet" : "");
   const take = (
     <button type="button" className={`btn${look(waiting && keys.take === "primary" ? "quiet" : keys.take)} m-btn m-ticket__take`} disabled={readOnly} aria-disabled={busy.size > 0 || undefined} aria-busy={busy.has("take") || undefined}
-      onClick={() => { if (busy.size === 0) void run("take", () => api.ticketTake(id), null); }}>
+      onClick={() => { if (busy.size === 0) void run("take", () => api.ticketTake(id, mine ? "release" : "take"), null); }}>
       {mine ? "Let it go" : t.owner ? "Take it over" : "Take it"}
     </button>
   );
@@ -2880,7 +2881,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
   const blockedPart = t.blocked && t.status === "open" ? (
     blockedRow && !looking
       ? <BlockedSummary row={blockedRow} onLook={() => setLooking(true)} keyed={!lead} primary={keys.summary === "primary"} />
-      : <BlockedImport target={t.blocked} onDone={after} focusOnOpen={looking || !!lead} />
+      : <BlockedImport target={t.blocked} onDone={() => { void load(); void refresh("tickets"); after(); }} focusOnOpen={looking || !!lead} />
   ) : null;
   // In the pane a blocked import's Look inside is the main key, and Take it joins the chips.
   const lookKey = lookLeads
@@ -3353,7 +3354,7 @@ function useDeskActions() {
     invite: (j: AdminJoin, yes: boolean) =>
       defer(`join:${j.key}`, yes ? `Invited ${j.name.replace(/\s*\(Plex sign-in\)$/i, "")} to Plex.` : `Denied ${j.name.replace(/\s*\(Plex sign-in\)$/i, "")}.`, () => joins.decide(j, yes, true)),
     // Its toast says what the bot did (taken, or let go), not what was guessed here.
-    take: (t: AdminTicketRow) => say(`ticket:${t.id}`, () => api.ticketTake(t.id), null, "tickets"),
+    take: (t: AdminTicketRow) => say(`ticket:${t.id}`, () => api.ticketTake(t.id, "take"), null, "tickets"),
     searchTicket: (t: AdminTicketRow) => say(`ticket:${t.id}`, () => api.helpSearch(t.id), SEARCHING.again, "tickets", "all"),
     searchRequest: (r: AdminRequestRow) => say(`stuck:${r.id}`, () => api.requestSearch(r.id!, "again"), SEARCHING.again, "all"),
     reopen: (t: AdminTicketRow) => say(`ticket:${t.id}`, () => api.ticketStatus(t.id, "open"), t.status === "open" ? "Back with the admins" : "Reopened", "tickets"),
@@ -3468,7 +3469,9 @@ function QueueRow({ item, selected, onSelect, actions }: {
 /** A ticket in the detail: the ticket's own insides, as Tickets shows it, its main key and
  *  "Open the full ticket" as the pair under the header. */
 function TicketPane({ item, look, solve, lead, waiting = false }: { item: Item & { src: { type: "ticket" } }; look: boolean; solve: number; lead: ReactNode; waiting?: boolean }) {
-  const res = useKept<AdminTicketDetail>(() => api.adminTicket(item.src.t.id), [item.src.t.id]);
+  // Read again whenever its row changes (taken from the row, answered, moved on), so the detail
+  // never offers a key for a state that's gone.
+  const res = useKept<AdminTicketDetail>(() => api.adminTicket(item.src.t.id), [item.src.t.id, item.src.t.owner, item.src.t.updatedAt, item.src.t.status, item.src.t.waiting]);
   return <TicketBody key={String(look)} id={item.src.t.id} res={res} head={false} blockedRow={look ? undefined : item.src.blocked} solve={solve} lead={lead} waiting={waiting} />;
 }
 

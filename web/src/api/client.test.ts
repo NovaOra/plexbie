@@ -73,6 +73,16 @@ describe("the client", () => {
   });
 
   describe("tickets", () => {
+    it("take or let go by saying which, so a second press can't undo the first", async () => {
+      const fetch = serve(() => json({ ok: true, message: "It’s yours." }));
+      await api.ticketTake("abcdefabcdef", "take");
+      await api.ticketTake("abcdefabcdef", "release");
+      expect(fetch.mock.calls.map((c) => [c[0], JSON.parse(c[1]?.body as string)])).toEqual([
+        ["/api/admin/ticket/abcdefabcdef/take", { intent: "take" }],
+        ["/api/admin/ticket/abcdefabcdef/take", { intent: "release" }],
+      ]);
+    });
+
     it("list the member's own, open one about a title or nothing in particular, and add to one by its id", async () => {
       const fetch = serve(() => json({ ok: true, message: "Sent." }));
       await api.myTickets();
