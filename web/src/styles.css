@@ -456,7 +456,7 @@ html, body { overflow-x: clip; }
   box-shadow: var(--lip);
 }
 .btn.btn--quiet svg { color: var(--slate-ink); }
-@media (hover: hover) and (pointer: fine) { .btn.btn--quiet:not(:disabled):hover { --btn-bg: var(--quiet-fill); border-color: var(--slate-ink); } }
+@media (hover: hover) and (pointer: fine) { .btn.btn--quiet:not(:disabled):not([aria-disabled="true"]):hover { --btn-bg: var(--quiet-fill); border-color: var(--slate-ink); } }
 .btn.btn--quiet:active, .btn.btn--quiet[aria-busy="true"] { box-shadow: var(--lip-down); }
 .btn.btn--quiet:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-full); }
 .btn.btn--quiet:disabled { --btn-bg: transparent; --btn-fg: var(--faint); border-color: var(--rule); box-shadow: none; transform: none; }
@@ -3060,3 +3060,7 @@ html.is-hidden .m-strip::before, html.is-hidden .m-mon__screen::after, html.is-h
 .alerts__actions .btn.btn--quiet.alerts__key { min-height: 48px; }
 .alerts-wait { display: grid; gap: var(--space-6); min-height: calc(100svh - var(--masthead-h) - 160px); align-content: start; }
 .alerts-wait__card { height: 220px; border-radius: 16px; }
+/* A hollow key that's switched off (Previous at the first item, a hold waiting on another action): faint, flat, no hover. */
+.btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) { --btn-bg: transparent; --btn-fg: var(--faint); border-color: var(--rule); box-shadow: none; }
+.btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]) svg { color: var(--faint); }
+@media (hover: hover) and (pointer: fine) { .btn.btn--quiet[aria-disabled="true"]:not([aria-busy="true"]):hover { --btn-bg: transparent; border-color: var(--rule); } }
