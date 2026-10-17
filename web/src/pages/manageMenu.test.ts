@@ -47,18 +47,18 @@ describe("the Everything else menu", () => {
   it("counts each group as its monitor does, and each row as the queue rows it covers", () => {
     expect(groups.map((g) => g.count)).toEqual([3, 6, 5, 2, 1, undefined]);
     for (const g of groups) if (g.count !== undefined) expect(g.rows.reduce((n, r) => n + (r.count ?? 0), 0)).toBe(g.count);
-    expect(row("all")).toMatchObject({ count: 3, desc: `3${NB}waiting · 3${NB}look stuck` });
-    expect(row("tickets")).toMatchObject({ count: 5, urgent: 2, desc: `5${NB}need an admin · 1${NB}waiting` });
+    // What isn't counted says where it is, never a number that reads as part of the count.
+    expect(row("all")).toMatchObject({ count: 3, desc: `3${NB}waiting · 3${NB}stuck under Help` });
+    expect(row("tickets")).toMatchObject({ count: 5, urgent: 2, desc: `5${NB}need you · 2${NB}urgent · 1${NB}more waiting on a reply` });
     expect(row("messages")).toMatchObject({ count: 1, desc: "Alex Kim unread · Marcus T. under People" });
     expect(row("plex")).toMatchObject({ count: 1, desc: `1 from 40${NB}days ago · 2${NB}more not accepted` });
     expect(row("links")).toMatchObject({ count: 1, desc: `Aunt Rosa’s ends in 5${NB}days` });
     expect(row("leaving").count).toBe(2);
-    expect(row("services")).toMatchObject({ count: 1, tally: "down" });
+    expect(row("services")).toMatchObject({ count: 1, tally: "down", desc: `Discord Public Bot down · 7${NB}checks` });
   });
 
   it("marks blocked imports urgent and a live watch party live, without counting them twice", () => {
-    expect(row("blocked")).toMatchObject({ hot: true, desc: "Radar Men from the Moon" });
-    expect(row("blocked").count).toBeUndefined();
+    expect(row("blocked")).toMatchObject({ hot: true, count: 0, desc: "Radar Men from the Moon under All tickets" });
     expect(row("party")).toMatchObject({ tally: "live", desc: `Alex Kim · Tears of Steel · 3${NB}watching` });
   });
 

@@ -3,7 +3,9 @@ import { days, type Area, type Desk, type DeskData, type Kind } from "./manageQu
 /**
  * Manage's "Everything else" menu: every full view, grouped by job like the monitors,
  * with the same counts. A row's count is the queue rows it covers, so the menu, the
- * monitors and the queue always agree.
+ * monitors and the queue always agree. Its line under the name starts with what makes
+ * up that count, from the queue too; anything it doesn't count is said as "more" or
+ * "under" the row that does, never as a number that looks like part of it.
  */
 
 /** Where a menu row goes: `?tab=` (the full view) and, within it, `part`. */
@@ -13,7 +15,7 @@ export type MenuRow = {
   count?: number;
   /** "2 urgent" beside the count. */
   urgent?: number;
-  /** "Urgent" alone, for a row that isn't counted (its rows count elsewhere). */
+  /** Urgent, for a row whose urgent rows count elsewhere (a blocked import in its ticket). */
   hot?: boolean;
   /** A filled "1 down" tally in place of the count; "live" for a watch party on now. */
   tally?: "down" | "live";
@@ -32,10 +34,17 @@ export function menuGroups(desk: Desk, d: DeskData): MenuGroup[] {
     : { id, label: mon(id).label, count: mon(id).count, makeup: mon(id).makeup, rows };
 
   const pending = of("request").length;
-  const stuck = d.all?.counts?.stuck ?? d.all?.rows.filter((r) => r.stuck.length).length ?? 0;
+  const stuck = of("stuck").length;
+  // Stuck requests whose open ticket is counted under Help instead.
+  const openTickets = (d.tickets?.rows ?? []).filter((t) => t.status === "open");
+  const ticketed = new Set<string | null | undefined>(openTickets.filter((t) => t.requestKey).map((t) => t.requestKey));
+  const stuckTicketed = (d.all?.rows ?? []).filter((r) => r.stuck.length && r.status !== "pending" && ticketed.has(r.id)).length;
   const older = d.requests?.older.length ?? 0;
-  const tickets = d.tickets?.counts;
+  const tickets = of("ticket").length;
+  const waitingOn = desk.waiting.length;
   const blocked = d.blocked ?? [];
+  const imports = of("import");
+  const inTickets = blocked.filter((b) => b.ticket && openTickets.some((t) => t.id === b.ticket));
   const chats = of("chat").map((i) => i.title);
   const folded = of("warned").filter((i) => i.src.type === "person" && i.src.chat?.unread).map((i) => i.title);
   const warned = of("warned").map((i) => i.title);
@@ -50,16 +59,20 @@ export function menuGroups(desk: Desk, d: DeskData): MenuGroup[] {
 
   return [
     group("requests", [
-      { id: "all", label: "All requests", tab: "all", count: pending + of("stuck").length,
-        desc: [pending ? `${pending}${NB}waiting` : "", stuck ? `${stuck}${NB}look stuck` : ""].filter(Boolean).join(" · ") || "The last 30 days, and every request ever" },
+      { id: "all", label: "All requests", tab: "all", count: pending + stuck,
+        desc: [pending ? `${pending}${NB}waiting` : "", stuck ? `${stuck}${NB}stuck` : "",
+          stuckTicketed ? `${stuckTicketed}${NB}${stuck ? "more " : ""}stuck under Help` : ""].filter(Boolean).join(" · ") || "The last 30 days, and every request ever" },
       { id: "older", label: "Older requests", tab: "requests", part: "older", desc: older ? `${older} from before outcomes were recorded` : "None" },
     ]),
     group("help", [
-      { id: "tickets", label: "All tickets", tab: "tickets", count: of("ticket").length, urgent: urgentIn("ticket"),
-        desc: tickets ? [`${tickets.action}${NB}need an admin`, tickets.waiting ? `${tickets.waiting}${NB}waiting` : ""].filter(Boolean).join(" · ") : "Loading…" },
-      { id: "blocked", label: "Blocked imports", tab: "health", part: "blocked",
-        hot: desk.needs.some((i) => i.group === "urgent" && (i.kind === "import" || (i.src.type === "ticket" && !!i.src.blocked))),
-        desc: blocked.length ? list(blocked.map((b) => b.title)) : "None" },
+      { id: "tickets", label: "All tickets", tab: "tickets", count: tickets, urgent: urgentIn("ticket"),
+        desc: d.tickets ? [tickets ? `${tickets}${NB}need you` : "None need you", urgentIn("ticket") ? `${urgentIn("ticket")}${NB}urgent` : "",
+          waitingOn ? `${waitingOn}${NB}more waiting on a reply` : ""].filter(Boolean).join(" · ") : "Loading…" },
+      // One without a ticket is counted here; one in a ticket counts under All tickets.
+      { id: "blocked", label: "Blocked imports", tab: "health", part: "blocked", count: imports.length, urgent: urgentIn("import"),
+        hot: desk.needs.some((i) => i.group === "urgent" && i.src.type === "ticket" && !!i.src.blocked),
+        desc: [imports.length ? list(imports.map((i) => i.title)) : "", inTickets.length ? `${list(inTickets.map((b) => b.title))} under All tickets` : ""]
+          .filter(Boolean).join(" · ") || "None" },
       { id: "messages", label: "Messages", tab: "messages", count: chats.length,
         desc: [chats.length ? `${list(chats)} unread` : "", folded.length ? `${list(folded)} under People` : ""].filter(Boolean).join(" · ") || "Nothing unread" },
     ]),
@@ -81,7 +94,7 @@ export function menuGroups(desk: Desk, d: DeskData): MenuGroup[] {
     ]),
     group("services", [
       { id: "services", label: "Services", tab: "health", count: down.length, tally: down.length ? "down" : undefined,
-        desc: d.health ? [`${d.health.length}${NB}checks`, down.length ? list(down.map((h) => h.name)) : "all up"].join(" · ") : "Plex, Seerr, Sonarr, Radarr…" },
+        desc: d.health ? (down.length ? `${list(down.map((h) => h.name))} down · ${d.health.length}${NB}checks` : `${d.health.length}${NB}checks · all up`) : "Plex, Seerr, Sonarr, Radarr…" },
       { id: "security", label: "Sign-ins", tab: "security", desc: "Sign out every other session" },
     ]),
     {
