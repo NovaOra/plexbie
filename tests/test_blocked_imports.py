@@ -123,6 +123,52 @@ def test_a_blocked_download_opens_a_ticket_once_and_closes_it_when_imported():
     assert said in told[0] and "Look at the files" in told[0], "the admin channel still hears what Sonarr said"
 
 
+
+def _alerts_for(prepare):
+    """Run one check with `prepare` setting up the database first; the admin alerts it sent."""
+    from core import notify, season_search
+    alerts = []
+
+    async def no_new_ticket(*a, **k):
+        return None                                                    # one's already open on it
+
+    async def body():
+        await prepare()
+        real, saved = notify.alert_admins_soon, season_search.open_help
+        notify.alert_admins_soon = lambda bot, config, **kw: alerts.append(kw)
+        season_search.open_help = no_new_ticket
+        try:
+            await blocked_imports.check(None, Services(Arr(_folder(), GOOD)))
+        finally:
+            notify.alert_admins_soon, season_search.open_help = real, saved
+    _db(body)
+    return alerts
+
+
+def test_an_alert_without_a_ticket_opens_that_import_on_manage():
+    """No request to hang a ticket on: the alert opens the blocked import itself on Manage's
+    desk, by the key the desk gives it (web/src/pages/manageQueue.ts: import:<app>:<downloadId>)."""
+    async def nothing():
+        return None
+    alerts = _alerts_for(nothing)
+    assert len(alerts) == 1
+    assert alerts[0]["url"] == f"/manage?item=import:sonarr:{DID}" and alerts[0]["tag"] == f"blocked-sonarr:{DID}"
+
+
+def test_an_alert_on_an_open_ticket_opens_that_ticket():
+    from portal import help as helpdesk
+    made = []
+
+    async def open_ticket():
+        from database.kv_store import kv_set
+        from database.request_store import REQUESTS_NAMESPACE
+        await kv_set(REQUESTS_NAMESPACE, "1001", {"status": "approved", "media": {"id": 555, "media_type": "tv", "name": "East of Eden"}})
+        made.append(await helpdesk.create(request_key="1001", slot=1, title="East of Eden", kind="tv", seasons=None,
+                                          user={"user": {"name": "Sam"}}, reason=helpdesk.PLEXBIE_REASONS["blocked"], note="Where is it?", status_now="Approved"))
+    alerts = _alerts_for(open_ticket)
+    assert len(alerts) == 1 and alerts[0]["url"] == f"/manage?tab=tickets&ticket={made[0]['id']}"
+
+
 def test_the_admins_are_told_what_the_member_isnt():
     """The ticket's first entry is the member's; the admin channel hears the admin note,
     with or without the website running."""

@@ -19,6 +19,7 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 from core.logging import get_logger
 from database.kv_store import kv_delete_many, kv_get_all, kv_set_many
@@ -382,7 +383,8 @@ async def check(bot, services) -> None:
                 except Exception as e:
                     logger.info(f"Couldn't tell the admin channel about {item['title']}: {e}")
             notify.alert_admins_soon(bot, services.config, title=f"{item['title']} won’t import",
-                                     body=f"{app_name} needs you to look at it first.", url="/manage?tab=health", tag=f"blocked-{key}")
+                                     body=f"{app_name} needs you to look at it first.",
+                                     url=f"/manage?item={quote('import:' + key, safe=':')}", tag=f"blocked-{key}")
         changed[key] = {"seen": now, "title": item["title"], "help": (h or {}).get("id")}
         logger.info(f"Blocked import: {item['title']} ({key}); admins told")
     gone = [k for k in known if k not in current]

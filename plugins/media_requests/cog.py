@@ -171,7 +171,7 @@ async def post_media_request(bot, services, user, media: dict, seasons=None, mon
     what = f"{title} ({media_type.title() if media_type != 'tv' else 'TV'}"
     what += f", {season_text.split(' 🔔')[0]})" if media_type == 'tv' and seasons else ")"
     notify.alert_admins_soon(bot, services.config, title=f"{_who(user)} asked for {title}", body=f"{what}. Approve or decline it.",
-                             url="/manage?tab=requests", tag=f"request-{message.id}")
+                             url=f"/manage?item=request:{message.id}", tag=f"request-{message.id}")
     return message.id
 
 
@@ -224,7 +224,7 @@ async def post_book_request(bot, services, user, book: dict, extra: Optional[Dic
     await _record_card(message, user_id=user.id, media=book, media_type=format_type, extra=extra)
     kind = {"ebook": "ebook", "audiobook": "audiobook", "both": "ebook and audiobook"}.get(format_type, format_type)
     notify.alert_admins_soon(bot, services.config, title=f"{_who(user)} asked for {title}", body=f"{title} by {author} ({kind}). Approve or decline it.",
-                             url="/manage?tab=requests", tag=f"request-{message.id}")
+                             url=f"/manage?item=request:{message.id}", tag=f"request-{message.id}")
     return message.id
 
 

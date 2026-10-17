@@ -477,6 +477,16 @@ export function listFor(desk: Desk, view: View, filter: Area | null): { list: It
   return filter ? { list: desk.needs.filter((i) => i.area === filter), filtered: true } : { list: desk.needs, filtered: false };
 }
 
+/** Where the thing an address names (?item=<key>, as a phone alert sends) is on the desk now:
+ *  the list it's in and its row's key. Done by then: its Done row. Gone, or never the desk's: null. */
+export function placeOf(desk: Desk, key: string): { view: View; key: string } | null {
+  for (const view of ["needs", "waiting", "done"] as const) {
+    const row = listFor(desk, view, null).list.find((i) => i.key === key || i.key === `done-${key}`);
+    if (row) return { view, key: row.key };
+  }
+  return null;
+}
+
 /** A season choice in words, for admins' titles and lines: "Season 1", "Seasons 1 and 2", "All seasons". */
 export function seasonsWords(s?: number[] | "all" | "latest" | null) {
   if (s === "all") return "All seasons";

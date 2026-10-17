@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BlockedRow } from "../api/types";
-import { clamp, deriveDesk, listFor, seasonsWords, span, ticketKeys, type Desk, type DeskData } from "./manageQueue";
+import { clamp, deriveDesk, listFor, placeOf, seasonsWords, span, ticketKeys, type Desk, type DeskData } from "./manageQueue";
 
 /** The sample household's Manage page: the numbers the approved design shows for it. */
 
@@ -192,6 +192,28 @@ describe("the Manage queue, from the sample household", () => {
     expect(undersea.title).toBe("Undersea Kingdom");
     expect(undersea.area).toBe("requests");
     expect(alone.monitors[0].makeup).toBe(`3${NB}waiting · 1${NB}stuck`);
+  });
+});
+
+describe("a thing an address names (?item=…, as a phone alert sends)", () => {
+  it("is found on Needs you by the keys the bot's alerts use: a request, a blocked import with no ticket", () => {
+    const r = data.requests!.pending[0];
+    expect(placeOf(desk, `request:${r.id}`)).toEqual({ view: "needs", key: `request:${r.id}` });
+    const b = { ...data.blocked![0], ticket: null };
+    const loose = deriveDesk({ ...data, blocked: [b] }, now, { me: "Sam Rivera" });
+    expect(placeOf(loose, `import:${b.app}:${b.downloadId}`)).toEqual({ view: "needs", key: `import:${b.app}:${b.downloadId}` });
+  });
+
+  it("is found on Waiting when it waits on its member", () => {
+    const waiting = desk.waiting[0];
+    expect(placeOf(desk, waiting.key)).toEqual({ view: "waiting", key: waiting.key });
+  });
+
+  it("is its Done row once it's been dealt with, and nothing once it's gone", () => {
+    const done = desk.done.find((i) => i.key.startsWith("done-request:"))!;
+    expect(placeOf(desk, done.key.slice("done-".length))).toEqual({ view: "done", key: done.key });
+    expect(placeOf(desk, "request:999999")).toBeNull();
+    expect(placeOf(desk, "import:sonarr:gone")).toBeNull();
   });
 });
 

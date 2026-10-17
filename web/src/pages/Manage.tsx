@@ -20,7 +20,7 @@ import { EASE_OUT, Journey, LiveProgress } from "../components/motion";
 import { Art, KIND_LABEL, formatSlot, stageLabel, inDays, scrollBehavior, shortDate, since, useCopied, useLoad, useTitle } from "../components/ui";
 import { afterOverlay, useBackToClose, useSheet, useTabWrap } from "../components/overlay";
 import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
-import { AREAS, DESK_FEEDS, deriveDesk, listFor, seasonsWords, ticketKeys, type Area, type KeyLook, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
+import { AREAS, DESK_FEEDS, deriveDesk, listFor, placeOf, seasonsWords, ticketKeys, type Area, type KeyLook, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
 import { useMedia } from "../components/useMedia";
 
@@ -4116,6 +4116,20 @@ function ManageDesk({ desk, menu, stale, onRetry, openMenu }: {
     select(next);
     requestAnimationFrame(() => document.querySelector<HTMLElement>(`.m-row[data-key="${CSS.escape(next.key)}"] .m-row__main`)?.focus({ preventScroll: !wide }));
   };
+  // The thing an address named (?item=…, a phone alert's), once the desk has it all: shown on
+  // the list it's in now, its Done row if it's been dealt with. Gone altogether: the queue as
+  // it is, with no other row's sheet opened in its place.
+  const asked = useRef(params.get("item"));
+  useEffect(() => {
+    const key = asked.current;
+    if (!key || loading) return;
+    asked.current = null;
+    const at = placeOf(desk, key);
+    if (!at) { setSel({ key: null, at: 0 }); setSheet(false); return; }
+    setView(at.view);
+    setFilter((f) => (at.view === "needs" && desk.needs.some((i) => i.key === at.key && i.area === f) ? f : null));
+    setSel({ key: at.key, at: 0 });
+  }, [loading, desk]);
   const toggle = (area: Area | null) => { setView("needs"); setFilter((f) => (f === area ? null : area)); };
   const showView = (v: DeskView) => { setView(v); setSel({ key: null, at: 0 }); if (v !== "needs") setFilter(null); };
   const groups = view === "needs" ? (["urgent", "today", "soon"] as Group[]) : [view as Group];

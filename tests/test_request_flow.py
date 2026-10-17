@@ -131,15 +131,16 @@ class _Channel:
         return card
 
 
-def _run(scenario, channel, *, fail_save=False):
-    """Run a scenario with a fresh database, `channel` as the admin channel and no phone alerts."""
+def _run(scenario, channel, *, fail_save=False, alerts=None):
+    """Run a scenario with a fresh database and `channel` as the admin channel. Phone alerts
+    go nowhere, or into `alerts` when given."""
     from plugins.media_requests import cog
 
     async def broken_save(*_, **__):
         raise RuntimeError("database is locked")
 
     patches = [(cog, "require_admin_channel", lambda bot, config: channel),
-               (cog, "notify", SimpleNamespace(alert_admins_soon=lambda *a, **k: None))]
+               (cog, "notify", SimpleNamespace(alert_admins_soon=lambda *a, **k: alerts is not None and alerts.append(k)))]
     if fail_save:
         patches.append((cog, "save_request", broken_save))
     saved = [(owner, name, getattr(owner, name)) for owner, name, _ in patches]
@@ -222,6 +223,28 @@ def test_a_failed_save_from_the_website_raises_and_leaves_no_card():
 
     assert _run(scenario, channel, fail_save=True) is True
     assert channel.cards[0].deleted
+
+
+
+def test_a_requests_alert_opens_that_request_on_manage():
+    """A film or a book: the phone alert opens the request itself on Manage's desk, by the
+    key the desk gives it (web/src/pages/manageQueue.ts: request:<id>, the card's id)."""
+    from plugins.media_requests.cog import post_book_request, post_media_request
+    channel, alerts = _Channel(), []
+    user = SimpleNamespace(id=7, mention="<@7>", display_name="Sam")
+
+    async def scenario():
+        from portal.admin import Admin
+        from portal.data import Data
+        film = await post_media_request(None, _SERVICES, user, dict(_FILM))
+        book = await post_book_request(None, _SERVICES, user, {"title": "The Book", "author": "A. Writer", "request_format": "ebook"})
+        services = SimpleNamespace(config=SimpleNamespace(admin_channel_id=1, guild_id=None), radarr=None, sonarr=None, sab=None)
+        return film, book, [r["id"] for r in (await Admin(Data(services)).requests())["pending"]]
+
+    film, book, pending = _run(scenario, channel, alerts=alerts)
+    assert sorted(pending) == sorted([str(film), str(book)]), "Manage's desk keys a request by the id its feed gives it"
+    assert [a["url"] for a in alerts] == [f"/manage?item=request:{film}", f"/manage?item=request:{book}"]
+    assert [a["tag"] for a in alerts] == [f"request-{film}", f"request-{book}"]
 
 
 # ------------------------------------------------------------ the season picker

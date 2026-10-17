@@ -276,14 +276,14 @@ def test_a_new_request_alerts_the_admins_phones_straight_away():
             await notify.register_app(TOKEN, "android", plex_account_id=None, plex_name=None, discord_id="42", channel="alerts")
             await notify.register_app(OTHER, "android", plex_account_id=None, plex_name=None, discord_id="99")
             notify.alert_admins_soon(Bot(), Config, title="Sam asked for Sintel", body="Sintel (Movie). Approve or decline it.",
-                                     url="/manage?tab=requests", tag="request-1")
+                                     url="/manage?item=request:1", tag="request-1")
             while notify._admin_tasks:
                 await asyncio.sleep(0.01)
         _db(body)
     finally:
         expo.close()
     assert [m["to"] for m in expo.sent] == [TOKEN], "only the admin's phone"
-    assert expo.sent[0]["title"] == "Sam asked for Sintel" and expo.sent[0]["data"]["url"] == "/manage?tab=requests"
+    assert expo.sent[0]["title"] == "Sam asked for Sintel" and expo.sent[0]["data"]["url"] == "/manage?item=request:1"
 
 
 def test_a_plex_sign_in_name_never_reaches_another_persons_phone():
