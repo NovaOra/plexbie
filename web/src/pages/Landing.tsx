@@ -23,7 +23,7 @@ const LOGIN_MESSAGES: Record<string, string> = {
 
 const STEPS = [
   { title: "Be in the Discord", body: "Plexbie lives in the household’s private Discord server." },
-  { title: "Ask to join", body: "Sign in with Discord and ask to join; an admin reviews every request. Not on Discord? An admin can send you an invite link instead." },
+  { title: "Ask to join", body: "Sign in with Discord and ask to join. An admin reviews it. Not on Discord? Ask an admin for an invite link." },
   { title: "Accept the invite", body: "Once you’re approved, accept the invitation you’re sent, then come back here and sign in." },
 ];
 
