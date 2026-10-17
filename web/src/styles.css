@@ -1777,6 +1777,10 @@ p.countdown svg { width: 18px; height: 18px; margin-top: 2px; }
 /* hold-to-confirm: the fill wipes across slowly while held, snaps back on release */
 .m-hold { position: relative; overflow: hidden; isolation: isolate; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .m-hold__label { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+/* The words in one cell over invisible copies of the longest it can say ("Press again to decline"). */
+.m-hold__words { display: inline-grid; }
+.m-hold__words > * { grid-area: 1 / 1; justify-self: center; }
+.m-hold__room { visibility: hidden; }
 .m-hold__fill {
   position: absolute; inset: 0; display: grid; place-items: center; border-radius: inherit;
   background: var(--tally); color: var(--on-tally);

@@ -24,6 +24,7 @@ import { AREAS, DESK_FEEDS, deriveDesk, listFor, placeOf, seasonsWords, ticketKe
 import { BottomSheet } from "../components/BottomSheet";
 import { useMedia } from "../components/useMedia";
 import { entryBy, ticketFrom } from "../components/tickets";
+import { holdRoom, holdWords } from "../components/hold";
 
 /* ================================================================== store */
 
@@ -201,8 +202,9 @@ function useKept<T>(load: () => Promise<T>, deps: unknown[]) {
 /**
  * A destructive action you have to mean: press and hold until the fill reaches
  * the end. Letting go early cancels. Keyboard users hold Space or Enter;
- * assistive tech that "clicks" without a press gets a two-step confirm instead,
- * said out loud when armed and disarmed again after a few seconds.
+ * assistive tech that "clicks" without a press gets a two-step confirm instead
+ * ("Press again to decline"), said out loud when armed and disarmed again after a
+ * few seconds. The key keeps room for its longest words, so arming it moves nothing.
  */
 function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = false, ms = 1000, stages, bail, quiet = false, primary = false }: {
   label: string; icon?: ReactNode; onConfirm: () => void; disabled?: boolean; ms?: number;
@@ -308,7 +310,8 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
     window.clearTimeout(timer.current); window.clearInterval(ticker.current); window.clearTimeout(bailTimer.current); window.clearTimeout(armTimer.current);
   }, []);
   const isKey = (e: ReactKeyboardEvent) => e.key === " " || e.key === "Enter";
-  const text = armed ? "Again to confirm" : bailed && bail ? bail : `Hold to ${label.toLowerCase()}`;
+  const words = holdWords(label);
+  const text = armed ? words.armed : bailed && bail ? bail : words.hold;
   const hint = useId();
   const shownIcon = icon && busy ? <RefreshCw size={16} aria-hidden className="m-spin" /> : icon;
 
@@ -324,7 +327,7 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
         aria-busy={busy || undefined}
         // The name starts with the words on the button, so "click Hold to remove" works
         // for voice control; how it works is the description.
-        aria-label={armed ? `Again to confirm: ${label}` : text}
+        aria-label={text}
         aria-describedby={hint}
         onPointerDown={(e) => {
           if (e.button !== 0) return;
@@ -379,14 +382,20 @@ function HoldButton({ label, icon, onConfirm, disabled, busy = false, blocked = 
         onBlur={() => { cancel(); arm(false); }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <span className="m-hold__label">{shownIcon}{holding && stages?.length ? stages[stage] : text}</span>
+        <span className="m-hold__label">{shownIcon}
+          {/* The words shown, over hidden copies of the longest it can say: a width that doesn't change. */}
+          <span className="m-hold__words">
+            <span>{holding && stages?.length ? stages[stage] : text}</span>
+            {holdRoom(label, bail).map((w) => <span key={w} className="m-hold__room" aria-hidden>{w}</span>)}
+          </span>
+        </span>
         <span id={hint} hidden>Press and hold, or press twice, to confirm.</span>
         <span className="m-hold__fill" aria-hidden>
           <span className="m-hold__label">{shownIcon}{holding ? (stages?.[stage] ?? "Keep holding…") : text}</span>
         </span>
       </button>
       {/* Said out loud: a new name on the focused button often isn't. */}
-      <span className="visually-hidden" role="status">{armed ? `Press again to confirm: ${label}` : ""}</span>
+      <span className="visually-hidden" role="status">{armed ? words.armed : ""}</span>
     </>
   );
 }
