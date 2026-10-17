@@ -67,7 +67,7 @@ export function menuGroups(desk: Desk, d: DeskData): MenuGroup[] {
     group("help", [
       { id: "tickets", label: "All tickets", tab: "tickets", count: tickets, urgent: urgentIn("ticket"),
         desc: d.tickets ? [tickets ? `${tickets}${NB}need you` : "None need you", urgentIn("ticket") ? `${urgentIn("ticket")}${NB}urgent` : "",
-          waitingOn ? `${waitingOn}${NB}more waiting on a reply` : ""].filter(Boolean).join(" · ") : "Loading…" },
+          waitingOn ? `${waitingOn}${NB}waiting for a reply` : ""].filter(Boolean).join(" · ") : "Loading…" },
       // One without a ticket is counted here; one in a ticket counts under All tickets.
       { id: "blocked", label: "Blocked imports", tab: "health", part: "blocked", count: imports.length, urgent: urgentIn("import"),
         hot: desk.needs.some((i) => i.group === "urgent" && i.src.type === "ticket" && !!i.src.blocked),

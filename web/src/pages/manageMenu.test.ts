@@ -49,7 +49,7 @@ describe("the Everything else menu", () => {
     for (const g of groups) if (g.count !== undefined) expect(g.rows.reduce((n, r) => n + (r.count ?? 0), 0)).toBe(g.count);
     // What isn't counted says where it is, never a number that reads as part of the count.
     expect(row("all")).toMatchObject({ count: 3, desc: `3${NB}waiting · 3${NB}stuck under Help` });
-    expect(row("tickets")).toMatchObject({ count: 5, urgent: 2, desc: `5${NB}need you · 2${NB}urgent · 1${NB}more waiting on a reply` });
+    expect(row("tickets")).toMatchObject({ count: 5, urgent: 2, desc: `5${NB}need you · 2${NB}urgent · 1${NB}waiting for a reply` });
     expect(row("messages")).toMatchObject({ count: 1, desc: "Alex Kim unread · Marcus T. under People" });
     expect(row("plex")).toMatchObject({ count: 1, desc: `1 from 40${NB}days ago · 2${NB}more not accepted` });
     expect(row("links")).toMatchObject({ count: 1, desc: `Aunt Rosa’s ends in 5${NB}days` });
