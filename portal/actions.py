@@ -751,8 +751,11 @@ class Actions:
             await self._tell_admins_about_help(h)
         except Exception as e:   # the ticket is saved and shows on Manage either way
             logger.warning(f"Ticket {h['id']} saved, but telling the admins failed: {type(e).__name__}: {e}")
+        from portal.admin import ticket_poster
+        row = helpdesk.member_row(h["id"], h)
+        poster = await ticket_poster(self.data, h, {}) if subject == "title" else None
         return {"ok": True, "message": "Sent. An admin will take a look and get back to you.",
-                "help": {"id": h["id"], "reason": h["reason"]}, "ticket": helpdesk.member_row(h["id"], h)}
+                "help": {"id": h["id"], "reason": h["reason"]}, "ticket": {**row, "poster": poster} if poster else row}
 
     async def _on_plex(self, kind: str, tid: str, rating_key: str) -> dict:
         """The film or show a ticket is about, as it is on Plex: {title, year, tmdb,

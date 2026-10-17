@@ -89,7 +89,7 @@ def _all_counts(rows: List[dict]) -> dict:
 def _ticket_row(hid: str, h: dict, poster: Optional[str] = None) -> dict:
     """A ticket on the Tickets list. `subject`: on a request (with its key and number),
     about a title on Plex (its TMDB id, when Plex has one), or general (no title).
-    `poster`: its title's poster (Admin._ticket_poster), through the image proxy."""
+    `poster`: its title's poster (ticket_poster), through the image proxy."""
     from portal import help as helpdesk
     thread = helpdesk.thread_of(h)
     last = thread[-1] if thread else {}
@@ -104,6 +104,20 @@ def _ticket_row(hid: str, h: dict, poster: Optional[str] = None) -> dict:
         "last": {"by": last.get("by"), "kind": last.get("kind"), "text": str(last.get("text") or "")[:160]} if last else None,
         "count": len(thread),
     }
+
+
+async def ticket_poster(data, h: dict, slots: Dict[str, dict]) -> Optional[str]:
+    """A ticket's poster, on Manage's list and on the member's own: its request's (`slots`,
+    Data._slots), else its title's by TMDB id, through the image proxy. None for a book or
+    a general ticket (the page draws a cover)."""
+    rec = slots.get(str(h.get("request"))) if h.get("request") else None
+    if rec:
+        media = rec.get("media") or {}
+        if rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media:
+            return None
+        kind = "movie" if media.get("media_type") == "movie" else "tv"
+        return tmdb_art(media.get("poster_path"), "w185") or await data.poster(kind, media.get("id"))
+    return await data.poster(h.get("kind"), h.get("tmdb"))
 
 
 def stuck_reasons(row: dict, approved_at: Any, mark: dict, now: datetime) -> List[str]:
@@ -322,22 +336,10 @@ class Admin:
 
         async def with_poster(r: dict) -> None:
             async with gate:
-                r["poster"] = await self._ticket_poster(found[r["id"]], slots)
+                r["poster"] = await ticket_poster(self.data, found[r["id"]], slots)
         await asyncio.gather(*(with_poster(r) for r in action + waiting + solved))
         return {"rows": action + waiting + solved,
                 "counts": {"action": len(action), "waiting": len(waiting), "solved": len(solved)}}
-
-    async def _ticket_poster(self, h: dict, slots: Dict[str, dict]) -> Optional[str]:
-        """A ticket's poster: its request's, else its title's by TMDB id. None for a book or a
-        general ticket (the page draws a cover)."""
-        rec = slots.get(str(h.get("request"))) if h.get("request") else None
-        if rec:
-            media = rec.get("media") or {}
-            if rec.get("media_type") in ("ebook", "audiobook", "both") or "open_library_key" in media:
-                return None
-            kind = "movie" if media.get("media_type") == "movie" else "tv"
-            return tmdb_art(media.get("poster_path"), "w185") or await self.data.poster(kind, media.get("id"))
-        return await self.data.poster(h.get("kind"), h.get("tmdb"))
 
     async def ticket(self, hid: str) -> Optional[dict]:
         """One ticket in full: its timeline, and its request as All requests shows it."""
@@ -345,7 +347,7 @@ class Admin:
         h = (await kv_get_all(helpdesk.NAMESPACE)).get(hid)
         if not isinstance(h, dict):
             return None
-        out = {**_ticket_row(hid, h, await self._ticket_poster(h, await self.data._slots())), "note": h.get("note"), "statusThen": h.get("status_then"),
+        out = {**_ticket_row(hid, h, await ticket_poster(self.data, h, await self.data._slots())), "note": h.get("note"), "statusThen": h.get("status_then"),
                "quiet": bool(h.get("quiet")), "thread": helpdesk.thread_of(h), "request": None,
                # A download Sonarr/Radarr won't import by themselves (core/blocked_imports).
                "blocked": h.get("blocked") if isinstance(h.get("blocked"), dict) else None,

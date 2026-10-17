@@ -21,6 +21,7 @@ were others has no subject, and is one), a title on Plex the member didn't reque
 ("title": its TMDB id, kind and Plex ratingKey instead of a request), or nothing in
 particular ("general").
 """
+import asyncio
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -335,14 +336,27 @@ def member_row(hid: str, rec: dict) -> dict:
     }
 
 
-async def tickets_of(user: dict) -> List[dict]:
+async def tickets_of(user: dict, data=None) -> List[dict]:
     """The member's own tickets, about anything: the open ones (waiting on their answer
     first), then those solved in the last SOLVED_SHOWN_DAYS days. Not one an admin
-    opened on their request without telling them."""
+    opened on their request without telling them. With the portal's `data`, each carries
+    its `poster` as Manage's list has it (admin.ticket_poster), when there is one."""
     since = (datetime.now(timezone.utc) - timedelta(days=SOLVED_SHOWN_DAYS)).isoformat()
-    rows = [member_row(hid, h) for hid, h in (await kv_get_all(NAMESPACE)).items()
+    kept = [(hid, h) for hid, h in (await kv_get_all(NAMESPACE)).items()
             if isinstance(h, dict) and owns_ticket(h, user) and not h.get("quiet")
             and (h.get("status") == "open" or (h.get("resolved_at") or "") >= since)]
+    rows = [member_row(hid, h) for hid, h in kept]
+    if data is not None and kept:
+        from portal.admin import ticket_poster
+        slots = await data._slots()
+        gate = asyncio.Semaphore(4)      # a few lookups at a time; each is cached for a day
+
+        async def with_poster(row: dict, h: dict) -> None:
+            async with gate:
+                poster = await ticket_poster(data, h, slots)
+            if poster:
+                row["poster"] = poster
+        await asyncio.gather(*(with_poster(row, h) for row, (_, h) in zip(rows, kept)))
     rows.sort(key=lambda r: r["updatedAt"] or "", reverse=True)
     rows.sort(key=lambda r: (r["status"] != "open", not r["waiting"]))
     return rows

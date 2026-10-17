@@ -218,6 +218,12 @@ for (const demo of [false, true]) describe(demo ? "the demo's sample household" 
     // Waiting on their answer first, then the other open ones, then those solved lately.
     expect(list.map((t) => [t.subject, t.status, t.waiting])).toEqual([["request", "open", true], ["title", "open", false], ["general", "resolved", false]]);
     expect(list.every((t) => t.thread.every((e) => e.kind !== "note" && e.kind !== "action"))).toBe(true);
+    // A film's or show's ticket carries the poster Manage shows for it; a general one has none, as the bot sends them.
+    const manage = (await done(s.admin("tickets")) as AdminTickets).rows;
+    expect(list.filter((t) => t.kind === "movie" || t.kind === "tv").map((t) => t.poster))
+      .toEqual(list.filter((t) => t.kind === "movie" || t.kind === "tv").map((t) => manage.find((r) => r.id === t.id)!.poster));
+    expect(list.filter((t) => t.title).every((t) => !!t.poster)).toBe(true);
+    expect(list.filter((t) => t.subject === "general").every((t) => !("poster" in t))).toBe(true);
     const film = list.find((t) => t.subject === "title")!;
     const page = await done(s.title("movie", film.tmdb!));
     expect(page.onPlex).toBe(true);

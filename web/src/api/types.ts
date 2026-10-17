@@ -349,6 +349,9 @@ export interface MyTicket {
   requestKey: string | null; slot: number | null; seasons?: number[] | "all" | "latest" | null;
   reason: string; status: "open" | "resolved"; waiting: boolean;
   createdAt: string; updatedAt: string;
+  /** Its film's or show's poster (/img/tmdb/…), as Manage's list has it. Left out when there's
+   *  none (a book, a general ticket, Seerr can't say) or the bot is older: draw a cover. */
+  poster?: string;
   /** As the member sees it: what they said, what was said to them, and whether it's solved. */
   thread: TicketEntry[];
 }

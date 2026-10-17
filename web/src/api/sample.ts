@@ -841,10 +841,12 @@ function myTicketOn(tmdb: string, requestId?: string) {
 function myTicket(h: Help): import("./types").MyTicket {
   const r = h.request ? mine.find((x) => x.id === h.request) : undefined;
   const t = threadOf(h);
+  // A film's or show's poster, as the bot sends it: left out for a book or a general ticket.
+  const poster = h.kind === "movie" || h.kind === "tv" ? posterOf(h.title) : null;
   return { id: h.id, subject: h.subject ?? "request", title: h.title, kind: (h.kind || null) as import("./types").MyTicket["kind"],
     tmdb: h.tmdb ?? (r ? r.title.id : null), year: h.year ?? null, requestKey: h.request, slot: h.slot, seasons: h.seasons,
     reason: h.reason, status: h.status, waiting: !!waits[h.id] && h.status === "open", createdAt: h.created_at,
-    updatedAt: t[t.length - 1]?.at ?? h.created_at, thread: memberThread(h) };
+    updatedAt: t[t.length - 1]?.at ?? h.created_at, ...(poster ? { poster } : {}), thread: memberThread(h) };
 }
 
 export const myTickets = () => {

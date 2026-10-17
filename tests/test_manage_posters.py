@@ -66,6 +66,50 @@ def test_a_tickets_poster_is_its_requests_else_its_titles_and_a_general_one_has_
     assert detail == listed[on_title], "the ticket in full carries the same poster"
 
 
+
+def test_a_members_own_tickets_carry_the_posters_manage_shows():
+    """The member's list (/api/tickets) and the ticket they've just opened carry the same
+    poster as Manage's list, so the app shows a title ticket's poster, not a drawn cover. It's
+    left out when there's none (a general ticket)."""
+    import tempfile as tmp
+
+    from aiohttp.test_utils import TestClient, TestServer
+    from database.request_store import mark_resolved, save_request
+    from portal.app import build_app
+    actions = _actions()
+    _with_posters(actions)
+
+    async def who(request):
+        return JORDAN
+
+    async def scenario():
+        await _init(pathlib.Path(tempfile.mkdtemp()) / "p.db")
+        await save_request(301, user_id=7, media={"id": 10378, "media_type": "movie", "title": "Big Buck Bunny",
+                                                  "poster_path": "/bunnyRequest.jpg"})
+        await mark_resolved(301, "approved", "Sam")
+        on_request = (await actions.ask_help(JORDAN, "301", {"reason": "stuck", "note": "0% all morning"}))["help"]["id"]
+        opened = await actions.open_ticket(JORDAN, {"kind": "tv", "id": "9999", "reason": "episodes"})
+        general = await actions.open_ticket(JORDAN, {"reason": "access"})
+        manage = {r["id"]: r["poster"] for r in (await Admin(actions.data).tickets())["rows"]}
+        client = TestClient(TestServer(build_app(actions.services, who=who, readonly=False, dist=None, image_cache=tmp.mkdtemp(),
+                                                 data=actions.data, actions=actions)))
+        await client.start_server()
+        try:
+            listed = await (await client.get("/api/tickets")).json()
+        finally:
+            await client.close()
+        return on_request, opened, general, manage, {r["id"]: r for r in listed}
+
+    with _seen():
+        on_request, opened, general, manage, listed = asyncio.run(scenario())
+    on_title, plain = opened["help"]["id"], general["help"]["id"]
+    assert listed[on_request]["poster"] == manage[on_request] == "/img/tmdb/w185/bunnyRequest.jpg?v=2", "the request's own poster"
+    assert listed[on_title]["poster"] == manage[on_title] == "/img/tmdb/w185/pepperPoster.jpg?v=2", "the show's, by its TMDB id"
+    assert "poster" not in listed[plain], "nothing to show: the app draws a cover"
+    assert opened["ticket"]["poster"] == listed[on_title]["poster"], "the ticket just opened carries it too"
+    assert "poster" not in general["ticket"]
+
+
 def test_tickets_still_list_when_seerr_cant_say_what_a_poster_is():
     actions = _actions()
 
