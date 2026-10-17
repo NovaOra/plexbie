@@ -22,6 +22,7 @@ were others has no subject, and is one), a title on Plex the member didn't reque
 particular ("general").
 """
 import asyncio
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -90,6 +91,27 @@ def reason_code(h: dict) -> str:
             if label.replace("’", "'") == words:
                 return code
     return ""
+
+
+#: What Plexbie writes as "what it saw" when it opens a ticket itself (core/season_search.open_help's
+#: callers, and a download Seerr says failed): how a ticket from before `by_plexbie` was kept is known.
+PLEXBIE_SAW = re.compile(r"^(Nothing found|Downloaded, import blocked|On Plex, as another film|Adding to Plex"
+                         r"|Approved, not in (Sonarr|Radarr)|Failed in Seerr)$")
+
+
+def by_plexbie(h: dict) -> bool:
+    """Whether Plexbie opened this ticket itself (an import that won't go through, a search
+    that found nothing…), filed under the member whose request it's on. Tickets from before
+    that was kept are known by what only Plexbie puts on one: its offer to search by name, a
+    reason only it opens tickets for, or its own words for what it saw."""
+    if h.get("by_plexbie"):
+        return True
+    if h.get("opened_by"):
+        return False
+    return h.get("offer") == "name" or reason_code(h) in PLEXBIE_REASONS \
+        or bool(PLEXBIE_SAW.match(str(h.get("status_then") or "").strip()))
+
+
 #: Open general tickets one member may have at once.
 MAX_OPEN_GENERAL = 3
 #: How long a solved ticket stays on the member's own list.
@@ -181,10 +203,11 @@ async def create(*, request_key: Optional[str] = None, slot: Optional[int] = Non
                  kind: Optional[str] = None, seasons: Any = None, user: dict, reason: str, note: str, status_now: str,
                  offer: Optional[str] = None, opened_by: Optional[str] = None, quiet: bool = False,
                  subject: str = "request", tmdb: Optional[int] = None, year: Optional[str] = None,
-                 rating_key: Optional[str] = None) -> dict:
+                 rating_key: Optional[str] = None, by_plexbie: bool = False) -> dict:
     """A new ticket. On a request: its key, number, title and seasons. About a title:
     its TMDB id (when Plex has one for it), Plex ratingKey, title and year. General:
-    none of those."""
+    none of those. `by_plexbie`: Plexbie opened it itself, on the member's request (`user`,
+    who owns it), and `note` is Plexbie's own first message, not theirs."""
     hid = secrets.token_hex(6)
     rec = {
         "subject": subject, "request": request_key, "slot": slot, "title": title, "kind": kind, "seasons": seasons,
@@ -195,8 +218,15 @@ async def create(*, request_key: Optional[str] = None, slot: Optional[int] = Non
     }
     if subject == "title":
         rec.update(tmdb=tmdb, year=year or None, rating_key=rating_key)
-    first = (f"{reason}. {note[:600]}" if note else reason) if not opened_by else (note[:600] or reason)
-    rec["thread"] = [_entry("note" if opened_by else "member", opened_by or rec["who"], first, rec["created_at"])]
+    if opened_by:
+        first = _entry("note", opened_by, note[:600] or reason, rec["created_at"])
+    elif by_plexbie:
+        # The member sees it, as Plexbie's: it was never their words.
+        first = {**_entry("member", "Plexbie", note[:600] or reason, rec["created_at"]), "plexbie": True}
+        rec["by_plexbie"] = True
+    else:
+        first = _entry("member", rec["who"], f"{reason}. {note[:600]}" if note else reason, rec["created_at"])
+    rec["thread"] = [first]
     if offer:
         rec["offer"] = offer          # "name": Plexbie asks whether to search by name
     if opened_by:
@@ -260,6 +290,19 @@ def thread_of(rec: dict) -> List[dict]:
     return out
 
 
+def shown_thread(rec: dict) -> List[dict]:
+    """The timeline as it's shown (thread_of): on a ticket Plexbie opened itself, its first
+    message is Plexbie's ("by": "Plexbie", "plexbie": true). Tickets from before that was kept
+    filed it under the member, with the reason in front; they're shown the same way."""
+    thread = thread_of(rec)
+    first = thread[0] if thread else {}
+    if first.get("kind") == "member" and not first.get("plexbie") and by_plexbie(rec):
+        text, lead = str(first.get("text") or ""), f"{rec.get('reason')}. "
+        thread[0] = {**first, "by": "Plexbie", "plexbie": True,
+                     "text": text[len(lead):] if rec.get("reason") and text.startswith(lead) else text}
+    return thread
+
+
 async def add(hid: str, kind: str, by: str, text: str, **changes) -> Optional[dict]:
     """Adds an entry to a ticket's timeline (and any field changes). None: no such ticket."""
     rec = await kv_get(NAMESPACE, hid)
@@ -313,10 +356,15 @@ async def take(hid: str, actor: str, discord_id: Optional[str], plex_account_id:
 
 
 def member_view(rec: dict) -> dict:
-    """A ticket as the member who asked sees it: no admins' notes or searches."""
-    return {"status": rec.get("status"), "waiting": bool(rec.get("waiting")),
-            "thread": [{k: e.get(k) for k in ("id", "at", "kind", "text")} | {"by": e.get("by") if e.get("kind") != "member" else "You"}
-                       for e in thread_of(rec)
+    """A ticket as the member who asked sees it: no admins' notes or searches. What they
+    wrote is "You"'s; what Plexbie wrote when it opened the ticket itself is Plexbie's."""
+    def shown(e: dict) -> dict:
+        out = {k: e.get(k) for k in ("id", "at", "kind", "text")}
+        if e.get("plexbie"):
+            return out | {"by": "Plexbie", "plexbie": True}
+        return out | {"by": e.get("by") if e.get("kind") != "member" else "You"}
+    return {"status": rec.get("status"), "waiting": bool(rec.get("waiting")), "byPlexbie": by_plexbie(rec),
+            "thread": [shown(e) for e in shown_thread(rec)
                        if e.get("kind") in MEMBER_SEES or (e.get("kind") == "status" and e.get("text") in MEMBER_STATUSES)]}
 
 
@@ -330,7 +378,7 @@ def member_row(hid: str, rec: dict) -> dict:
         "tmdb": str(rec["tmdb"]) if rec.get("tmdb") else None, "year": rec.get("year") or None,
         "requestKey": rec.get("request") or None, "slot": rec.get("slot") or None,
         "seasons": rec.get("seasons"), "reason": rec.get("reason") or "",
-        "status": view["status"] or "open", "waiting": view["waiting"],
+        "status": view["status"] or "open", "waiting": view["waiting"], "byPlexbie": view["byPlexbie"],
         "createdAt": rec.get("created_at"), "updatedAt": (seen[-1].get("at") if seen else None) or rec.get("created_at"),
         "thread": view["thread"],
     }

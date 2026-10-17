@@ -258,7 +258,7 @@ class SeerrEvents:
         h = await helpdesk.create(request_key=str(key), slot=slot, title=title, kind=media.get("media_type") or "",
                                   seasons=rec.get("seasons"), user=user, reason=helpdesk.REASONS["stuck"],
                                   note=("Seerr reported the download failed. " + reason).strip()[:600],
-                                  status_now="Failed in Seerr")
+                                  status_now="Failed in Seerr", by_plexbie=True)
         if actions:
             try:
                 await actions._tell_admins_about_help(h)

@@ -641,7 +641,7 @@ type Entry = import("./types").TicketEntry;
 /** A ticket as the bot keeps it; one that isn't on a request has a subject, and a title one its TMDB id. */
 type Help = Omit<import("./types").AdminHelp, "request" | "slot" | "title"> & {
   request: string | null; slot: number | null; title: string | null;
-  opened_by?: string; subject?: import("./types").TicketSubject; tmdb?: string | null; year?: string | null;
+  opened_by?: string; by_plexbie?: boolean; subject?: import("./types").TicketSubject; tmdb?: string | null; year?: string | null;
   /** The reason's fixed code, as the bot keeps it beside the words. */
   reason_code?: string;
 };
@@ -668,11 +668,15 @@ threads.h3 = [
   { id: "e4", at: at(64), by: "Alex Kim", kind: "status", text: "Waiting on them" },
 ];
 
-/** A download Sonarr won't import by itself, as Plexbie opens it (core/blocked_imports). */
-const BLOCKED_NOTE = "Radar Men from the Moon finished downloading, but Sonarr won’t import it by itself: Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. Look at the files on this ticket before you import it.";
+/** A download Sonarr won't import by itself, as Plexbie opens it (core/blocked_imports): on Jordan's
+ *  request, under them, its first message Plexbie's; what Sonarr said goes on an entry only admins see. */
+const BLOCKED_NOTE = "Radar Men from the Moon finished downloading, but Sonarr won’t import it by itself. An admin will check it.";
 helps.push({ id: "h4", request: "5099", slot: 208, title: "Radar Men from the Moon", kind: "tv", seasons: [1], who: "Jordan Lee",
-  reason: "Downloaded, but won’t import", note: BLOCKED_NOTE, status_then: "Downloaded, import blocked", status: "open", created_at: at(8), opened_by: "Plexbie" } as Help);
-threads.h4 = [{ id: "e9", at: at(8), by: "Plexbie", kind: "note", text: BLOCKED_NOTE }];
+  reason: "Downloaded, but won’t import", note: BLOCKED_NOTE, status_then: "Downloaded, import blocked", status: "open", created_at: at(8), by_plexbie: true } as Help);
+threads.h4 = [
+  { id: "e9", at: at(8), by: "Plexbie", kind: "member", text: BLOCKED_NOTE, plexbie: true },
+  { id: "e10", at: at(8), by: "Plexbie", kind: "action", text: "Sonarr says: Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. Look at the files on this ticket before you import it." },
+];
 const sampleBlocked = { app: "sonarr" as const, downloadId: "SABnzbd_nzo_demo" };
 export const adminBlocked = () => reviewKnobs().fails.includes("blocked") ? Promise.reject(new Error("Sonarr didn’t answer."))
   : reviewKnobs().empty ? wait({ rows: [], errors: {} }) : wait({ rows: [{ ...sampleBlocked, title: "Radar Men from the Moon", year: 1952, poster: posterOf("Radar Men from the Moon"),
@@ -734,7 +738,7 @@ function ticketRow(h: Help): import("./types").AdminTicketRow {
   return { id: h.id, subject: h.subject ?? "request", requestKey: h.request, slot: h.slot ?? 0, title: h.title ?? "",
     tmdb: h.tmdb ?? null, year: h.year ?? null, kind: h.kind, seasons: h.seasons, who: h.who,
     reason: h.reason, reasonCode: h.reason_code ?? REASON_CODES[h.reason] ?? "", poster: posterOf(h.title), status: h.status, waiting: !!waits[h.id] && h.status === "open", owner: owners[h.id] ?? null,
-    openedBy: h.opened_by ?? null, offer: h.offer ?? null, createdAt: h.created_at, updatedAt: last?.at ?? h.created_at,
+    openedBy: h.opened_by ?? null, offer: h.offer ?? null, byPlexbie: !!h.by_plexbie, createdAt: h.created_at, updatedAt: last?.at ?? h.created_at,
     last: last ? { by: last.by, kind: last.kind, text: last.text.slice(0, 160) } : null, count: t.length };
 }
 function ticketsList(): import("./types").AdminTickets {
@@ -791,10 +795,11 @@ export const answerTicket = (requestId: string, text: string) => {
 /** A ticket as its member sees it: what they said, what was said to them, and whether it's solved. */
 function memberThread(h: Help): Entry[] {
   return threadOf(h).filter((e) => e.kind === "member" || e.kind === "reply" || (e.kind === "status" && ["Solved", "Reopened"].includes(e.text)))
-    .map(({ id, at, by, kind, text }) => ({ id, at, kind, text, by: kind === "member" ? "You" : by }));
+    .map(({ id, at, by, kind, text, plexbie }) => plexbie ? { id, at, kind, text, by: "Plexbie", plexbie }
+      : { id, at, kind, text, by: kind === "member" ? "You" : by });
 }
 const memberTicket = (h: Help): import("./types").MemberTicket =>
-  ({ id: h.id, reason: h.reason, subject: h.subject ?? "request", status: h.status, waiting: !!waits[h.id] && h.status === "open", thread: memberThread(h) });
+  ({ id: h.id, reason: h.reason, subject: h.subject ?? "request", status: h.status, waiting: !!waits[h.id] && h.status === "open", byPlexbie: !!h.by_plexbie, thread: memberThread(h) });
 /** A member's request with its open ticket, as they see it. */
 function withTicket(r: MediaRequest): MediaRequest {
   const h = helps.find((x) => x.request === r.id && x.status === "open");
@@ -845,7 +850,7 @@ function myTicket(h: Help): import("./types").MyTicket {
   const poster = h.kind === "movie" || h.kind === "tv" ? posterOf(h.title) : null;
   return { id: h.id, subject: h.subject ?? "request", title: h.title, kind: (h.kind || null) as import("./types").MyTicket["kind"],
     tmdb: h.tmdb ?? (r ? r.title.id : null), year: h.year ?? null, requestKey: h.request, slot: h.slot, seasons: h.seasons,
-    reason: h.reason, status: h.status, waiting: !!waits[h.id] && h.status === "open", createdAt: h.created_at,
+    reason: h.reason, status: h.status, waiting: !!waits[h.id] && h.status === "open", byPlexbie: !!h.by_plexbie, createdAt: h.created_at,
     updatedAt: t[t.length - 1]?.at ?? h.created_at, ...(poster ? { poster } : {}), thread: memberThread(h) };
 }
 

@@ -5,7 +5,7 @@ import { LifeBuoy } from "./icons";
 import { api } from "../api/client";
 import type { HelpReason, MediaRequest, MemberTicket, MyTicket, Title, TicketReason } from "../api/types";
 import { BottomSheet } from "./BottomSheet";
-import { asMemberTicket, inLine, ticketHeading } from "./tickets";
+import { asMemberTicket, entryBy, inLine, ticketHeading } from "./tickets";
 import { formatSlot, seasonsLabel, since } from "./ui";
 
 const REASONS: [HelpReason, string][] = [
@@ -227,7 +227,7 @@ export function TicketSheet({ ticket, heading, about, onClose, onAnswered }: {
           <li key={e.id} className={`m-thread__entry is-${e.kind === "member" ? "member" : e.kind}`}>
             {e.kind === "status" ? <span className="m-thread__status">{e.text} · {since(e.at)}</span> : (
               <>
-                <span className="m-thread__head"><b>{e.by}</b><span className="muted">{since(e.at)}</span></span>
+                <span className="m-thread__head"><b>{entryBy(e)}</b><span className="muted">{since(e.at)}</span></span>
                 <span className="m-thread__text">{e.text}</span>
               </>
             )}

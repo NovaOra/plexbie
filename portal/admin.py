@@ -91,7 +91,7 @@ def _ticket_row(hid: str, h: dict, poster: Optional[str] = None) -> dict:
     about a title on Plex (its TMDB id, when Plex has one), or general (no title).
     `poster`: its title's poster (ticket_poster), through the image proxy."""
     from portal import help as helpdesk
-    thread = helpdesk.thread_of(h)
+    thread = helpdesk.shown_thread(h)
     last = thread[-1] if thread else {}
     return {
         "id": hid, "subject": helpdesk.subject_of(h), "requestKey": h.get("request"), "slot": h.get("slot") or 0,
@@ -100,6 +100,8 @@ def _ticket_row(hid: str, h: dict, poster: Optional[str] = None) -> dict:
         "reason": h.get("reason") or "", "reasonCode": helpdesk.reason_code(h),
         "status": h.get("status") or "open", "waiting": bool(h.get("waiting")),
         "owner": h.get("owner"), "openedBy": h.get("opened_by"), "offer": h.get("offer"),
+        # Plexbie opened it itself, on `who`'s request: its first message is Plexbie's.
+        "byPlexbie": helpdesk.by_plexbie(h),
         "createdAt": h.get("created_at"), "updatedAt": last.get("at") or h.get("created_at"),
         "last": {"by": last.get("by"), "kind": last.get("kind"), "text": str(last.get("text") or "")[:160]} if last else None,
         "count": len(thread),
@@ -348,7 +350,7 @@ class Admin:
         if not isinstance(h, dict):
             return None
         out = {**_ticket_row(hid, h, await ticket_poster(self.data, h, await self.data._slots())), "note": h.get("note"), "statusThen": h.get("status_then"),
-               "quiet": bool(h.get("quiet")), "thread": helpdesk.thread_of(h), "request": None,
+               "quiet": bool(h.get("quiet")), "thread": helpdesk.shown_thread(h), "request": None,
                # A download Sonarr/Radarr won't import by themselves (core/blocked_imports).
                "blocked": h.get("blocked") if isinstance(h.get("blocked"), dict) else None,
                # A title ticket's own page on Plex (app.plex.tv).

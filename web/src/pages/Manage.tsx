@@ -23,6 +23,7 @@ import { menuGroups, type MenuGroup, type MenuRow } from "./manageMenu";
 import { AREAS, DESK_FEEDS, deriveDesk, listFor, placeOf, seasonsWords, ticketKeys, type Area, type KeyLook, type Desk, type DeskData, type Feed, type Group, type Item } from "./manageQueue";
 import { BottomSheet } from "../components/BottomSheet";
 import { useMedia } from "../components/useMedia";
+import { entryBy, ticketFrom } from "../components/tickets";
 
 /* ================================================================== store */
 
@@ -3004,7 +3005,7 @@ function TicketRow({ t, onOpen }: { t: AdminTicketRow; onOpen: () => void }) {
   return (
     <button type="button" className={`m-ticket is-${state.tone}${titled ? " has-thumb" : ""}`} onClick={onOpen}>
       {titled ? <Thumb poster={t.poster} title={t.title} kind={t.kind || "movie"} /> : null}
-      <span className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} · {since(t.updatedAt)}</span>
+      <span className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {ticketFrom(t)} · {since(t.updatedAt)}</span>
       <span className="m-ticket__title">{ticketTitle(t)}{seasonsWords(t.seasons) ? <span className="muted"> · {seasonsWords(t.seasons)}</span> : null}</span>
       <span className="m-ticket__reason">{t.reason}</span>
       {t.last ? <span className="m-ticket__last"><b>{t.last.by}:</b> {t.last.text}</span> : null}
@@ -3105,7 +3106,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
     <div className="m-reqsheet__body" ref={body}>
       {lead ? <div className="m-pane__acts">{waiting ? lead : <>{lookKey ?? (t.status === "open" ? take : reopen)}{lead}</>}</div> : null}
       {res.failed ? <Stale at={res.at} onRetry={load} /> : null}
-      {head ? <p className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {t.reason} · {t.openedBy ? `opened by ${t.openedBy}` : `asked by ${t.who}`} {since(t.createdAt)}</p> : null}
+      {head ? <p className="m-ticket__line"><span className="caps">{ticketKind(t)}</span> · {t.reason} · {ticketFrom(t)} {since(t.createdAt)}</p> : null}
       <div className="m-ticket__tags">
         {waiting ? null : <span className={`m-pill m-pill--${state.tone}`}>{state.label}</span>}
         <span className="m-pill">{t.owner ? `${t.owner} has it` : "Nobody has it yet"}</span>
@@ -3151,7 +3152,7 @@ function TicketBody({ id, res, head = true, blockedRow, solve = 0, lead, waiting
             ) : (
               <>
                 <span className="m-thread__head">
-                  <b>{e.by}</b>{ENTRY_LABEL[e.kind] ? <span className={`m-thread__tag${e.missed ? " is-missed" : ""}`}>{e.kind === "reply" ? (e.missed ? "Not delivered" : `Sent to ${t.who}`) : ENTRY_LABEL[e.kind]}</span> : null}
+                  <b>{entryBy(e, t.who)}</b>{ENTRY_LABEL[e.kind] ? <span className={`m-thread__tag${e.missed ? " is-missed" : ""}`}>{e.kind === "reply" ? (e.missed ? "Not delivered" : `Sent to ${t.who}`) : ENTRY_LABEL[e.kind]}</span> : null}
                   <span className="muted">{since(e.at)}</span>
                 </span>
                 <span className="m-thread__text">{e.text}</span>

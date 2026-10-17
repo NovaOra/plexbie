@@ -322,6 +322,9 @@ export interface TicketEntry {
   text: string;
   /** A reply that reached nobody (admins only). */
   missed?: boolean;
+  /** Plexbie's own first message on a ticket it opened itself, for the member ("member" kind,
+   *  `by` "Plexbie"). Older bots leave it out. */
+  plexbie?: boolean;
 }
 /** What a ticket is about: one of the member's requests, a film or show on Plex they
  *  didn't request, or nothing in particular. */
@@ -336,6 +339,9 @@ export interface MemberTicket {
   status?: "open" | "resolved";
   /** An admin asked something and waits on the member's answer. */
   waiting?: boolean;
+  /** Plexbie opened it itself, on their request (an import that won't go through, a search
+   *  that found nothing): its first message is Plexbie's. Older bots leave it out. */
+  byPlexbie?: boolean;
   thread?: TicketEntry[];
 }
 /** One of the member's own tickets (GET /api/tickets): open ones, and those solved in the last 30 days. */
@@ -348,6 +354,8 @@ export interface MyTicket {
   /** On a request: its key and number. */
   requestKey: string | null; slot: number | null; seasons?: number[] | "all" | "latest" | null;
   reason: string; status: "open" | "resolved"; waiting: boolean;
+  /** Plexbie opened it itself, on their request: its first message is Plexbie's. Older bots leave it out. */
+  byPlexbie?: boolean;
   createdAt: string; updatedAt: string;
   /** Its film's or show's poster (/img/tmdb/…), as Manage's list has it. Left out when there's
    *  none (a book, a general ticket, Seerr can't say) or the bot is older: draw a cover. */
@@ -371,7 +379,11 @@ export interface AdminTicketRow {
   /** The film's or show's poster, when the bot sends one (Manage draws a cover otherwise). */
   poster?: string | null;
   status: "open" | "resolved"; waiting: boolean; owner?: string | null;
-  openedBy?: string | null; offer?: "name" | null; createdAt: string; updatedAt: string;
+  openedBy?: string | null; offer?: "name" | null;
+  /** Plexbie opened it itself, on `who`'s request: its first message is Plexbie's, for them.
+   *  Older bots leave it out. */
+  byPlexbie?: boolean;
+  createdAt: string; updatedAt: string;
   last?: { by: string; kind: TicketEntry["kind"]; text: string } | null; count: number;
 }
 export interface AdminTickets {

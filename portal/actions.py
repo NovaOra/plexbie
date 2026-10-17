@@ -806,7 +806,8 @@ class Actions:
         seasons = h.get("seasons")
         what = f"{h['title']}" + (f" (season {', '.join(str(n) for n in seasons)})" if isinstance(seasons, list) and seasons else "")
         number = f"No. {int(h['slot']):04d}" if h.get("slot") else "A request"
-        opened = h.get("opened_by")
+        # An admin opened it, or Plexbie did (on the request of the member it's filed under).
+        opened = h.get("opened_by") or ("Plexbie" if h.get("by_plexbie") else None)
         if subject == "general":
             heading = f"General ticket from {h['who']}"
         elif subject == "title":
@@ -851,7 +852,7 @@ class Actions:
         from database.kv_store import kv_get
         from portal.auth import OWNER_ID
         owner_id = await kv_get(*OWNER_ID)                # the Plex owner's account, as plex.tv said
-        body = f"{h.get('opened_by') or h['who']}: {h['reason']}. " + (what if subject == "request" else (h.get("note") or "")[:140])
+        body = f"{opened or h['who']}: {h['reason']}. " + (what if subject == "request" else (h.get("note") or "")[:140])
         await notify.push_to_admins(discord_ids=ids, plex_account_ids={owner_id} if owner_id else set(),
                                     title=heading, body=body.strip(),
                                     url=f"/manage?tab=tickets&ticket={h['id']}", tag=f"help-{h['id']}")
