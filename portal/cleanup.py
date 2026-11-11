@@ -30,6 +30,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from plexapi.exceptions import NotFound as PlexNotFound
+
 from utils.formatting import parse_utc
 from utils.guids import element_guids, first_number, plex_ids
 
@@ -43,6 +45,8 @@ EMPTY_HISTORY_TITLES = 50
 #: checking (it's dated each check). After a longer gap - Plexbie down, cleanup
 #: switched off, Plex unreachable - every title due gets a whole new warning.
 WARNINGS_LAPSE = timedelta(days=3)
+#: Episodes looked up per request when tying plays to their shows (keys in the URL).
+EPISODE_LOOKUP_BATCH = 50
 
 
 def _ts(value) -> Optional[datetime]:
@@ -185,18 +189,93 @@ def current_warnings(warned, checked, now: datetime) -> Dict[str, str]:
 def everyones_views(server, days: int) -> Dict[str, datetime]:
     """The last time anyone (every account, managed users too) watched each film, and
     any episode of each show, by Plex key, over the last `days` (+2). Raises if Plex's
-    history can't be read: then nothing should be judged unwatched."""
+    history or library can't be read: then nothing should be judged unwatched.
+
+    Plex's history doesn't say which show an episode is from: none of 748 plays had a
+    grandparentRatingKey in November 2026, so every show looked unwatched, request
+    expiry switched VisionQuest off a week before its finale and cleanup warned about
+    a show a member was watching. A play is tied to its show by the episode's own key,
+    looked up in the library; else by the show's key in grandparentKey; else by the
+    show's title in that library, and every show by that title when there are several
+    (one kept by mistake costs some disk, one removed by mistake costs the show). A
+    film without its key is found by its title the same way."""
     since = datetime.now() - timedelta(days=int(days) + 2)
+    plays = [h for h in server.history(mindate=since) if getattr(h, "viewedAt", None)]
+    shows = _shows_of_episodes(server, {str(h.ratingKey) for h in plays if _is_episode(h)
+                                        and not getattr(h, "grandparentRatingKey", None)
+                                        and getattr(h, "ratingKey", None)})
+    titles = None
     latest: Dict[str, datetime] = {}
-    for h in server.history(mindate=since):
-        key = str(getattr(h, "grandparentRatingKey", None) or getattr(h, "ratingKey", None) or "")
-        when = getattr(h, "viewedAt", None)
-        if not key or not when:
-            continue
-        when = aware(when)
-        if key not in latest or when > latest[key]:
-            latest[key] = when
+    for h in plays:
+        keys = _keys_of_play(h, shows)
+        if keys is None:
+            if titles is None:
+                titles = _titles_by_library(server)
+            keys = _keys_by_title(h, titles)
+        when = aware(h.viewedAt)
+        for key in keys:
+            if key not in latest or when > latest[key]:
+                latest[key] = when
     return latest
+
+
+def _is_episode(play) -> bool:
+    return getattr(play, "type", None) == "episode"
+
+
+def _shows_of_episodes(server, keys) -> Dict[str, str]:
+    """Blocking: {episode key: its show's key} for the episodes still in Plex, asked in
+    batches. Plex answers a batch with the episodes it still has, and Not Found only
+    when it has none of them."""
+    out: Dict[str, str] = {}
+    keys = sorted(keys)
+    for i in range(0, len(keys), EPISODE_LOOKUP_BATCH):
+        try:
+            root = server.query("/library/metadata/" + ",".join(keys[i:i + EPISODE_LOOKUP_BATCH]))
+        except PlexNotFound:
+            continue
+        for el in root:
+            if el.get("ratingKey") and el.get("grandparentRatingKey"):
+                out[str(el.get("ratingKey"))] = str(el.get("grandparentRatingKey"))
+    return out
+
+
+def _keys_of_play(play, shows: Dict[str, str]) -> Optional[List[str]]:
+    """The Plex keys a play counts for; None when only a title can say."""
+    show = getattr(play, "grandparentRatingKey", None)
+    if show:
+        return [str(show)]
+    own = getattr(play, "ratingKey", None)
+    if not _is_episode(play):
+        return [str(own)] if own else None
+    if own and str(own) in shows:
+        return [shows[str(own)]]
+    number = str(getattr(play, "grandparentKey", None) or "").rstrip("/").rsplit("/", 1)[-1]
+    return [number] if number.isdigit() else None
+
+
+def _titles_by_library(server) -> Dict[tuple, List[str]]:
+    """Blocking: every film and show by (section key, "movie" | "show", title), as lists:
+    a title can be in a library more than once."""
+    out: Dict[tuple, List[str]] = {}
+    for sec in server.query("/library/sections").findall("Directory"):
+        stype = sec.get("type")
+        if stype not in ("movie", "show"):
+            continue
+        root = server.query(f"/library/sections/{sec.get('key')}/all")
+        for el in root.findall("Video" if stype == "movie" else "Directory"):
+            if el.get("ratingKey") and el.get("title"):
+                out.setdefault((str(sec.get("key")), stype, el.get("title")), []).append(str(el.get("ratingKey")))
+    return out
+
+
+def _keys_by_title(play, titles: Dict[tuple, List[str]]) -> List[str]:
+    section = getattr(play, "librarySectionID", None)
+    if section is None:
+        return []
+    if _is_episode(play):
+        return titles.get((str(section), "show", getattr(play, "grandparentTitle", None)), [])
+    return titles.get((str(section), "movie", getattr(play, "title", None)), [])
 
 
 def compute(server, config: dict, requests: List[dict],
